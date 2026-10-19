@@ -9,7 +9,31 @@
 - **Независимая проверка**: специалист, не писавший код, сверяет его со спецификацией и документацией брокеров и
   ищет ошибки в заявках, сверке, `cid`.
 - **Ручное тестирование** владельцем на собственных счетах и песочнице.
-- **Выпуск**: чистый репозиторий, README, примеры, лицензия, CI.
+- **Выпуск**: публикация на crates.io и открытый репозиторий, CI.
+
+## 2026-10-20: имя brokapi, крейты, лицензия (ломающее изменение)
+
+Библиотека называется **brokapi**. Пока ее подключали только из клона репозитория, поэтому имена крейтов меняются без
+переходного периода. Стадия: закрытая альфа, версии всех крейтов `0.1.0-alpha.1`.
+
+- **Один главный крейт.** `brokapi` реэкспортирует остальные, брокеры включаются флагами `bcs`, `tbank`, `finam`, как
+  у `tokio`: `use brokapi::core::...`, `use brokapi::bcs::...`, клиент нижнего слоя - `brokapi::bcs::protocol`.
+  Страница: [Быстрый старт](quickstart.md).
+- **Новые имена крейтов.**
+
+  | Было | Стало |
+  |---|---|
+  | `broker-core`, `broker-runtime`, `broker-sansio` | `brokapi-core`, `brokapi-runtime`, `brokapi-sansio` |
+  | `broker-bcs`, `broker-tbank`, `broker-finam` | `brokapi-bcs`, `brokapi-tbank`, `brokapi-finam` |
+  | `bcs-protocol`, `tbank-protocol`, `finam-protocol` | `brokapi-bcs-protocol`, `brokapi-tbank-protocol`, `brokapi-finam-protocol` |
+  | `broker-mocks`, `broker-conformance` | `brokapi-mocks`, `brokapi-conformance` (не публикуются) |
+
+  В коде `broker_core::` становится `brokapi_core::` (или `brokapi::core::`), и так для остальных.
+- **Переменная примеров** `GATEWAYS_LIVE` называется `BROKAPI_LIVE`.
+- **Убрано из `brokapi-bcs-protocol`:** модуль `robot` (feature `robot`) и примеры стратегий. К работе с брокером они не относятся.
+- **Лицензия:** `MIT OR Apache-2.0`, на выбор.
+- **Документация:** сайт https://brokapi.runinfra.ru. Страницы «Готовность», «Покрытие API» и «Живые прогоны» теперь
+  обычные страницы книги.
 
 ## 2026-10-20: деньги, цены и количества - точные числа (ломающее изменение)
 
