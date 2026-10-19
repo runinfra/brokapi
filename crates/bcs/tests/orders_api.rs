@@ -221,6 +221,22 @@ async fn a_refusal_is_rejected_whether_it_is_http_400_or_status_8_in_a_200_answe
 }
 
 #[tokio::test]
+async fn shutdown_reports_only_commands_that_have_no_answer() {
+    let server = MockServer::start(Arc::new(MockOptions::default())).await;
+    let (ud, _rx) = ud(&server).await;
+    // Three answered commands: accepted, refused in a 200 answer, refused with HTTP 400.
+    ud.place(limit_buy(dec!(100.0))).await.unwrap();
+    assert!(
+        ud.place(limit_buy(REJECT_IN_BODY_PRICE)).await.is_err(),
+        "a refusal in the body"
+    );
+    assert!(ud.place(limit_buy(REJECT_PRICE.decimal())).await.is_err());
+    // None of them is still waiting for an answer, so none is reported as abandoned.
+    let report = ud.shutdown(ShutdownMode::Immediate).await;
+    assert!(report.inflight_abandoned.is_empty(), "{report:?}");
+}
+
+#[tokio::test]
 async fn cancel_tells_the_truth_about_what_happened() {
     let server = MockServer::start(Arc::new(MockOptions::default())).await;
     let (ud, _rx) = ud(&server).await;

@@ -25,7 +25,9 @@ use brokapi_runtime::{
     BrokerLimiter, CommandGate, Emitter, InstrumentLocks, OrderRuntime, PriceGrid,
     ShutdownController, reconcile_ledger,
 };
-use brokapi_sansio::{BrokerCore, DesiredSubscription, SubscriptionKind, SubscriptionSet};
+use brokapi_sansio::{
+    BrokerCore, DesiredSubscription, OrderSignal, SubscriptionKind, SubscriptionSet,
+};
 use chrono::{TimeZone, Utc};
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::task::JoinHandle;
@@ -597,6 +599,29 @@ impl UserDataConnector {
 
     /// An order command that waited for the broker, as an ack: a refusal inside a 200 answer
     /// (`orderStatus = 8`) is `Rejected`.
+    /// Moves the order out of `InFlight` when its command is answered, so a shutdown reports only commands
+    /// that really have no answer.
+    async fn settle(
+        &self,
+        cid: ClientOrderId,
+        outcome: &Result<(OrderAck, Option<String>), Error>,
+    ) {
+        let signal = match outcome {
+            Ok((ack, _)) => OrderSignal::Ack {
+                broker_id: ack.broker_id.clone(),
+            },
+            Err(Error::Rejected { message, .. }) => OrderSignal::Rejected {
+                reason: message.clone(),
+            },
+            Err(_) => OrderSignal::Timeout,
+        };
+        self.inner
+            .orders
+            .lock()
+            .await
+            .apply_signal(cid, signal, Instant::now());
+    }
+
     fn ack_of(
         &self,
         cid: ClientOrderId,
@@ -680,13 +705,17 @@ impl OrderExecutor for UserDataConnector {
             orders.register_place(req.cid, now);
         }
 
-        let resp = self
-            .inner
-            .http
-            .create_order_sync(&http_req)
-            .await
-            .map_err(map_command_err)?;
-        let (ack, order_id) = self.ack_of(req.cid, &resp, now)?;
+        let resp = match self.inner.http.create_order_sync(&http_req).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                let err = map_command_err(e);
+                self.settle(req.cid, &Err(err.clone())).await;
+                return Err(err);
+            }
+        };
+        let outcome = self.ack_of(req.cid, &resp, now);
+        self.settle(req.cid, &outcome).await;
+        let (ack, order_id) = outcome?;
         if let Some(id) = order_id {
             self.learn(&id, req.cid).await;
         }
@@ -967,13 +996,17 @@ impl StopOrderExecutor for UserDataConnector {
             orders.register_place(req.cid, now);
         }
 
-        let resp = self
-            .inner
-            .http
-            .create_order_sync(&wire)
-            .await
-            .map_err(map_command_err)?;
-        let (ack, order_id) = self.ack_of(req.cid, &resp, now)?;
+        let resp = match self.inner.http.create_order_sync(&wire).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                let err = map_command_err(e);
+                self.settle(req.cid, &Err(err.clone())).await;
+                return Err(err);
+            }
+        };
+        let outcome = self.ack_of(req.cid, &resp, now);
+        self.settle(req.cid, &outcome).await;
+        let (ack, order_id) = outcome?;
         if let Some(id) = order_id {
             self.learn(&id, req.cid).await;
         }
