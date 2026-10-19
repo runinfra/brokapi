@@ -147,6 +147,35 @@ pub enum Timeframe {
     MN,
 }
 
+impl Timeframe {
+    /// The length of one bar in seconds. A month is counted as 30 days: it is a size for planning
+    /// requests, not a calendar.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use brokapi_core::Timeframe;
+    ///
+    /// assert_eq!(Timeframe::M5.seconds(), 300);
+    /// assert_eq!(Timeframe::H1.seconds(), 3_600);
+    /// assert_eq!(Timeframe::D1.seconds(), 86_400);
+    /// ```
+    pub fn seconds(self) -> u64 {
+        match self {
+            Self::M1 => 60,
+            Self::M5 => 5 * 60,
+            Self::M10 => 10 * 60,
+            Self::M15 => 15 * 60,
+            Self::M30 => 30 * 60,
+            Self::H1 => 3_600,
+            Self::H4 => 4 * 3_600,
+            Self::D1 => 86_400,
+            Self::W1 => 7 * 86_400,
+            Self::MN => 30 * 86_400,
+        }
+    }
+}
+
 /// One OHLC bar of an instrument.
 ///
 /// From [`MarketDataSource::candles`](crate::MarketDataSource::candles) (history) or as

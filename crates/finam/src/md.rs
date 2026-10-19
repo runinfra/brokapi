@@ -829,6 +829,13 @@ impl MarketDataSource for MarketDataConnector {
         Ok(resp.bars.iter().map(|b| map_bar(id, tf, b, now)).collect())
     }
 
+    /// 500 bars of the timeframe. The Finam documentation of `Bars` states no limit, so this is a
+    /// cautious guess that costs only extra requests when it is too small. Not checked against the
+    /// live API.
+    fn candles_max_span(&self, tf: Timeframe) -> Option<Duration> {
+        Some(Duration::from_secs(500 * tf.seconds()))
+    }
+
     /// Opens a `SubscribeBars` stream. Every message of a forming bar gives an updated candle, not only
     /// the closed one. For M10 the stream is M5 and the connector builds the 10 minute candle.
     /// Errors as in `candles` and `subscribe_order_book`.

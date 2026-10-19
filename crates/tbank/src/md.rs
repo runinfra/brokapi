@@ -902,6 +902,24 @@ impl MarketDataSource for MarketDataConnector {
             .collect())
     }
 
+    /// The longest span one `GetCandles` request may cover, per timeframe, from the T-Invest
+    /// documentation page "Исторические котировки" (1 minute: 1 day, 5 and 10 minutes: 1 week,
+    /// 15 and 30 minutes: 3 weeks, 1 and 4 hours: 3 months, 1 day: 6 years, 1 week: 5 years,
+    /// 1 month: 10 years). The broker calls the limits approximate. Not checked against the live API.
+    fn candles_max_span(&self, tf: Timeframe) -> Option<Duration> {
+        const DAY: u64 = 86_400;
+        let days = match tf {
+            Timeframe::M1 => 1,
+            Timeframe::M5 | Timeframe::M10 => 7,
+            Timeframe::M15 | Timeframe::M30 => 21,
+            Timeframe::H1 | Timeframe::H4 => 90,
+            Timeframe::D1 => 6 * 365,
+            Timeframe::W1 => 5 * 365,
+            Timeframe::MN => 10 * 365,
+        };
+        Some(Duration::from_secs(days * DAY))
+    }
+
     /// Streams the candle that is forming, for timeframe `tf`.
     ///
     /// Each event is the current state of the last candle, not only closed ones. Volumes are in lots.

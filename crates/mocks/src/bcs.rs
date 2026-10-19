@@ -61,6 +61,11 @@ pub const DEFAULT_ACCESS: &str = "mock-access-token";
 /// Tunable mock behaviour for individual test scenarios.
 #[derive(Debug, Default)]
 pub struct MockOptions {
+    /// `candles-chart` answers a series for the range asked (`startDate`, `endDate`), one bar per step of the
+    /// timeframe, and refuses a range of more than 1440 bars with HTTP 400, like the broker. Off: three fixed bars.
+    pub synthetic_candles: AtomicBool,
+    /// Every `candles-chart` request seen when `synthetic_candles` is on: (timeFrame, startDate seconds, endDate seconds).
+    pub candle_requests: std::sync::Mutex<Vec<(String, i64, i64)>>,
     /// When set, REST `order-book` returns HTTP 429.
     pub rate_limit_order_book: AtomicBool,
     /// Subscribe requests containing this ticker get an error frame.
@@ -507,6 +512,39 @@ fn validation(field: &str, message: &str) -> Response {
     )
 }
 
+/// Undoes the `%XX` escapes of a query value (`+` is a space).
+fn pct_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'%' if i + 3 <= b.len() => {
+                let hex = std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or("");
+                match u8::from_str_radix(hex, 16) {
+                    Ok(v) => {
+                        out.push(v);
+                        i += 3;
+                    }
+                    Err(_) => {
+                        out.push(b'%');
+                        i += 1;
+                    }
+                }
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 fn query_param(uri: &Uri, name: &str) -> Option<String> {
     uri.query()?
         .split('&')
@@ -578,6 +616,60 @@ async fn handle_http(
         let ticker = query_param(&uri, "ticker").unwrap_or_else(|| "SBER".into());
         let class_code = query_param(&uri, "classCode").unwrap_or_else(|| "TQBR".into());
         let tf = query_param(&uri, "timeFrame").unwrap_or_else(|| "M1".into());
+        if state.options.synthetic_candles.load(Ordering::Relaxed) {
+            let secs = |name: &str| {
+                query_param(&uri, name)
+                    .map(|v| pct_decode(&v))
+                    .and_then(|v| chrono::DateTime::parse_from_rfc3339(&v).ok())
+                    .map(|d| d.timestamp())
+            };
+            let (Some(from), Some(to)) = (secs("startDate"), secs("endDate")) else {
+                return validation("startDate", "startDate and endDate are RFC 3339 times");
+            };
+            state
+                .options
+                .candle_requests
+                .lock()
+                .unwrap()
+                .push((tf.clone(), from, to));
+            let step = match tf.as_str() {
+                "M1" => 60,
+                "M5" => 300,
+                "M15" => 900,
+                "M30" => 1_800,
+                "H1" => 3_600,
+                "H4" => 14_400,
+                "D" => 86_400,
+                "W" => 7 * 86_400,
+                _ => 30 * 86_400,
+            };
+            let series = crate::synthetic_bars(from, to, step);
+            if series.len() > 1440 {
+                return validation("endDate", "at most 1440 bars in one request");
+            }
+            let num = |d: Decimal| d.to_string().parse::<f64>().unwrap_or(0.0);
+            let bars: Vec<Value> = series
+                .into_iter()
+                .map(|(t, o, h, l, c, v)| {
+                    json!({
+                        "time": chrono::DateTime::from_timestamp(t, 0)
+                            .map(|d| d.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+                            .unwrap_or_default(),
+                        "open": num(o), "close": num(c), "high": num(h), "low": num(l), "volume": v as f64,
+                    })
+                })
+                .collect();
+            return json_response(
+                StatusCode::OK,
+                &json!({
+                    "ticker": ticker, "classCode": class_code, "timeFrame": tf,
+                    "startDate": query_param(&uri, "startDate").map(|v| pct_decode(&v)),
+                    "endDate": query_param(&uri, "endDate").map(|v| pct_decode(&v)),
+                    "bars": bars,
+                })
+                .to_string(),
+            );
+        }
         let bars: Vec<Value> = (0..3)
             .map(|i| {
                 json!({

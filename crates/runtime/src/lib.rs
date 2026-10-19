@@ -15,6 +15,8 @@
 //! | Refuse an order price off the price step before sending | [`PriceGrid`] |
 //! | Decide when to resubscribe or reconnect | [`Supervisor`], [`ConnectionState`], [`ConnectionHealth`] |
 //! | Stop cleanly | [`ShutdownController`] |
+//! | Read a long candle history within the broker's span and rate limits | [`history::CandlePages`], [`history::load_candles`] |
+//! | Record the event stream to a file and play it back | [`record::EnvelopeWriter`], [`record::EnvelopeReader`], [`record::replay`] |
 //!
 //! Limits belong to the broker user, not to a connector: build one [`BrokerLimiter`] per user and
 //! share its [`Arc`](std::sync::Arc) between all connectors of that user.
@@ -65,12 +67,14 @@ mod command_gate;
 mod connection;
 mod emitter;
 mod health;
+pub mod history;
 mod instrument_queue;
 mod limits;
 mod metrics;
 mod orders;
 mod price_grid;
 mod reconcile;
+pub mod record;
 mod shutdown;
 mod supervisor;
 

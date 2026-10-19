@@ -142,6 +142,13 @@ pub trait OrderBookSource: Send + Sync {
     /// [`Backpressure::Conflate`](crate::Backpressure::Conflate): a slow reader then sees the latest
     /// book and not a queue of stale ones.
     ///
+    /// # Contract
+    ///
+    /// - **When:** at any time, no reconcile is needed (the market data connector has no trading gate).
+    /// - **Guarantee:** the stream restores itself after a reconnect. Each restore is announced with
+    ///   [`Event::Resync`](crate::Event::Resync): drop the book you hold for that instrument and wait
+    ///   for the next snapshot.
+    ///
     /// # Errors
     ///
     /// - [`Error::Config`] when `id.native` is of a kind this broker does not use.
@@ -445,6 +452,21 @@ pub trait MarketDataSource: Send + Sync {
         tf: Timeframe,
         range: TimeRange,
     ) -> Result<Vec<Candle>, Error>;
+
+    /// The longest span of time one [`candles`](Self::candles) request may cover for `tf`, or `None`
+    /// when the connector does not know a limit.
+    ///
+    /// Brokers cap one history request by the number of bars or by the length of the span, and a
+    /// request over the cap is refused ([`Error::Rejected`]). A long history is therefore read in
+    /// windows of at most this span. Do not slice by hand: `brokapi_runtime::history` does it, waits
+    /// out [`Error::RateLimited`] and joins the windows. The value comes from the broker's
+    /// documentation, not from a live check. Pure function, no network call.
+    ///
+    /// The default is `None` ("unknown"): the caller then chooses a window itself.
+    fn candles_max_span(&self, tf: Timeframe) -> Option<std::time::Duration> {
+        let _ = tf;
+        None
+    }
 
     /// Starts a stream of the latest bar of `tf` for one instrument.
     ///
@@ -822,6 +844,18 @@ pub trait OrderExecutor: Send + Sync {
     /// could make a second order. Use a new cid for a new order, after you know what happened to the
     /// first. The library does not check quantity against lot size or price against the price step.
     ///
+    /// # Contract
+    ///
+    /// - **When:** after the first successful [`reconcile`](Self::reconcile), and not while the
+    ///   connector is degraded or shutting down. Write `req.cid` to your journal before the call.
+    /// - **Guarantee:** at most one request with this cid ever leaves the process, whatever happens.
+    /// - **Nothing sent:** the gate errors, `Config`, a local `RateLimited` and the input checks
+    ///   (`missing_price`, `price_off_step`, a wrong quantity) are raised before the request leaves.
+    ///   No order exists and the cid is unused. A new cid is always the safe choice for a retry.
+    /// - **Maybe sent:** after [`Error::Unknown`] (and, to be safe, [`Error::Transport`]) the order may
+    ///   exist. Ask [`order_state`](Self::order_state) with the same cid.
+    /// - `Ok` is the broker's acceptance, not an execution. Fills come as events.
+    ///
     /// # Errors
     ///
     /// - [`Error::NotReconciled`], [`Error::Degraded`], [`Error::ShuttingDown`]: the gate is closed,
@@ -895,6 +929,15 @@ pub trait OrderExecutor: Send + Sync {
     /// [`place`](Self::place) and [`replace`](Self::replace). For a stop order use
     /// [`StopOrderExecutor::cancel_stop`]. A part that was filled before stays filled.
     ///
+    /// # Contract
+    ///
+    /// - **When:** while the gate is open. The order may come from an earlier run of the process: the
+    ///   cid is enough. An order this process did not place is not queued behind other commands on its
+    ///   instrument (the instrument is not known).
+    /// - **Guarantee:** `Ok(())` is the broker's confirmation. A repeated cancel creates no order, so
+    ///   it is the one command that may be repeated by hand after [`Error::Unknown`], and only
+    ///   after [`order_state`](Self::order_state) shows the order still works.
+    ///
     /// # Errors
     ///
     /// - [`Error::NotReconciled`], [`Error::Degraded`], [`Error::ShuttingDown`]: the gate is closed,
@@ -951,6 +994,14 @@ pub trait OrderExecutor: Send + Sync {
     /// The broker cancels the original and puts a new order under `req.cid`, so the answer is a new
     /// order with a new broker id. The original is not active afterwards. Only where
     /// [`UserDataCaps::supports_replace`](crate::UserDataCaps::supports_replace) is `true`.
+    ///
+    /// # Contract
+    ///
+    /// - **When:** while the gate is open and the broker has replace
+    ///   ([`UserDataCaps::supports_replace`](crate::UserDataCaps::supports_replace)). `req.cid` is new
+    ///   (write it to your journal first), `req.original_cid` is the working order.
+    /// - **Guarantee:** the same cid rules as [`place`](Self::place). After [`Error::Unknown`] ask
+    ///   [`order_state`](Self::order_state) for **both** cids before any new command on them.
     ///
     /// # Errors
     ///
@@ -1009,6 +1060,14 @@ pub trait OrderExecutor: Send + Sync {
     /// gate, it works before the first reconcile. It also finds orders that are no longer active
     /// (filled, cancelled), unlike [`active_orders`](Self::active_orders).
     ///
+    /// # Contract
+    ///
+    /// - **When:** at any time, also before the first [`reconcile`](Self::reconcile) and while the
+    ///   trading gate is closed: a read is not gated.
+    /// - **Guarantee:** reads only, so it may be repeated as often as the rate limit allows. It
+    ///   answers for final orders too. A cid the broker does not know is an error (see below), and
+    ///   right after an [`Error::Unknown`] that is not final: the request may still be on its way.
+    ///
     /// # Errors
     ///
     /// - [`Error::RateLimited`], [`Error::Transport`]: wait or repeat later.
@@ -1058,6 +1117,12 @@ pub trait OrderExecutor: Send + Sync {
     /// includes orders that were not placed through this connector (by hand, by another program).
     /// Their cid is not yours: where the broker does not give a cid back, the BCS connector makes a
     /// stable one from the broker id, the same for the same order every time.
+    ///
+    /// # Contract
+    ///
+    /// - **When:** at any time, the trading gate does not matter. Reads only.
+    /// - **Guarantee:** the list is what the broker shows now. Orders of others are in it too: do not
+    ///   touch what is not in your journal.
     ///
     /// # Errors
     ///
@@ -1109,6 +1174,14 @@ pub trait OrderExecutor: Send + Sync {
     /// [`active_orders`](Self::active_orders). There is no way to end this subscription except
     /// shutting the connector down.
     ///
+    /// # Contract
+    ///
+    /// - **When:** once per connector, before [`reconcile`](Self::reconcile) and before the first
+    ///   [`place`](Self::place). Allowed while the gate is closed.
+    /// - **Guarantee:** every change of your orders arrives, in order, or the loss is announced with
+    ///   [`Event::Overflow`](crate::Event::Overflow) and trading stops until a reconcile. The
+    ///   subscription cannot be ended before shutdown.
+    ///
     /// # Errors
     ///
     /// - [`Error::Unsupported`] when the connector has no order stream.
@@ -1136,6 +1209,15 @@ pub trait OrderExecutor: Send + Sync {
     /// Keep the cids of stop orders out of the ledger and check them with
     /// [`StopOrderExecutor::active_stop_orders`] (not verified against the live API for every
     /// connector).
+    ///
+    /// # Contract
+    ///
+    /// - **When:** after [`subscribe_order_state`](Self::subscribe_order_state) at start, again after
+    ///   [`Error::Degraded`] (read your channel to the end first), and whenever you doubt the ledger. It
+    ///   only reads, so any number of calls is safe.
+    /// - **Guarantee:** on `Ok` the gate is open (lifts [`Error::NotReconciled`] and
+    ///   [`Error::Degraded`]). On an error the gate stays as it was and nothing is known about
+    ///   your orders. Orders are never moved or cancelled.
     ///
     /// # Errors
     ///
@@ -1277,6 +1359,11 @@ pub trait ExecutionSource: Send + Sync {
     /// does not), match by `broker_order_id` then. `commission` is `0.0` where the broker gives none
     /// (BCS history). How far back it goes is decided by the broker.
     ///
+    /// # Contract
+    ///
+    /// - **When:** at any time. Reads only. The way to catch up on fills after [`Error::Unknown`], an
+    ///   [`Event::Overflow`](crate::Event::Overflow) (from its `lost_from`) or a restart.
+    ///
     /// # Errors
     ///
     /// - [`Error::RateLimited`], [`Error::Transport`]: wait or repeat later.
@@ -1312,6 +1399,13 @@ pub trait ExecutionSource: Send + Sync {
     /// draining your channel. Subscribe before you place, because fills that happened before the
     /// stream was open are not delivered (read [`executions`](Self::executions) to catch up). There is
     /// no way to end this subscription except shutting the connector down.
+    ///
+    /// # Contract
+    ///
+    /// - **When:** once per connector, before the first [`OrderExecutor::place`]. Allowed while the gate
+    ///   is closed.
+    /// - **Guarantee:** lossless like [`OrderExecutor::subscribe_order_state`]: a loss is announced
+    ///   with [`Event::Overflow`](crate::Event::Overflow).
     ///
     /// # Errors
     ///
@@ -1580,6 +1674,13 @@ pub trait StopOrderExecutor: Send + Sync {
     /// the shape of the request (a stop-limit needs `limit_price`) and nothing else: the trigger
     /// direction against the market price is the broker's to judge.
     ///
+    /// # Contract
+    ///
+    /// - **When:** after the first successful [`OrderExecutor::reconcile`], same gate as
+    ///   [`OrderExecutor::place`]. Write `req.cid` to your journal first.
+    /// - **Guarantee:** at most one request with this cid ever leaves the process. After
+    ///   [`Error::Unknown`] look in [`active_stop_orders`](Self::active_stop_orders), do not place again.
+    ///
     /// # Errors
     ///
     /// - [`Error::Unsupported`] when the broker has no stop orders. Nothing was sent.
@@ -1603,6 +1704,12 @@ pub trait StopOrderExecutor: Send + Sync {
     /// ([`StopOrderRef::Broker`]). A cid is known from what this process has seen. After a restart a
     /// connector may not be able to find it, use the broker id then (from
     /// [`active_stop_orders`](Self::active_stop_orders)).
+    ///
+    /// # Contract
+    ///
+    /// - **When:** while the gate is open. After a restart name the stop by the broker's id.
+    /// - **Guarantee:** a repeated cancel creates nothing. After [`Error::Unknown`] look in
+    ///   [`active_stop_orders`](Self::active_stop_orders) first.
     ///
     /// # Errors
     ///

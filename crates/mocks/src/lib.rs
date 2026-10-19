@@ -36,3 +36,39 @@
 pub mod bcs;
 pub mod finam;
 pub mod tbank;
+
+/// One synthetic bar: open time in seconds since the epoch, open, high, low, close, volume.
+pub type SyntheticBar = (
+    i64,
+    rust_decimal::Decimal,
+    rust_decimal::Decimal,
+    rust_decimal::Decimal,
+    rust_decimal::Decimal,
+    i64,
+);
+
+/// A deterministic series of bars for the range `[from, to)` (seconds since the epoch) on the grid of `step`
+/// seconds aligned to the epoch, one bar per grid point. The mocks use it when `synthetic_candles` is on, so
+/// a long history read gets bars that depend on the range asked, not a fixed answer.
+pub fn synthetic_bars(from: i64, to: i64, step: i64) -> Vec<SyntheticBar> {
+    use rust_decimal::Decimal;
+    if step <= 0 || to <= from {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut t = (from + step - 1).div_euclid(step) * step;
+    while t < to {
+        let n = t.div_euclid(step);
+        let open = Decimal::from(100 + n.rem_euclid(20));
+        out.push((
+            t,
+            open,
+            open + Decimal::ONE,
+            open - Decimal::ONE,
+            open + Decimal::new(5, 1),
+            1000 + n.rem_euclid(7),
+        ));
+        t += step;
+    }
+    out
+}

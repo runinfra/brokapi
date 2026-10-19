@@ -54,6 +54,11 @@ type Out<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send + 'static>>;
 /// Knobs a test can turn.
 #[derive(Default)]
 pub struct MockOptions {
+    /// `GetCandles` answers a series of bars for the range asked (one per interval step) and refuses a range
+    /// longer than the T-Invest limit for the interval with `INVALID_ARGUMENT` 30014. Off: two fixed bars.
+    pub synthetic_candles: AtomicBool,
+    /// Every `GetCandles` request seen: (interval, from seconds, to seconds).
+    pub candle_requests: Mutex<Vec<(i32, i64, i64)>>,
     /// Delay before `PostOrder` answers (to provoke a client timeout).
     pub post_delay_ms: AtomicU64,
     /// `PostOrder` answers with this gRPC code instead of placing.
@@ -295,7 +300,50 @@ impl MarketDataService for Mock {
         &self,
         r: Request<pb::GetCandlesRequest>,
     ) -> Result<Response<pb::GetCandlesResponse>, Status> {
-        let _ = r;
+        let opts = &self.0.opts;
+        if opts.synthetic_candles.load(Ordering::Relaxed) {
+            let r = r.into_inner();
+            let from = r.from.as_ref().map(|t| t.seconds).unwrap_or(0);
+            let to = r.to.as_ref().map(|t| t.seconds).unwrap_or(0);
+            opts.candle_requests
+                .lock()
+                .unwrap()
+                .push((r.interval, from, to));
+            if to < from {
+                return Err(Status::invalid_argument("30012"));
+            }
+            // interval -> (step in seconds, longest span in days): the table of the T-Invest docs
+            let (step, max_days) = match r.interval {
+                1 => (60, 1),
+                2 => (300, 7),
+                3 => (900, 21),
+                4 => (3_600, 90),
+                5 => (86_400, 6 * 365),
+                8 => (600, 7),
+                9 => (1_800, 21),
+                11 => (14_400, 90),
+                12 => (7 * 86_400, 5 * 365),
+                13 => (30 * 86_400, 10 * 365),
+                _ => return Err(Status::invalid_argument("30011")),
+            };
+            if to - from > max_days * 86_400 {
+                return Err(Status::invalid_argument("30014"));
+            }
+            let candles = crate::synthetic_bars(from, to, step)
+                .into_iter()
+                .map(|(t, o, h, l, c, v)| pb::HistoricCandle {
+                    open: Some(quot(o)),
+                    high: Some(quot(h)),
+                    low: Some(quot(l)),
+                    close: Some(quot(c)),
+                    volume: v,
+                    time: ts(t),
+                    is_complete: true,
+                    ..Default::default()
+                })
+                .collect();
+            return Ok(Response::new(pb::GetCandlesResponse { candles }));
+        }
         let c = |t: i64, o: Decimal| pb::HistoricCandle {
             open: Some(quot(o)),
             high: Some(quot(o + Decimal::ONE)),

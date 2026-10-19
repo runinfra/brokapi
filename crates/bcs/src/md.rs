@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use brokapi_bcs_protocol::http::client::BcsHttpClient;
@@ -550,6 +550,12 @@ impl MarketDataSource for MarketDataConnector {
         };
         let resp = self.inner.http.get_candles(&req).await.map_err(map_err)?;
         Ok(map_rest_candles(&resp, tf, Instant::now()))
+    }
+
+    /// One request returns at most 1440 bars (BCS documentation of `candles-chart`), so the span is
+    /// 1440 bars of the timeframe. Not checked against the live API.
+    fn candles_max_span(&self, tf: Timeframe) -> Option<Duration> {
+        Some(Duration::from_secs(1440 * tf.seconds()))
     }
 
     async fn subscribe_candles(

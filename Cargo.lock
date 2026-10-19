@@ -372,9 +372,11 @@ dependencies = [
 name = "brokapi-runtime"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "async-trait",
  "brokapi-core",
  "brokapi-sansio",
  "serde",
+ "serde_json",
  "tokio",
  "tokio-test",
  "tokio-util",

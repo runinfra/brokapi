@@ -62,6 +62,8 @@ fn now_ts() -> prost_types::Timestamp {
 /// Knobs a test can turn while the server runs.
 #[derive(Default)]
 pub struct MockOptions {
+    /// `Bars` answers a series for the range asked, one bar per step of the timeframe. Off: three fixed bars.
+    pub synthetic_candles: std::sync::atomic::AtomicBool,
     /// Streams and unary calls for this symbol answer PERMISSION_DENIED.
     pub deny_symbol: Mutex<Option<String>>,
     /// End each book stream with UNAVAILABLE after N messages (0 = never).
@@ -754,29 +756,73 @@ impl MarketDataService for Mock {
         self.0.record("Bars");
         let start = r
             .interval
-            .and_then(|i| i.start_time)
+            .as_ref()
+            .and_then(|i| i.start_time.as_ref())
             .map(|t| t.seconds)
             .unwrap_or(0);
+        let end = r
+            .interval
+            .as_ref()
+            .and_then(|i| i.end_time.as_ref())
+            .map(|t| t.seconds)
+            .unwrap_or(start);
         self.0
             .options
             .bars_requests
             .lock()
             .unwrap()
             .push((r.timeframe, start));
-        let bars = (0..3)
-            .map(|i| pm::Bar {
-                timestamp: Some(prost_types::Timestamp {
-                    seconds: start + i * 60,
-                    nanos: 0,
-                }),
-                open: d("100"),
-                high: d("101"),
-                low: d("99"),
-                close: d("100.5"),
-                volume: d("1000"),
-                is_data_snapshot: true,
-            })
-            .collect();
+        let bars = if self
+            .0
+            .options
+            .synthetic_candles
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            let step = match r.timeframe {
+                1 => 60,
+                5 => 300,
+                9 => 900,
+                11 => 1_800,
+                12 => 3_600,
+                13 => 7_200,
+                15 => 14_400,
+                17 => 28_800,
+                19 => 86_400,
+                20 => 7 * 86_400,
+                21 => 30 * 86_400,
+                _ => return Err(Status::invalid_argument("unknown timeframe")),
+            };
+            crate::synthetic_bars(start, end, step)
+                .into_iter()
+                .map(|(t, o, h, l, c, v)| pm::Bar {
+                    timestamp: Some(prost_types::Timestamp {
+                        seconds: t,
+                        nanos: 0,
+                    }),
+                    open: d(&o.to_string()),
+                    high: d(&h.to_string()),
+                    low: d(&l.to_string()),
+                    close: d(&c.to_string()),
+                    volume: d(&v.to_string()),
+                    is_data_snapshot: true,
+                })
+                .collect()
+        } else {
+            (0..3)
+                .map(|i| pm::Bar {
+                    timestamp: Some(prost_types::Timestamp {
+                        seconds: start + i * 60,
+                        nanos: 0,
+                    }),
+                    open: d("100"),
+                    high: d("101"),
+                    low: d("99"),
+                    close: d("100.5"),
+                    volume: d("1000"),
+                    is_data_snapshot: true,
+                })
+                .collect()
+        };
         Ok(Response::new(pm::BarsResponse {
             symbol: r.symbol,
             bars,
