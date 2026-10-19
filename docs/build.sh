@@ -3,7 +3,8 @@
 #   - the book (mdBook) at the root,
 #   - the API reference (rustdoc, cargo doc --no-deps) in docs/book/api/<crate>/index.html,
 #   - for AI agents: llms.txt (index), llms-full.txt (the whole book as one markdown file) and the markdown of every
-#     page next to its HTML (page.html -> page.md), see docs/llms.py.
+#     page next to its HTML (page.html -> page.md), see docs/llms.py, and api-reference.md, the reference in text
+#     (docs/apidigest.py).
 #
 # The build goes to a temporary folder first. docs/book is replaced only when everything succeeded,
 # so a broken build leaves the previous version in place.
@@ -41,6 +42,9 @@ cp -r "$TARGET/doc/." "$NEW/api/"
 # Fonts for the reference under stable names (docs/rustdoc-runinfra.css points at /api/fonts/).
 mkdir -p "$NEW/api/fonts"
 cp docs/theme/fonts/*.woff2 "$NEW/api/fonts/"
+
+echo "==> API reference as one markdown file for agents"
+python3 docs/apidigest.py "$NEW"
 
 echo "==> replacing docs/book"
 rm -rf "$OLD"

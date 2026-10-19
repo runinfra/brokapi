@@ -50,6 +50,32 @@ CancelOrder = ["global", "cancel"]
 отказ получит и отмена. Поэтому читайте с запасом и не гоните массовые запросы справочника в то время, когда в рынке
 стоят ваши заявки.
 
+## Свои числа: формат файла
+
+Файл лимитов - TOML: ведра (`rate` запросов за `per`, запас `burst`), маршруты методов к ведрам и квоты соединений. Раздел
+называется по брокеру (`[bcs]`, `[tbank]`, `[finam]`) или как угодно, если читать общей функцией.
+
+```toml
+[bcs.buckets.orders]
+rate = 10          # запросов за период
+per = "1s"
+burst = 3          # сколько можно потратить сразу
+[bcs.route]
+"*" = ["orders"]   # метод без своего маршрута (см. выше)
+PlaceOrder = ["orders"]
+[bcs.conns]
+max_conns = 4
+max_subs_per_conn = 50
+supports_multiplex = false
+```
+
+Читают его `brokapi::bcs::limits::limits_from_toml_str` (и `limits_from_toml_path`; у Т-Банка `brokapi::tbank::limits`, у Финама
+`brokapi::finam::limits::parse_limits`), либо общая `BrokerLimits::from_toml_str` из `brokapi::runtime`, которая берет единственный
+раздел файла. Дальше `BrokerLimiter::new(&limits)`: он возвращает `Arc<BrokerLimiter>`, делится он через `Arc` (`.clone()` у `Arc`), а не копией.
+Рабочий пример малого бюджета, чтобы поймать `RateLimited`, - `small_budget` в `examples/research.rs`. `burst = 0` не пропускает
+ничего никогда, а `retry_after` в этом случае все равно показывает период: ведро не пополнится само.
+Чтобы получить «один раз отказали, потом прошло»: `burst = 1` и длинный `per`, первый вызов проходит, второй сразу получает `RateLimited`.
+
 ## Откуда числа
 
 Из файлов `configs/bcs_limits.toml`, `configs/tbank_limits.toml`, `configs/finam_limits.toml`. Каждый файл встроен в свой

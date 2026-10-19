@@ -7,6 +7,7 @@
 Что проверено и что нет: [Готовность](https://brokapi.runinfra.ru/readiness.html).
 
 Документация: <https://brokapi.runinfra.ru>. Справочник API собирается из кода (rustdoc) и лежит рядом с книгой.
+Для ИИ-агентов: [llms.txt](https://brokapi.runinfra.ru/llms.txt) и [llms-full.txt](https://brokapi.runinfra.ru/llms-full.txt), страницы книги в markdown рядом с HTML.
 
 ## Подключение
 
@@ -36,7 +37,7 @@ brokapi = { version = "0.1.0-alpha.1", features = ["bcs"] }   # или "tbank", 
 tools/check   # fmt, clippy, тесты, doctest-ы, rustdoc, примеры, сборка книги
 ```
 
-Нужен Rust 1.85 или новее и [mdBook](https://rust-lang.github.io/mdBook/) с `mdbook-mermaid`.
+Нужен Rust 1.85 или новее, [mdBook](https://rust-lang.github.io/mdBook/) с `mdbook-mermaid` и python 3 (файлы для ИИ-агентов собирает `docs/llms.py`, только стандартная библиотека).
 
 ## Лицензия
 

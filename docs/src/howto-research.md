@@ -117,6 +117,17 @@ tokio   = { version = "1", features = ["full"] }
 Тест записывает 30 событий живого потока, проигрывает файл и проверяет, что число записанных равно числу проигранных и что
 разбор вернул одно и то же.
 
+## Вся программа целиком
+
+<details>
+<summary>Текст программы examples/research.rs</summary>
+
+```rust,ignore
+{{#include ../../examples/research.rs}}
+```
+
+</details>
+
 ## Как проверить
 
 ```bash
