@@ -184,7 +184,7 @@ impl Infra {
     pub async fn start(
         settings: &Settings,
         journal_path: &Path,
-    ) -> Result<(Self, mpsc::Receiver<Envelope>), Box<dyn std::error::Error>> {
+    ) -> Result<(Self, mpsc::UnboundedReceiver<Envelope>), Box<dyn std::error::Error>> {
         use brokapi::{bcs, finam, tbank};
 
         // One limiter per area where the broker counts a limit. T-Bank counts per user: both accounts and the market
@@ -193,8 +193,11 @@ impl Infra {
         let tbank_limits = BrokerLimiter::new(&tbank::limits::default_limits());
         let finam_limits = BrokerLimiter::new(&finam::limits::default_limits());
 
-        // One channel for everything: the `source` label of an envelope says whose it is.
-        let (tx, events) = mpsc::channel::<Envelope>(8192);
+        // One channel for everything: the `source` label of an envelope says whose it is. A small task moves the
+        // envelopes into the process's own queue at once, so the library's channel is always empty and the process
+        // may wait for the brokers as long as it needs (rule 5 of the contract).
+        let (tx, channel) = mpsc::channel::<Envelope>(8192);
+        let events = forward(channel);
 
         // Finam: one secret, one JWT for the market data and the account.
         let finam_api = settings
@@ -269,7 +272,7 @@ impl Infra {
         }
         let mut infra = infra;
         for name in ACCOUNTS {
-            infra.reconcile(name).await?;
+            infra.reconcile_retry(name).await?;
         }
         Ok((infra, events))
     }
@@ -293,6 +296,44 @@ impl Infra {
     }
     // ANCHOR_END: infra
 
+    // ANCHOR: recover
+    /// A reconcile that does not give up on the first hiccup: a limit or a network error means "no sealed answer
+    /// yet", so wait and ask again, a few times. Any other error is returned: a retry would fail the same way.
+    pub async fn reconcile_retry(&mut self, name: &'static str) -> Result<ReconcileReport, Error> {
+        let mut pause = Duration::from_millis(200);
+        for attempt in 1..=5 {
+            match self.reconcile(name).await {
+                Ok(report) => return Ok(report),
+                Err(Error::RateLimited { retry_after }) if attempt < 5 => {
+                    tokio::time::sleep(retry_after).await
+                }
+                Err(Error::Transport(_)) if attempt < 5 => {
+                    tokio::time::sleep(pause).await;
+                    pause *= 2;
+                }
+                Err(other) => return Err(other),
+            }
+        }
+        unreachable!("the last attempt returns")
+    }
+
+    /// After `Overflow` (the accounts in `degraded`): read the queue to the end, THEN reconcile each such account.
+    /// The events that did arrive are the history up to the hole. The states after the hole come from the reconcile
+    /// and `order_state`; fills since the hole from `executions(range)` if the process keeps its own totals.
+    pub async fn recover(
+        &mut self,
+        events: &mut mpsc::UnboundedReceiver<Envelope>,
+    ) -> Result<(), Error> {
+        while let Ok(env) = events.try_recv() {
+            self.route(env);
+        }
+        for name in std::mem::take(&mut self.degraded) {
+            self.reconcile_retry(name).await?;
+        }
+        Ok(())
+    }
+    // ANCHOR_END: recover
+
     // ANCHOR: reconcile
     /// Reconciles one account with the journal and writes down what it found. The gate of the account opens only if
     /// this succeeds; if it fails, repeat it later and do not trade on that account meanwhile.
@@ -315,7 +356,9 @@ impl Infra {
 
     /// The final state of an order that is not alive any more, as text for the journal.
     async fn settle(&self, name: &str, cid: ClientOrderId) -> Result<String, Error> {
-        let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+        // How long "not found" may still change after a restart is not measured on a real broker: here half a second
+        // is enough for the imitations, take seconds for a real one.
+        let deadline = tokio::time::Instant::now() + NOT_FOUND_PATIENCE;
         loop {
             match self.account(name).order_state(cid).await {
                 Ok(order) => return Ok(state_word(&order.state).to_string()),
@@ -356,12 +399,20 @@ impl Infra {
                 self.write(name, cid, State::Done(format!("rejected {code}")));
                 Placed::Refused(message)
             }
-            Err(e @ (Error::NotReconciled | Error::Degraded | Error::RateLimited { .. })) => {
+            // Nothing left the process: a closed gate, a local limit, a wrong setup, a missing capability, a stop.
+            Err(
+                e @ (Error::NotReconciled
+                | Error::Degraded
+                | Error::ShuttingDown
+                | Error::RateLimited { .. }
+                | Error::Config(_)
+                | Error::Unsupported { .. }),
+            ) => {
                 self.write(name, cid, State::Done("not sent".into()));
                 Placed::NotSent(e.to_string())
             }
-            // Unknown or Transport: leave `Sending`. It is in the ledger of the next reconcile.
-            Err(_) => Placed::Unknown,
+            // Unknown or Transport: the order may exist. Leave `Sending`: it is in the ledger of the next reconcile.
+            Err(Error::Unknown | Error::Transport(_)) => Placed::Unknown,
         }
     }
     // ANCHOR_END: place
@@ -402,6 +453,24 @@ impl Infra {
     // ANCHOR_END: stop
 }
 
+// ANCHOR: helpers
+/// How long a restarted process asks about an order the broker does not know, before it closes the journal line.
+const NOT_FOUND_PATIENCE: Duration = Duration::from_millis(500);
+
+/// The connectors write into a bounded channel and never wait for it: this task moves every envelope into the
+/// process's own queue. The queue is unbounded, so watch its length.
+fn forward(mut events: mpsc::Receiver<Envelope>) -> mpsc::UnboundedReceiver<Envelope> {
+    let (queue_tx, queue) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        while let Some(env) = events.recv().await {
+            if queue_tx.send(env).is_err() {
+                break;
+            }
+        }
+    });
+    queue
+}
+
 fn state_word(state: &OrderState) -> &'static str {
     match state {
         OrderState::InFlight { .. } => "in flight",
@@ -422,6 +491,7 @@ fn is_not_found(e: &Error) -> bool {
         _ => false,
     }
 }
+// ANCHOR_END: helpers
 
 /// The instrument of each account in the form its broker wants. In real code every one comes from `find`.
 pub async fn sber_for(
@@ -477,7 +547,7 @@ pub struct Result2 {
 /// Reads the channel into the journal until `done` holds or `how_long` passes.
 async fn pump(
     infra: &mut Infra,
-    events: &mut mpsc::Receiver<Envelope>,
+    events: &mut mpsc::UnboundedReceiver<Envelope>,
     how_long: Duration,
     done: impl Fn(&Infra) -> bool,
 ) {
@@ -496,6 +566,7 @@ async fn pump(
 pub async fn run(dir: &Path) -> Result<Result2, Box<dyn std::error::Error>> {
     use brokapi_mocks::{bcs as mbcs, finam as mfinam, tbank as mtbank};
 
+    // ANCHOR: mock_settings
     // The imitations live through both lives of the process, like the brokers do.
     let bcs_server = mbcs::MockServer::start(Default::default()).await;
     let tbank_server = mtbank::MockServer::start(Default::default()).await;
@@ -515,6 +586,7 @@ pub async fn run(dir: &Path) -> Result<Result2, Box<dyn std::error::Error>> {
             .with_endpoint(finam_server.url.clone()),
         finam_account: "ACC1".into(),
     };
+    // ANCHOR_END: mock_settings
     let journal_path = dir.join("orders.journal");
     let _ = std::fs::remove_file(&journal_path);
 
@@ -570,6 +642,10 @@ pub async fn run(dir: &Path) -> Result<Result2, Box<dyn std::error::Error>> {
         .chain([orphan])
         .filter_map(|c| infra.journal.state(c).cloned().map(|s| (c, s)))
         .collect();
+    // An account that lost events is reconciled after the queue is read to the end.
+    infra.degraded.push("bcs");
+    infra.recover(&mut events).await?;
+    assert!(infra.degraded.is_empty());
     infra
         .stop(ShutdownMode::Graceful {
             deadline: Duration::from_secs(5),

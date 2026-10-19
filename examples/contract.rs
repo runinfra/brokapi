@@ -105,15 +105,22 @@ pub async fn rule_rate_limited<U: OrderExecutor>(ud: &U, request: PlaceOrderRequ
 }
 
 /// Rule 5: the channel is read all the time, by a task that does nothing slow.
-pub fn rule_read_the_channel(mut events: mpsc::Receiver<Envelope>) {
+pub fn rule_read_the_channel(
+    mut events: mpsc::Receiver<Envelope>,
+) -> mpsc::UnboundedReceiver<Envelope> {
     // ANCHOR: read_the_channel
+    // The reader does nothing but move envelopes to the bot's own queue, so the library's channel is always empty.
+    // The bot takes envelopes from `queue` and may await commands as long as it needs.
+    let (queue_tx, queue) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         while let Some(env) = events.recv().await {
-            // Only cheap work here: update state, push to your own queue. Never await a command in this loop.
-            let _ = env;
+            if queue_tx.send(env).is_err() {
+                break;
+            }
         }
     });
     // ANCHOR_END: read_the_channel
+    queue
 }
 
 /// Rule 6: Overflow or Degraded. Read to the end, reconcile, restore from snapshots.
