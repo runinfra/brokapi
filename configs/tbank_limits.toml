@@ -1,0 +1,257 @@
+# T-Bank (T-Invest API) rate limits.
+#
+# Source: developer.tbank.ru/invest/intro/intro/limits,
+# error codes: developer.tbank.ru/invest/errors (80001 open streams, 80002 request limit, 80006 error limit).
+#
+# SCOPE (several accounts of one user): the limits are per USER, not per account and not per
+# token. The docs say: "Лимитная политика распространяется на все аккаунты (счета) пользователя", and the
+# total cap is counted per source address: "общее число запросов по всем счетам и токенам в секунду не
+# должно превышать 50". Hence ONE BrokerLimiter for everything one user runs from one IP: every
+# UserDataConnector (any account_id) and every MarketDataConnector that uses the user's tokens share the
+# same Arc<BrokerLimiter>. (Accounts are isolated for portfolio/margin, not for request limits.)
+#
+# Limits are dynamic ("система динамического формирования лимитов"): the real per-user values are
+# returned by UsersService/GetUserTariff and in x-ratelimit-limit / -remaining / -reset response headers.
+# The values below are the documented defaults. Interpretation (not verified on the live API): a method
+# that has its own row in the docs table (PostOrder, CancelOrder, ReplaceOrder, GetOrders) is limited by
+# that row, the other methods of the service by the service row.
+#
+# Per-minute limits are token buckets refilled evenly over 60 s. `burst` is kept below the minute quota
+# so a script does not spend the whole minute in the first second.
+
+[tbank.buckets.global]
+# "рекомендуем ... не превышало 50" requests per second over all accounts and tokens
+rate = 50
+per = "1s"
+burst = 50
+
+[tbank.buckets.instruments]
+# Instruments service: 200/min
+rate = 200
+per = "60s"
+burst = 20
+
+[tbank.buckets.operations]
+# Operations service (GetPortfolio, GetPositions, GetOperationsByCursor): 200/min
+rate = 200
+per = "60s"
+burst = 20
+
+[tbank.buckets.accounts]
+# Accounts service (GetAccounts): 100/min
+rate = 100
+per = "60s"
+burst = 10
+
+[tbank.buckets.market_data]
+# Quotes service unary (GetOrderBook, GetLastTrades, GetCandles, GetTradingStatus): 600/min
+rate = 600
+per = "60s"
+burst = 50
+
+[tbank.buckets.market_data_subscribe]
+# "Максимальное количество запросов подписки в минуту - 100" (per stream)
+rate = 100
+per = "60s"
+burst = 20
+
+[tbank.buckets.orders_service]
+# Orders service total (GetOrderState and the rest): 100/min
+rate = 100
+per = "60s"
+burst = 20
+
+[tbank.buckets.order_post]
+# PostOrder: 15 per second (900/min)
+rate = 15
+per = "1s"
+burst = 15
+
+[tbank.buckets.order_cancel]
+# CancelOrder: 300/min. Separate bucket, so cancels are never starved by placements
+rate = 300
+per = "60s"
+burst = 30
+
+[tbank.buckets.order_replace]
+# ReplaceOrder: 300/min
+rate = 300
+per = "60s"
+burst = 30
+
+[tbank.buckets.orders_get]
+# GetOrders: 200/min
+rate = 200
+per = "60s"
+burst = 20
+
+[tbank.buckets.instruments_list]
+# Whole-kind listings (Shares, Bonds, Etfs, Futures, Options, Currencies): 15/min. One bucket for all
+# six: the docs give the limit for the group of methods, not per method (not verified on the live API).
+rate = 15
+per = "60s"
+burst = 3
+
+[tbank.buckets.stop_orders]
+# Stop orders service (PostStopOrder, CancelStopOrder): 50/min
+rate = 50
+per = "60s"
+burst = 10
+
+[tbank.buckets.stop_orders_get]
+# GetStopOrders has its own row in the docs table: 60/min
+rate = 60
+per = "60s"
+burst = 10
+
+[tbank.buckets.order_post_async]
+# PostOrderAsync: 600/min
+rate = 600
+per = "60s"
+burst = 30
+
+[tbank.buckets.operations_reports]
+# Reports in the operations service (GetBrokerReport, GetDividendsForeignIssuer): 5/min
+rate = 5
+per = "60s"
+burst = 1
+
+[tbank.buckets.sandbox]
+# Sandbox service, every method: 200/min
+rate = 200
+per = "60s"
+burst = 20
+
+[tbank.buckets.signals]
+# Signals service (GetStrategies, GetSignals): 100/min
+rate = 100
+per = "60s"
+burst = 10
+
+[tbank.buckets.default]
+# Anything without a route of its own (a method added to the API later, a stream opened through
+# raw()). 100/min is the number the docs table gives most services; the shared "global" bucket still
+# applies on top.
+rate = 100
+per = "60s"
+burst = 10
+
+[tbank.route]
+# "*" = methods with no route below. Used by raw(), so no call goes out without spending quota.
+"*" = ["global", "default"]
+PostOrder = ["global", "order_post"]
+CancelOrder = ["global", "order_cancel"]
+ReplaceOrder = ["global", "order_replace"]
+GetOrders = ["global", "orders_get"]
+GetOrderState = ["global", "orders_service"]
+GetOrderBook = ["global", "market_data"]
+GetLastTrades = ["global", "market_data"]
+GetCandles = ["global", "market_data"]
+GetTradingStatus = ["global", "market_data"]
+SubscribeMarketData = ["global", "market_data_subscribe"]
+FindInstrument = ["global", "instruments"]
+GetInstrumentBy = ["global", "instruments"]
+TradingSchedules = ["global", "instruments"]
+Shares = ["global", "instruments_list"]
+Bonds = ["global", "instruments_list"]
+Etfs = ["global", "instruments_list"]
+Futures = ["global", "instruments_list"]
+Options = ["global", "instruments_list"]
+Currencies = ["global", "instruments_list"]
+GetPortfolio = ["global", "operations"]
+GetPositions = ["global", "operations"]
+GetOperationsByCursor = ["global", "operations"]
+GetAccounts = ["global", "accounts"]
+
+# Everything below: the rest of the API, reachable through raw() and the stop order trait.
+# Instruments service (200/min), the listed kinds are 15/min, see instruments_list.
+GetAssets = ["global", "instruments_list"]
+BondBy = ["global", "instruments"]
+GetBondCoupons = ["global", "instruments"]
+GetBondEvents = ["global", "instruments"]
+CurrencyBy = ["global", "instruments"]
+EtfBy = ["global", "instruments"]
+FutureBy = ["global", "instruments"]
+OptionBy = ["global", "instruments"]
+OptionsBy = ["global", "instruments"]
+ShareBy = ["global", "instruments"]
+Indicatives = ["global", "instruments"]
+GetAccruedInterests = ["global", "instruments"]
+GetFuturesMargin = ["global", "instruments"]
+GetDividends = ["global", "instruments"]
+GetAssetBy = ["global", "instruments"]
+GetFavorites = ["global", "instruments"]
+EditFavorites = ["global", "instruments"]
+CreateFavoriteGroup = ["global", "instruments"]
+DeleteFavoriteGroup = ["global", "instruments"]
+GetFavoriteGroups = ["global", "instruments"]
+GetCountries = ["global", "instruments"]
+GetBrands = ["global", "instruments"]
+GetBrandBy = ["global", "instruments"]
+GetAssetFundamentals = ["global", "instruments"]
+GetAssetReports = ["global", "instruments"]
+GetConsensusForecasts = ["global", "instruments"]
+GetForecastBy = ["global", "instruments"]
+GetRiskRates = ["global", "instruments"]
+GetInsiderDeals = ["global", "instruments"]
+StructuredNoteBy = ["global", "instruments"]
+StructuredNotes = ["global", "instruments"]
+# Quotes service unary (600/min)
+GetLastPrices = ["global", "market_data"]
+GetTradingStatuses = ["global", "market_data"]
+GetClosePrices = ["global", "market_data"]
+GetTechAnalysis = ["global", "market_data"]
+GetMarketValues = ["global", "market_data"]
+# Operations service (200/min); reports 5/min
+GetOperations = ["global", "operations"]
+GetWithdrawLimits = ["global", "operations"]
+GetBrokerReport = ["global", "operations_reports"]
+GetDividendsForeignIssuer = ["global", "operations_reports"]
+# Orders service (100/min); PostOrderAsync has its own row
+PostOrderAsync = ["global", "order_post_async"]
+GetMaxLots = ["global", "orders_service"]
+GetOrderPrice = ["global", "orders_service"]
+# Stop orders service (50/min), GetStopOrders 60/min
+PostStopOrder = ["global", "stop_orders"]
+CancelStopOrder = ["global", "stop_orders"]
+GetStopOrders = ["global", "stop_orders_get"]
+# Users service (accounts, 100/min)
+GetMarginAttributes = ["global", "accounts"]
+GetUserTariff = ["global", "accounts"]
+GetInfo = ["global", "accounts"]
+GetBankAccounts = ["global", "accounts"]
+CurrencyTransfer = ["global", "accounts"]
+# Signals service (100/min)
+GetStrategies = ["global", "signals"]
+GetSignals = ["global", "signals"]
+# Sandbox service (200/min, one row for every method)
+OpenSandboxAccount = ["global", "sandbox"]
+GetSandboxAccounts = ["global", "sandbox"]
+CloseSandboxAccount = ["global", "sandbox"]
+PostSandboxOrder = ["global", "sandbox"]
+PostSandboxOrderAsync = ["global", "sandbox"]
+ReplaceSandboxOrder = ["global", "sandbox"]
+GetSandboxOrders = ["global", "sandbox"]
+CancelSandboxOrder = ["global", "sandbox"]
+GetSandboxOrderState = ["global", "sandbox"]
+GetSandboxOrderPrice = ["global", "sandbox"]
+GetSandboxPositions = ["global", "sandbox"]
+GetSandboxOperations = ["global", "sandbox"]
+GetSandboxOperationsByCursor = ["global", "sandbox"]
+GetSandboxPortfolio = ["global", "sandbox"]
+SandboxPayIn = ["global", "sandbox"]
+GetSandboxWithdrawLimits = ["global", "sandbox"]
+GetSandboxMaxLots = ["global", "sandbox"]
+PostSandboxStopOrder = ["global", "sandbox"]
+GetSandboxStopOrders = ["global", "sandbox"]
+CancelSandboxStopOrder = ["global", "sandbox"]
+
+[tbank.conns]
+# Stream connections per user: market data 32; orders 16 per stream type; operations 11 per stream type
+# (max_conns below is the tightest of them).
+# 300 simultaneous subscriptions (candles + order books + trades together) inside one market-data stream.
+# The unary calls share one HTTP/2 channel, so there are no dedicated command connections.
+max_conns = 11
+max_subs_per_conn = 300
+supports_multiplex = true
+dedicated_command_conns = 0

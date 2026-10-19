@@ -1,0 +1,1036 @@
+//! The user data connector: orders, stop orders, portfolio and fills.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Instant;
+
+use async_trait::async_trait;
+use brokapi_bcs_protocol::error::BcsApiError;
+use brokapi_bcs_protocol::http::client::BcsHttpClient;
+use brokapi_bcs_protocol::http::models::{
+    CancelByIdRequest, CreateOrderRequest, EditOrderRequest, OrderRecord, OrderSearchRequest,
+    OrderStateListResponse, TradeSearchRequest,
+};
+use brokapi_bcs_protocol::models::enums::OrderSide as BcsOrderSide;
+use brokapi_bcs_protocol::ws::client::BcsWsClient;
+use brokapi_bcs_protocol::ws::session::WsSession;
+use brokapi_core::{
+    Backpressure, Balance, ClientOrderId, Envelope, Error, Execution, ExecutionSource, OrderAck,
+    OrderExecutor, OrderSnapshot, OrderType as CoreOrderType, PlaceIdempotency, PlaceOrderRequest,
+    PlaceStopOrderRequest, Portfolio, PortfolioSource, Position, ReconcileReport,
+    ReplaceOrderRequest, ShutdownMode, ShutdownReport, Side, StopOrderExecutor, StopOrderRef,
+    StopOrderSnapshot, SubscribeOpts, SubscriptionId, TimeRange, UserDataCaps,
+};
+use brokapi_runtime::{
+    BrokerLimiter, CommandGate, Emitter, InstrumentLocks, OrderRuntime, PriceGrid,
+    ShutdownController, reconcile_ledger,
+};
+use brokapi_sansio::{BrokerCore, DesiredSubscription, SubscriptionKind, SubscriptionSet};
+use chrono::{TimeZone, Utc};
+use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+
+use crate::cid::foreign_cid;
+use crate::config::UserDataConfig;
+use crate::core::UdCore;
+use crate::error::{map_command_err, map_config_err, map_err, map_order_cmd_err};
+use crate::map::execution::map_trade_record;
+use crate::map::order::{
+    LIST_STATUS_ACTIVE, PLAIN_LIST_TYPES, STOP_LIST_TYPES, map_order_ack, map_order_record,
+    map_state_list, map_stop_record,
+};
+use crate::map::portfolio::map_rest_portfolio;
+use crate::map::stop as map_stop;
+use crate::map::whole_pieces;
+use crate::pump::{drain_backlog, run_ud_pump};
+use crate::raw::BcsRaw;
+use crate::subs::{SubIdGen, UdSubKind, UdSubscription};
+use crate::util::{class_code, nanos_to_datetime, ticker};
+
+struct UdShared {
+    http: BcsHttpClient,
+    limiter: Arc<BrokerLimiter>,
+    core: Arc<Mutex<UdCore>>,
+    emitter: Arc<Emitter>,
+    orders: Mutex<OrderRuntime>,
+    instrument_locks: InstrumentLocks,
+    price_grid: PriceGrid,
+    subs: RwLock<HashMap<SubscriptionId, UdSubscription>>,
+    sub_ids: SubIdGen,
+    shutdown: Mutex<ShutdownController>,
+    cancel: CancellationToken,
+    order_state_buffer: usize,
+}
+
+/// BCS user data connector: orders, stop orders, portfolio and the history of fills for one account.
+///
+/// It implements [`OrderExecutor`], [`StopOrderExecutor`], [`ExecutionSource`] and
+/// [`PortfolioSource`]. The account is the one the refresh token in the config belongs to. One
+/// connector per account. Start it with [`start`](Self::start). Commands return their answer
+/// directly, and subscriptions deliver [`Envelope`]s into the channel given to `start`.
+///
+/// # Rules that protect the account
+///
+/// - **Write access.** The config must be built with `with_write(true)` (the environment switch
+///   `BCS_IS_WRITE=true` does the same for `BcsConfig::from_env`). Without it the connector asks for
+///   a read-only token. Whether the broker then refuses the orders with a definite error is not
+///   verified against the live API. Never rely on it as a safety lock, use a read-only config
+///   only for reading.
+/// - **Reconcile gate.** Trading commands (`place`, `replace`, `cancel`, `place_stop`, `cancel_stop`)
+///   are refused with [`Error::NotReconciled`] until [`reconcile`](OrderExecutor::reconcile) has
+///   succeeded once. This forces the bot to compare its own ledger of orders with the broker before
+///   it sends a new order, so a restart cannot double an order that was placed before the crash.
+///   Reads (`order_state`, `active_orders`, `portfolio`, `executions`) are not gated.
+/// - **Degraded.** If a lossless subscription overflows (the bot reads too slowly), the gate closes
+///   and commands return [`Error::Degraded`] until the next successful `reconcile`.
+/// - **No retry of `place`.** A cid that has been sent is spent. If `place` returns
+///   [`Error::Unknown`] (no answer, a break, HTTP 5xx), the order may exist. Ask `order_state` or
+///   run `reconcile`. Calling `place` again with the same cid returns [`Error::Rejected`] with code
+///   `duplicate_place`, because a retry could create a second order.
+/// - **Rate limit.** Quota is taken from the shared limiter before the request. A refusal is
+///   [`Error::RateLimited`] and nothing is sent, so the same cid can be used again.
+///
+/// # Examples
+///
+/// The whole path against the BCS imitation: reconcile, place, cancel, and two kinds of refusal.
+///
+/// ```
+/// use brokapi_bcs::limits::default_limits;
+/// use brokapi_bcs::{UserDataConfig, UserDataConnector};
+/// use brokapi_conformance::REJECT_PRICE;
+/// use brokapi_core::{
+///     ClientOrderId, Error, InstrumentId, InstrumentKey, NativeId, OrderExecutor, OrderState, OrderType,
+///     PlaceOrderRequest, Price, Qty, ShutdownMode, Side,
+/// };
+/// use brokapi_mocks::bcs::REJECT_IN_BODY_PRICE;
+/// use brokapi_runtime::BrokerLimiter;
+/// use tokio::sync::mpsc;
+/// # use brokapi_bcs_protocol::config::BcsConfig;
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # let server = brokapi_mocks::bcs::MockServer::start(Default::default()).await;
+/// # let cfg = BcsConfig::for_mock("mock-refresh-token", &server.http_base).with_write(true);
+/// let (events_tx, _events) = mpsc::channel(256);
+/// let limiter = BrokerLimiter::new(&default_limits());
+/// let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), limiter, events_tx).await?;
+///
+/// let sber = InstrumentId::new(
+///     InstrumentKey::new("SBER", "TQBR"),
+///     NativeId::TickerClass { ticker: "SBER".into(), class_code: "TQBR".into() },
+/// );
+/// let limit_buy = |price: Price| PlaceOrderRequest {
+///     cid: ClientOrderId::new_v4(),
+///     instrument: sber.clone(),
+///     side: Side::Buy,
+///     order_type: OrderType::Limit,
+///     qty: Qty::from(1),
+///     price: Some(price),
+/// };
+///
+/// // Before the first reconcile the gate is closed.
+/// assert!(matches!(ud.place(limit_buy(Price::from(100))).await, Err(Error::NotReconciled)));
+/// // An empty ledger: the bot has no orders of its own to compare. Opens the gate.
+/// ud.reconcile(&[]).await?;
+///
+/// // Place, then cancel.
+/// let req = limit_buy(Price::from(100));
+/// let cid = req.cid;
+/// let ack = ud.place(req).await?;
+/// println!("broker order id: {}", ack.broker_id.as_str());
+/// ud.cancel(cid).await?;
+/// assert!(matches!(ud.order_state(cid).await?.state, OrderState::Cancelled { .. }));
+///
+/// // The broker says no, way one: HTTP 400. Nothing was created.
+/// match ud.place(limit_buy(REJECT_PRICE)).await {
+///     Err(Error::Rejected { code, .. }) => assert_eq!(code, "validation"),
+///     other => panic!("expected a refusal, got {other:?}"),
+/// }
+/// // Way two: HTTP 200, but the report in the answer has orderStatus = 8.
+/// match ud.place(limit_buy(Price::new(REJECT_IN_BODY_PRICE))).await {
+///     Err(Error::Rejected { code, message }) => {
+///         assert_eq!(code, "rejected");
+///         println!("reason from the broker: {message}");
+///     }
+///     other => panic!("expected a refusal, got {other:?}"),
+/// }
+///
+/// ud.shutdown(ShutdownMode::Immediate).await;
+/// # Ok(())
+/// # }
+/// ```
+pub struct UserDataConnector {
+    inner: Arc<UdShared>,
+    pump: JoinHandle<()>,
+    /// `orders/events/ws`: status changes and fills of orders in one channel.
+    _ws_events: WsSession,
+    _ws_portfolio: WsSession,
+}
+
+impl UserDataConnector {
+    /// Starts the connector: gets the first access token and opens the order events and portfolio
+    /// WebSockets.
+    ///
+    /// The trading gate starts closed: call [`reconcile`](OrderExecutor::reconcile) before the first
+    /// command, or `place` returns [`Error::NotReconciled`]. The token refresh does not spend rate
+    /// limit quota. The two WebSocket sessions run in the background and reconnect on their own.
+    /// Order status changes and fills arrive on one channel, `orders/events/ws`.
+    ///
+    /// `limiter` should be the one shared by every connector of this BCS account, because the limits
+    /// belong to the token. `out` receives the envelopes of all subscriptions and must be read.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Config`] when the HTTP or WebSocket client cannot be built from `cfg`.
+    /// - [`Error::Transport`] when the token refresh fails: no connection, a timeout, or the auth
+    ///   server refuses the refresh token. Exact auth server answers: not verified against the live
+    ///   API.
+    /// - [`Error::RateLimited`] when the auth server answers HTTP 429.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use brokapi_bcs::limits::default_limits;
+    /// use brokapi_bcs::{UserDataConfig, UserDataConnector};
+    /// use brokapi_core::{OrderExecutor, ShutdownMode};
+    /// use brokapi_runtime::BrokerLimiter;
+    /// use tokio::sync::mpsc;
+    /// # use brokapi_bcs_protocol::config::BcsConfig;
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let server = brokapi_mocks::bcs::MockServer::start(Default::default()).await;
+    /// # let cfg = BcsConfig::for_mock("mock-refresh-token", &server.http_base).with_write(true);
+    /// let (events_tx, _events) = mpsc::channel(256);
+    /// let limiter = BrokerLimiter::new(&default_limits());
+    /// let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), limiter, events_tx).await?;
+    /// // The gate is closed until the first reconcile.
+    /// ud.reconcile(&[]).await?;
+    /// # ud.shutdown(ShutdownMode::Immediate).await;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// A broker that cannot be reached is a [`Error::Transport`]:
+    ///
+    /// ```
+    /// use brokapi_bcs::limits::default_limits;
+    /// use brokapi_bcs::{UserDataConfig, UserDataConnector};
+    /// use brokapi_core::Error;
+    /// use brokapi_runtime::BrokerLimiter;
+    /// use tokio::sync::mpsc;
+    /// use brokapi_bcs_protocol::config::BcsConfig;
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() {
+    /// // Port 1 of the local host: nothing listens there.
+    /// let cfg = BcsConfig::for_mock("any-token", "http://127.0.0.1:1").with_write(true);
+    /// let (events_tx, _events) = mpsc::channel(16);
+    /// let limiter = BrokerLimiter::new(&default_limits());
+    /// let started = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), limiter, events_tx).await;
+    /// assert!(matches!(started, Err(Error::Transport(_))));
+    /// # }
+    /// ```
+    pub async fn start(
+        cfg: UserDataConfig,
+        limiter: Arc<BrokerLimiter>,
+        out: mpsc::Sender<Envelope>,
+    ) -> Result<Self, Error> {
+        let ws_client = BcsWsClient::new(cfg.bcs.clone())
+            .map_err(map_config_err)?
+            .with_options(cfg.ws_options());
+        ws_client
+            .http_client()
+            .authenticate()
+            .await
+            .map_err(map_err)?;
+
+        let (event_tx, event_rx) = kanal::bounded_async(512);
+
+        // One channel for order statuses AND fills: the current `orders/events/ws`. The deprecated
+        // execution-status and transaction-status are not opened (the protocol crate still has them,
+        // reachable through `raw().connect_ws`).
+        let ws_events = ws_client.connect_order_events(event_tx.clone());
+        let ws_portfolio = ws_client.connect_portfolio(event_tx);
+
+        let cancel = CancellationToken::new();
+        let core = Arc::new(Mutex::new(UdCore::new()));
+        let emitter = Emitter::new(Arc::clone(&cfg.source), out);
+        let gate = CommandGate::new();
+
+        let inner = Arc::new(UdShared {
+            http: ws_client.http_client().clone(),
+            limiter,
+            core: Arc::clone(&core),
+            emitter: Arc::clone(&emitter),
+            orders: Mutex::new(OrderRuntime::new()),
+            instrument_locks: InstrumentLocks::new(),
+            price_grid: cfg.price_grid.clone(),
+            subs: RwLock::new(HashMap::new()),
+            sub_ids: SubIdGen::new(1000),
+            shutdown: Mutex::new(ShutdownController::new(gate)),
+            cancel: cancel.clone(),
+            order_state_buffer: cfg.order_state_buffer,
+        });
+
+        let pump = tokio::spawn(run_ud_pump(core, emitter, event_rx, cancel));
+
+        Ok(Self {
+            inner,
+            pump,
+            _ws_events: ws_events,
+            _ws_portfolio: ws_portfolio,
+        })
+    }
+
+    /// Returns a handle for any other method of the BCS API, with this connector's token, endpoint
+    /// and rate limiter.
+    ///
+    /// Orders sent through the handle bypass this connector's order state: there are no events for
+    /// them, they are not in the ledger and `reconcile` does not know them. Use [`OrderExecutor`]
+    /// for orders, and the handle for reads and for methods the traits do not wrap. Use
+    /// [`call_command`](BcsRaw::call_command) for anything that changes the account. See [`BcsRaw`]
+    /// for the rules of a call.
+    ///
+    /// # Examples
+    ///
+    /// A raw read, spending the quota of the name `GetQuotes`:
+    ///
+    /// ```
+    /// use brokapi_bcs_protocol::http::models::{QuoteInstrument, QuotesRequest};
+    /// use brokapi_bcs::limits::default_limits;
+    /// use brokapi_bcs::{UserDataConfig, UserDataConnector};
+    /// use brokapi_core::ShutdownMode;
+    /// use brokapi_runtime::BrokerLimiter;
+    /// use tokio::sync::mpsc;
+    /// # use brokapi_bcs_protocol::config::BcsConfig;
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let server = brokapi_mocks::bcs::MockServer::start(Default::default()).await;
+    /// # let cfg = BcsConfig::for_mock("mock-refresh-token", &server.http_base).with_write(true);
+    /// # let (events_tx, _events) = mpsc::channel(256);
+    /// # let limiter = BrokerLimiter::new(&default_limits());
+    /// let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), limiter, events_tx).await?;
+    /// let quotes = ud
+    ///     .raw()
+    ///     .call("GetQuotes", |http| async move {
+    ///         http.get_quotes(&QuotesRequest { instruments: vec![QuoteInstrument::new("SBER", "TQBR")] }).await
+    ///     })
+    ///     .await?;
+    /// assert!(!quotes.records.is_empty());
+    /// ud.shutdown(ShutdownMode::Immediate).await;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn raw(&self) -> BcsRaw {
+        BcsRaw::new(self.inner.http.clone(), Arc::clone(&self.inner.limiter))
+    }
+
+    /// The price steps this connector checks order prices against. Fill it from
+    /// [`TradingParams`](brokapi_core::TradingParams) (`grid.learn(&params)`) to have a price off the
+    /// step refused before anything is sent. See [`PriceGrid`].
+    pub fn price_grid(&self) -> &PriceGrid {
+        &self.inner.price_grid
+    }
+
+    /// Describes what this connector can do, without any request.
+    ///
+    /// The answer is fixed for BCS: a place request is deduplicated by label only
+    /// ([`PlaceIdempotency::LabelOnly`], so never repeat a place), replace and stop orders are
+    /// supported, fills are streamed, there is no command channel over WebSocket and no sandbox.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use brokapi_bcs::limits::default_limits;
+    /// use brokapi_bcs::{UserDataConfig, UserDataConnector};
+    /// use brokapi_core::ShutdownMode;
+    /// use brokapi_runtime::BrokerLimiter;
+    /// use tokio::sync::mpsc;
+    /// # use brokapi_bcs_protocol::config::BcsConfig;
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let server = brokapi_mocks::bcs::MockServer::start(Default::default()).await;
+    /// # let cfg = BcsConfig::for_mock("mock-refresh-token", &server.http_base).with_write(true);
+    /// let (events_tx, _events) = mpsc::channel(256);
+    /// let limiter = BrokerLimiter::new(&default_limits());
+    /// let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), limiter, events_tx).await?;
+    /// let caps = ud.caps();
+    /// assert!(caps.supports_replace && caps.supports_stop_orders && caps.streams_executions);
+    /// assert!(!caps.sandbox);
+    /// # ud.shutdown(ShutdownMode::Immediate).await;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn caps(&self) -> UserDataCaps {
+        UserDataCaps {
+            place_idempotency: PlaceIdempotency::LabelOnly,
+            ws_rpc: false,
+            ordered_command_channel: false,
+            supports_replace: true,
+            // Conditional orders (`orderType = 5`): see the `StopOrderExecutor` impl.
+            supports_stop_orders: true,
+            streams_executions: true,
+            sandbox: false,
+        }
+    }
+
+    /// Stops the connector and reports what was left unfinished. Consumes the connector.
+    ///
+    /// The command gate closes first, so nothing new is sent. Orders that were placed but have no
+    /// answer yet are listed in `inflight_abandoned` and marked unknown locally. The broker is not
+    /// asked to cancel anything: orders that exist on the exchange stay alive, and a later
+    /// `reconcile` finds them. With [`ShutdownMode::Graceful`] the events that wait in the
+    /// subscription buffers first get time to reach the bot's channel, until `deadline`. The
+    /// WebSocket sessions are not unsubscribed message by message, so `unsubscribed` is `0`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use brokapi_bcs::limits::default_limits;
+    /// use brokapi_bcs::{UserDataConfig, UserDataConnector};
+    /// use brokapi_core::ShutdownMode;
+    /// use brokapi_runtime::BrokerLimiter;
+    /// use tokio::sync::mpsc;
+    /// # use brokapi_bcs_protocol::config::BcsConfig;
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let server = brokapi_mocks::bcs::MockServer::start(Default::default()).await;
+    /// # let cfg = BcsConfig::for_mock("mock-refresh-token", &server.http_base).with_write(true);
+    /// # let (events_tx, _events) = mpsc::channel(256);
+    /// # let limiter = BrokerLimiter::new(&default_limits());
+    /// let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), limiter, events_tx).await?;
+    /// let report = ud.shutdown(ShutdownMode::Graceful { deadline: Duration::from_secs(1) }).await;
+    /// assert!(report.inflight_abandoned.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn shutdown(self, mode: ShutdownMode) -> ShutdownReport {
+        let now = Instant::now();
+        if let ShutdownMode::Graceful { deadline } = mode {
+            drain_backlog(&self.inner.emitter, deadline).await;
+        }
+        let mut orders = self.inner.orders.lock().await;
+        let mut shutdown = self.inner.shutdown.lock().await;
+        let report = shutdown.shutdown_local(mode, now, &mut orders, || (0, 0));
+        self.inner.cancel.cancel();
+        let _ = self.pump.await;
+        report
+    }
+
+    /// The gate of trading commands. An `Overflow` of a lossless subscription (found by the emitter,
+    /// which runs in the pump task) closes it as `Degraded` until `reconcile` succeeds.
+    async fn check_command(&self) -> Result<(), Error> {
+        let mut ctl = self.inner.shutdown.lock().await;
+        if self.inner.emitter.is_degraded() {
+            ctl.gate_mut().mark_degraded();
+        }
+        ctl.gate().check_command()
+    }
+
+    async fn acquire(&self, method: &str) -> Result<(), Error> {
+        self.inner.limiter.acquire(method, Instant::now())
+    }
+
+    async fn register_ud_sub(
+        &self,
+        kind: UdSubKind,
+        opts: SubscribeOpts,
+    ) -> Result<SubscriptionId, Error> {
+        let id = self.inner.sub_ids.next();
+        let instrument = brokapi_core::InstrumentId::new(
+            brokapi_core::InstrumentKey::new("", ""),
+            brokapi_core::NativeId::TickerClass {
+                ticker: String::new(),
+                class_code: String::new(),
+            },
+        );
+        self.inner
+            .emitter
+            .register(id, Some(instrument), opts.backpressure);
+        self.inner
+            .subs
+            .write()
+            .await
+            .insert(id, UdSubscription { id, kind, opts });
+
+        // The core gets the whole set: applying one subscription alone would drop the others.
+        let desired = SubscriptionSet::with_subscriptions(
+            self.inner
+                .subs
+                .read()
+                .await
+                .values()
+                .map(|s| DesiredSubscription {
+                    id: s.id,
+                    kind: match s.kind {
+                        UdSubKind::OrderState => SubscriptionKind::OrderState,
+                        UdSubKind::Portfolio => SubscriptionKind::Portfolio,
+                        UdSubKind::Executions => SubscriptionKind::Executions,
+                    },
+                })
+                .collect(),
+        );
+        self.inner.core.lock().await.apply(&desired);
+        Ok(id)
+    }
+}
+
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+/// The list of orders shows orders from 26.01.2026 (documented limit), so the search starts there.
+fn list_start() -> chrono::DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 1, 26, 0, 0, 0)
+        .single()
+        .expect("valid date")
+}
+
+/// The order list pages are read until `totalPages`, at most this many (100 per page).
+const MAX_LIST_PAGES: i32 = 10;
+
+/// How a broker order id is named in `orderId` / `orderIdType`: our cid is a UUID (`"1"`), anything
+/// else is the exchange id such as `20261019-TQBR-79628540663` (`"2"`).
+fn order_ref(id: &str) -> (&'static str, String) {
+    if uuid::Uuid::parse_str(id).is_ok() {
+        ("1", id.to_string())
+    } else {
+        ("2", id.to_string())
+    }
+}
+
+impl UserDataConnector {
+    /// Orders of the account from `POST /orders/search`, all pages.
+    async fn list_orders(
+        &self,
+        statuses: &[i32],
+        types: &[i32],
+    ) -> Result<Vec<OrderRecord>, Error> {
+        let mut out = Vec::new();
+        for page in 0..MAX_LIST_PAGES {
+            self.acquire("SearchOrders").await?;
+            let req = OrderSearchRequest {
+                start_date_time: list_start(),
+                end_date_time: Utc::now(),
+                side: None,
+                order_status: Some(statuses.to_vec()),
+                order_types: Some(types.to_vec()),
+                tickers: None,
+                class_codes: None,
+            };
+            let resp = self
+                .inner
+                .http
+                .search_orders(req, Some(page), Some(100))
+                .await
+                .map_err(map_err)?;
+            out.extend(resp.records);
+            if page + 1 >= resp.total_pages {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Our cid of a broker order id: what this process has seen, else one `GET /orders` by the
+    /// exchange id (the list carries no `clientOrderId`). `None` when the broker has no cid of ours
+    /// for it (an order from the app, or the lookup failed).
+    async fn cid_of_order_id(&self, order_id: &str) -> Option<ClientOrderId> {
+        if let Some(cid) = self.inner.core.lock().await.cid_of_order_id(order_id) {
+            return Some(cid);
+        }
+        self.acquire("GetOrder").await.ok()?;
+        let resp = self.inner.http.get_order("2", order_id).await.ok()?;
+        // The cid of an order is its own `clientOrderId`; `original...` names the order it replaced.
+        let cid = uuid::Uuid::parse_str(&resp.client_order_id)
+            .ok()
+            .or_else(|| {
+                resp.original_client_order_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            })?;
+        self.inner.core.lock().await.learn_order_id(order_id, cid);
+        Some(cid)
+    }
+
+    async fn learn(&self, order_id: &str, cid: ClientOrderId) {
+        self.inner.core.lock().await.learn_order_id(order_id, cid);
+    }
+
+    /// The state of the order after a command that waits for the broker (`/sync` methods): the report
+    /// the broker returned, or `Unknown` when it answered without one (the order may exist).
+    fn state_of(
+        &self,
+        cid: ClientOrderId,
+        resp: &OrderStateListResponse,
+    ) -> Result<brokapi_core::OrderSnapshot, Error> {
+        map_state_list(Some(cid), resp, Instant::now()).ok_or(Error::Unknown)
+    }
+
+    /// A cancel that waited for the broker: done when the order is cancelled, refused when the broker
+    /// says it is filled or rejected the request, `Unknown` when it is still alive in the answer
+    /// (the outcome is not decided: ask `order_state`).
+    fn cancel_outcome(
+        &self,
+        cid: ClientOrderId,
+        resp: &OrderStateListResponse,
+    ) -> Result<(), Error> {
+        use brokapi_core::OrderState as S;
+        let snap = self.state_of(cid, resp)?;
+        match snap.state {
+            S::Cancelled { .. } => Ok(()),
+            S::Filled { .. } => Err(Error::Rejected {
+                code: "already_filled".into(),
+                message: "the order was filled before the cancel".into(),
+            }),
+            S::Rejected { reason, .. } => Err(Error::Rejected {
+                code: "cancel_rejected".into(),
+                message: reason,
+            }),
+            _ => Err(Error::Unknown),
+        }
+    }
+
+    /// An order command that waited for the broker, as an ack: a refusal inside a 200 answer
+    /// (`orderStatus = 8`) is `Rejected`.
+    fn ack_of(
+        &self,
+        cid: ClientOrderId,
+        resp: &OrderStateListResponse,
+        now: Instant,
+    ) -> Result<(OrderAck, Option<String>), Error> {
+        let snap = self.state_of(cid, resp)?;
+        if let brokapi_core::OrderState::Rejected { reason, .. } = &snap.state {
+            return Err(Error::Rejected {
+                code: "rejected".into(),
+                message: reason.clone(),
+            });
+        }
+        let order_id = snap.broker_id.as_ref().map(|b| b.as_str().to_string());
+        let broker_id = order_id
+            .clone()
+            .unwrap_or_else(|| cid.hyphenated().to_string());
+        Ok((
+            map_order_ack(cid, brokapi_core::BrokerOrderId::new(broker_id), now),
+            order_id,
+        ))
+    }
+}
+
+#[async_trait]
+impl OrderExecutor for UserDataConnector {
+    /// `POST /orders/sync`, not `POST /orders`. The synchronous method waits for the broker's decision
+    /// and answers with the order's state, so (1) a refusal (`orderStatus = 8`, `rejectReason`) is
+    /// known right here as `Rejected`, not a minute later from the stream, and (2) the ack carries the
+    /// broker's real order id (`orderId`), the same one the order list and the stream use. The plain
+    /// method only says "request accepted".
+    async fn place(&self, req: PlaceOrderRequest) -> Result<OrderAck, Error> {
+        self.check_command().await?;
+        // Input first, then quota, then the cid: a refusal before the cid is marked (bad input,
+        // `RateLimited`) sends nothing, so the same cid can be used again. The order is the one of
+        // T-Bank and Finam.
+        let side = match req.side {
+            Side::Buy => BcsOrderSide::Buy,
+            Side::Sell => BcsOrderSide::Sell,
+        };
+        let http_req = match req.order_type {
+            CoreOrderType::Market => CreateOrderRequest::market(
+                req.cid,
+                ticker(&req.instrument)?,
+                class_code(&req.instrument)?,
+                side,
+                whole_pieces(req.qty)?,
+            ),
+            CoreOrderType::Limit => {
+                let price = req.price.ok_or_else(|| Error::Rejected {
+                    code: "missing_price".into(),
+                    message: "limit order requires price".into(),
+                })?;
+                // The step is checked here, before a quota is spent or the cid is marked.
+                self.inner.price_grid.check(&req.instrument.key, price)?;
+                CreateOrderRequest::limit(
+                    req.cid,
+                    ticker(&req.instrument)?,
+                    class_code(&req.instrument)?,
+                    side,
+                    whole_pieces(req.qty)?,
+                    price.decimal(),
+                )
+            }
+        };
+        self.acquire("PlaceOrder").await?;
+
+        // Waits for earlier commands on this instrument, released on every exit path.
+        let _instrument = self.inner.instrument_locks.lock(&req.instrument).await;
+        self.inner.instrument_locks.bind(req.cid, &req.instrument);
+
+        let now = Instant::now();
+        {
+            let mut orders = self.inner.orders.lock().await;
+            if !orders.try_place_once(req.cid) {
+                return Err(Error::Rejected {
+                    code: "duplicate_place".into(),
+                    message: "auto-retry of place is forbidden".into(),
+                });
+            }
+            orders.register_place(req.cid, now);
+        }
+
+        let resp = self
+            .inner
+            .http
+            .create_order_sync(&http_req)
+            .await
+            .map_err(map_command_err)?;
+        let (ack, order_id) = self.ack_of(req.cid, &resp, now)?;
+        if let Some(id) = order_id {
+            self.learn(&id, req.cid).await;
+        }
+        Ok(ack)
+    }
+
+    /// `POST /orders/cancel/sync` (the order is named in the body). Synchronous for the same reason as
+    /// `place`: "cancelled" means the broker says so, an order that was filled first is `Rejected`
+    /// (`already_filled`), and an answer that leaves the order alive is `Unknown`, never "ok".
+    async fn cancel(&self, cid: ClientOrderId) -> Result<(), Error> {
+        self.check_command().await?;
+        self.acquire("CancelOrder").await?;
+        // The instrument comes from the orders this process placed; an older order is not serialized.
+        let _instrument = self.inner.instrument_locks.lock_cid(cid).await;
+        let req = CancelByIdRequest::by_client_order_id(cid, uuid::Uuid::new_v4());
+        let resp = self
+            .inner
+            .http
+            .cancel_order_by_id_sync(&req)
+            .await
+            .map_err(map_order_cmd_err)?;
+        self.cancel_outcome(cid, &resp)
+    }
+
+    /// `POST /orders/edit/sync`: the broker cancels the original and puts a new order under the new
+    /// cid. The quantity and price the caller leaves out are the order's current ones (one
+    /// `GET /orders`), because the request needs `orderQuantity` and a limit order needs its price. An
+    /// order that is partly filled needs an explicit quantity: whether `orderQuantity` of an edit is the
+    /// total or the rest is not documented (live question 7).
+    async fn replace(&self, req: ReplaceOrderRequest) -> Result<OrderAck, Error> {
+        self.check_command().await?;
+        // The request has no instrument: it is the one of the original order, if this process
+        // placed it. The new cid inherits it.
+        let (qty, price) = match (req.qty, req.price) {
+            (Some(q), Some(p)) => {
+                if let Some(i) = self.inner.instrument_locks.instrument_of(req.original_cid) {
+                    self.inner.price_grid.check(&i.key, p)?;
+                }
+                (whole_pieces(q)?, Some(p.decimal()))
+            }
+            (q, p) => {
+                self.acquire("GetOrder").await?;
+                let cur = self
+                    .inner
+                    .http
+                    .get_order("1", &req.original_cid.hyphenated().to_string())
+                    .await
+                    .map_err(map_err)?;
+                let snap = map_state_list(Some(req.original_cid), &cur, Instant::now())
+                    .ok_or(Error::Unknown)?;
+                if q.is_none() && snap.filled.is_positive() {
+                    return Err(Error::Rejected {
+                        code: "qty_required".into(),
+                        message: "the order is partly filled: give the quantity of the new order"
+                            .into(),
+                    });
+                }
+                if let Some(p) = p {
+                    self.inner.price_grid.check(&snap.instrument.key, p)?;
+                }
+                let qty = q.unwrap_or(snap.qty);
+                (
+                    whole_pieces(qty)?,
+                    p.or(snap.price).map(brokapi_core::Price::decimal),
+                )
+            }
+        };
+        self.acquire("ReplaceOrder").await?;
+        let _instrument = self.inner.instrument_locks.lock_cid(req.original_cid).await;
+        if let Some(i) = self.inner.instrument_locks.instrument_of(req.original_cid) {
+            self.inner.instrument_locks.bind(req.cid, &i);
+        }
+        let http_req = EditOrderRequest {
+            order_id_type: Some("1".into()),
+            order_id: req.original_cid.hyphenated().to_string(),
+            client_order_id: req.cid,
+            order_type: None,
+            price,
+            order_quantity: qty,
+            extras: Default::default(),
+        };
+        let resp = self
+            .inner
+            .http
+            .edit_order_sync(&http_req)
+            .await
+            .map_err(map_order_cmd_err)?;
+        let (ack, order_id) = self.ack_of(req.cid, &resp, Instant::now())?;
+        if let Some(id) = order_id {
+            self.learn(&id, req.cid).await;
+        }
+        Ok(ack)
+    }
+
+    /// `GET /orders?orderIdType=1&orderId=<cid>`. The answer is about the order asked for, so its cid is
+    /// the one asked.
+    async fn order_state(&self, cid: ClientOrderId) -> Result<OrderSnapshot, Error> {
+        self.acquire("GetOrder").await?;
+        let resp = self
+            .inner
+            .http
+            .get_order("1", &cid.hyphenated().to_string())
+            .await
+            .map_err(map_err)?;
+        let snap = map_state_list(Some(cid), &resp, Instant::now()).ok_or_else(|| {
+            Error::Transport(brokapi_core::TransportError::Message(
+                "order status answer has no report".into(),
+            ))
+        })?;
+        if let Some(id) = &snap.broker_id {
+            self.learn(id.as_str(), cid).await;
+        }
+        Ok(snap)
+    }
+
+    /// Active orders (`orderStatus = 3`, plain order types) from `POST /orders/search`. The list carries
+    /// the broker's order id only: our cid comes from what this process has seen or from one lookup by
+    /// the exchange id; an order we cannot name gets a stable foreign cid ([`foreign_cid`]).
+    async fn active_orders(&self) -> Result<Vec<OrderSnapshot>, Error> {
+        let records = self
+            .list_orders(&[LIST_STATUS_ACTIVE], &PLAIN_LIST_TYPES)
+            .await?;
+        let now = Instant::now();
+        let mut out = Vec::new();
+        for r in &records {
+            let cid = match self.cid_of_order_id(&r.order_id).await {
+                Some(c) => c,
+                None => foreign_cid(&r.order_id),
+            };
+            if let Some(snap) = map_order_record(r, cid, now) {
+                out.push(snap);
+            }
+        }
+        Ok(out)
+    }
+
+    async fn subscribe_order_state(&self) -> Result<SubscriptionId, Error> {
+        let opts = SubscribeOpts {
+            backpressure: Backpressure::Lossless {
+                cap: self.inner.order_state_buffer,
+            },
+            depth: None,
+        };
+        self.register_ud_sub(UdSubKind::OrderState, opts).await
+    }
+
+    async fn reconcile(&self, ledger: &[ClientOrderId]) -> Result<ReconcileReport, Error> {
+        self.acquire("Reconcile").await?;
+        let mut ledger_snaps = Vec::new();
+        let mut unknown = Vec::new();
+        for cid in ledger {
+            self.acquire("GetOrder").await?;
+            match self
+                .inner
+                .http
+                .get_order("1", &cid.hyphenated().to_string())
+                .await
+            {
+                Ok(resp) => match map_state_list(Some(*cid), &resp, Instant::now()) {
+                    Some(snap) => {
+                        // Teaches the cid of this broker order, so the list below names it.
+                        if let Some(id) = &snap.broker_id {
+                            self.learn(id.as_str(), *cid).await;
+                        }
+                        ledger_snaps.push(snap);
+                    }
+                    None => unknown.push(*cid),
+                },
+                // The broker never saw this cid (or forgot it): closed while we were offline.
+                Err(BcsApiError::NotFound { .. }) => unknown.push(*cid),
+                // Anything else is not an answer about the order: reconcile is not done.
+                Err(e) => return Err(map_err(e)),
+            }
+        }
+        let broker = self.active_orders().await?;
+        let mut report = reconcile_ledger(&ledger_snaps, &broker);
+        report.closed_offline.extend(unknown);
+        // A reconcile that got this far leaves `Degraded`: the lists above are the repair of what
+        // the overflow may have cost.
+        self.inner.emitter.clear_degraded();
+        let mut ctl = self.inner.shutdown.lock().await;
+        ctl.gate_mut().clear_degraded();
+        ctl.gate_mut().mark_reconciled();
+        Ok(report)
+    }
+}
+
+#[async_trait]
+impl ExecutionSource for UserDataConnector {
+    async fn executions(&self, range: TimeRange) -> Result<Vec<Execution>, Error> {
+        self.acquire("SearchTrades").await?;
+        let req = TradeSearchRequest {
+            start_date_time: nanos_to_datetime(range.from).to_rfc3339(),
+            end_date_time: nanos_to_datetime(range.to).to_rfc3339(),
+            side: None,
+            tickers: None,
+        };
+        let resp = self
+            .inner
+            .http
+            .search_trades(&req, None, None)
+            .await
+            .map_err(map_err)?;
+        Ok(resp
+            .records
+            .iter()
+            .filter_map(|r| map_trade_record(r, Instant::now()))
+            .collect())
+    }
+
+    /// Fills pushed by the `orders/events/ws` channel: messages with `lastQuantity > 0`, each
+    /// `executionId` once. Lossless: a fill is never dropped (an overflow is a visible `Overflow`).
+    async fn subscribe_executions(&self) -> Result<SubscriptionId, Error> {
+        let opts = SubscribeOpts {
+            backpressure: Backpressure::Lossless {
+                cap: self.inner.order_state_buffer,
+            },
+            depth: None,
+        };
+        self.register_ud_sub(UdSubKind::Executions, opts).await
+    }
+}
+
+#[async_trait]
+impl PortfolioSource for UserDataConnector {
+    async fn portfolio(&self) -> Result<Portfolio, Error> {
+        self.acquire("GetPortfolio").await?;
+        let resp = self.inner.http.get_portfolio().await.map_err(map_err)?;
+        Ok(map_rest_portfolio(&resp, Instant::now()))
+    }
+
+    async fn positions(&self) -> Result<Vec<Position>, Error> {
+        Ok(self.portfolio().await?.positions)
+    }
+
+    async fn balances(&self) -> Result<Vec<Balance>, Error> {
+        Ok(self.portfolio().await?.balances)
+    }
+
+    async fn subscribe_portfolio(&self, opts: SubscribeOpts) -> Result<SubscriptionId, Error> {
+        self.register_ud_sub(UdSubKind::Portfolio, opts).await
+    }
+}
+
+/// Stop orders are BCS conditional orders (`orderType = "5"`): `stopPrice` for a stop-loss and
+/// stop-limit, `takePrice` for a take-profit, market or limit execution. How the request is built, and
+/// every choice the docs leave open (lifetime, trigger direction, the meaning of `price`, TP+SL pairs),
+/// is in [`crate::map::stop`]; each of them is a live question (the live runs page of the book, BCS section,
+/// question 12). Both commands use the synchronous methods, for the reasons given at `place`.
+///
+/// There is no stream of stop order statuses: `orders/events/ws` documents only order types 1 and 2,
+/// whether it carries conditional orders is a live question, so `subscribe_stop_orders` is `Unsupported`.
+#[async_trait]
+impl StopOrderExecutor for UserDataConnector {
+    async fn place_stop(&self, req: PlaceStopOrderRequest) -> Result<OrderAck, Error> {
+        self.check_command().await?;
+        // Input is checked before anything is sent or any quota is spent.
+        let wire = map_stop::build(&req)?;
+        self.inner
+            .price_grid
+            .check(&req.instrument.key, req.stop_price)?;
+        if let Some(p) = req.limit_price {
+            self.inner.price_grid.check(&req.instrument.key, p)?;
+        }
+        // Quota before the cid is marked: a `RateLimited` sent nothing, the cid stays usable.
+        self.acquire("PlaceStopOrder").await?;
+        let _instrument = self.inner.instrument_locks.lock(&req.instrument).await;
+        self.inner.instrument_locks.bind(req.cid, &req.instrument);
+        let now = Instant::now();
+        {
+            let mut orders = self.inner.orders.lock().await;
+            if !orders.try_place_once(req.cid) {
+                return Err(Error::Rejected {
+                    code: "duplicate_place".into(),
+                    message: "auto-retry of place_stop is forbidden".into(),
+                });
+            }
+            orders.register_place(req.cid, now);
+        }
+
+        let resp = self
+            .inner
+            .http
+            .create_order_sync(&wire)
+            .await
+            .map_err(map_command_err)?;
+        let (ack, order_id) = self.ack_of(req.cid, &resp, now)?;
+        if let Some(id) = order_id {
+            self.learn(&id, req.cid).await;
+        }
+        Ok(ack)
+    }
+
+    async fn cancel_stop(&self, stop: StopOrderRef) -> Result<(), Error> {
+        self.check_command().await?;
+        self.acquire("CancelStopOrder").await?;
+        let (known_cid, order_id_type, order_id) = match stop {
+            StopOrderRef::Cid(cid) => (cid, "1", cid.hyphenated().to_string()),
+            StopOrderRef::Broker(id) => {
+                let (t, id) = order_ref(id.as_str());
+                let cid = self
+                    .inner
+                    .core
+                    .lock()
+                    .await
+                    .cid_of_order_id(&id)
+                    .unwrap_or_else(|| foreign_cid(&id));
+                (cid, t, id)
+            }
+        };
+        let _instrument = self.inner.instrument_locks.lock_cid(known_cid).await;
+        let req = CancelByIdRequest {
+            order_id_type: Some(order_id_type.into()),
+            order_id,
+            client_order_id: uuid::Uuid::new_v4(),
+        };
+        let resp = self
+            .inner
+            .http
+            .cancel_order_by_id_sync(&req)
+            .await
+            .map_err(map_order_cmd_err)?;
+        self.cancel_outcome(known_cid, &resp)
+    }
+
+    /// Conditional orders waiting for their trigger: `POST /orders/search`, `orderStatus = 3`, types
+    /// 4..7 and 11. A TP+SL pair (type 7) is shown as its two legs with the same ids. `cid` is `None`
+    /// when the order is not one this connector can name.
+    async fn active_stop_orders(&self) -> Result<Vec<StopOrderSnapshot>, Error> {
+        let records = self
+            .list_orders(&[LIST_STATUS_ACTIVE], &STOP_LIST_TYPES)
+            .await?;
+        let now = Instant::now();
+        let mut out = Vec::new();
+        for r in &records {
+            let cid = self.cid_of_order_id(&r.order_id).await;
+            out.extend(map_stop_record(r, cid, now));
+        }
+        Ok(out)
+    }
+
+    async fn subscribe_stop_orders(&self) -> Result<SubscriptionId, Error> {
+        Err(Error::Unsupported {
+            capability: "stop_order_stream",
+        })
+    }
+}

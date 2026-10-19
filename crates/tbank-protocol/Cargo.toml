@@ -1,0 +1,39 @@
+[package]
+name = "brokapi-tbank-protocol"
+description = "T-Bank Invest API wire protocol: gRPC client generated from the official .proto (tonic + prost)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+
+[dependencies]
+dotenv.workspace = true
+prost = "0.14"
+rust_decimal.workspace = true
+prost-types = "0.14"
+thiserror.workspace = true
+tonic = { version = "0.14", default-features = false, features = ["channel", "codegen", "tls-ring", "tls-webpki-roots"] }
+tonic-prost = "0.14"
+
+[build-dependencies]
+protox = "0.10"
+tonic-prost-build = { version = "0.14", default-features = false }
+
+[features]
+default = []
+# Also generate server traits (used by the mock gRPC server in connector tests).
+server = ["tonic/server", "tonic/router"]
+
+[lib]
+name = "brokapi_tbank_protocol"
+path = "src/lib.rs"
+# Doctests are on: the hand-written examples run against `brokapi_mocks::tbank`. The comments that
+# prost generates from the .proto files are sanitised by prost (indented text becomes ```text blocks),
+# so they do not produce Rust doctests.
+
+[dev-dependencies]
+proptest.workspace = true
+# Doctests run against the in-process T-Bank mock (a dev-dependency cycle is fine for doctests).
+brokapi-mocks.workspace = true
+tokio.workspace = true

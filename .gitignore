@@ -1,0 +1,6 @@
+target/
+.env
+CLAUDE.md
+AGENTS.md
+.claude/
+.serena/

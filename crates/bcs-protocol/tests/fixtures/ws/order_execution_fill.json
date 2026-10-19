@@ -1,0 +1,30 @@
+{
+  "originalClientOrderId": "550e8400-e29b-41d4-a716-446655440000",
+  "clientOrderId": "",
+  "data": {
+    "messageType": "8",
+    "orderStatus": "1",
+    "executionType": "11",
+    "orderQuantity": 100,
+    "executedQuantity": 50,
+    "lastQuantity": 50,
+    "remainedQuantity": 50,
+    "ticker": "SBER",
+    "classCode": "TQBR",
+    "side": "1",
+    "orderType": "2",
+    "averagePrice": 244.5,
+    "orderId": "20241030-TQBR-12345678910",
+    "executionId": "TQBR-Z3fE7c-S-1-1-N",
+    "price": 245.0,
+    "currency": "RUB",
+    "clientCode": "123456",
+    "transactionTime": "2024-10-30T09:01:00.000Z",
+    "tradeDate": "2024-10-30",
+    "orderNumber": "12345678910",
+    "accruedCoupon": 0,
+    "executionValue": 12225,
+    "commission": 6.1,
+    "securityExchange": "TQBR"
+  }
+}

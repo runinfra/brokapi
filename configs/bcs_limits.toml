@@ -1,0 +1,63 @@
+# Conservative BCS rate limits: starting points, to be tuned against a live account.
+
+[bcs.buckets.global]
+rate = 100
+per = "1s"
+burst = 20
+
+[bcs.buckets.market_data]
+rate = 50
+per = "1s"
+burst = 10
+
+[bcs.buckets.orders]
+rate = 10
+per = "1s"
+burst = 3
+
+[bcs.buckets.cancel]
+rate = 20
+per = "1s"
+burst = 5
+
+[bcs.buckets.reference]
+rate = 30
+per = "1s"
+burst = 10
+
+[bcs.route]
+# "*" = any method with no route below (raw() calls). BCS gives no per-method numbers, so the general
+# reference budget is used.
+"*" = ["global", "reference"]
+PlaceOrder = ["global", "orders"]
+CancelOrder = ["global", "cancel"]
+ReplaceOrder = ["global", "orders"]
+PlaceStopOrder = ["global", "orders"]
+CancelStopOrder = ["global", "cancel"]
+GetOrder = ["global", "reference"]
+GetOrderBook = ["global", "market_data"]
+SubscribeOrderBook = ["global", "market_data"]
+SubscribeQuotes = ["global", "market_data"]
+GetPortfolio = ["global", "reference"]
+Reconcile = ["global", "reference"]
+# REST methods reachable through raw(): the name is the operation, see the Coverage page of the book.
+GetQuotes = ["global", "market_data"]
+GetCandles = ["global", "market_data"]
+GetLastTrades = ["global", "market_data"]
+GetOperationHistory = ["global", "reference"]
+GetLimits = ["global", "reference"]
+GetInstrumentsDiscounts = ["global", "reference"]
+GetDailySchedule = ["global", "reference"]
+GetTradingStatus = ["global", "reference"]
+GetInstrumentsByTickers = ["global", "reference"]
+GetInstrumentsByIsins = ["global", "reference"]
+GetInstrumentsByType = ["global", "reference"]
+SearchOrders = ["global", "reference"]
+SearchTrades = ["global", "reference"]
+GetOrderStatus = ["global", "reference"]
+
+[bcs.conns]
+max_conns = 4
+max_subs_per_conn = 50
+supports_multiplex = false
+dedicated_command_conns = 0

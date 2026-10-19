@@ -1,0 +1,28 @@
+[package]
+name = "brokapi-runtime"
+description = "Supervisor, reconciler, connection multiplexer, backpressure, BrokerLimiter, shutdown"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+
+[dependencies]
+brokapi-core.workspace = true
+brokapi-sansio.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["sync", "time", "macros", "rt"] }
+tokio-util.workspace = true
+toml = "0.8"
+tracing.workspace = true
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[lib]
+name = "brokapi_runtime"
+path = "src/lib.rs"
+
+[[test]]
+name = "runtime_tests"
+path = "tests/runtime_tests.rs"

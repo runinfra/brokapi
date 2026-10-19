@@ -1,0 +1,46 @@
+[package]
+name = "brokapi-bcs-protocol"
+description = "Low-level BCS broker wire protocol: REST + WebSocket client, serde models, parsing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+dotenv.workspace = true
+futures-util.workspace = true
+kanal.workspace = true
+reqwest.workspace = true
+rust_decimal = { workspace = true, features = ["serde-with-arbitrary-precision"] }
+serde.workspace = true
+# arbitrary_precision: numbers of the broker's JSON are read as text, so 244.30 is never an f64.
+serde_json = { workspace = true, features = ["arbitrary_precision"] }
+serde_urlencoded.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+mockito = "1.5"
+proptest.workspace = true
+rust_decimal_macros.workspace = true
+tokio-test = "0.4"
+# Doctests run against the in-process BCS imitation (a dev-dependency cycle is fine for doctests).
+brokapi-mocks.workspace = true
+brokapi-conformance.workspace = true
+brokapi-core.workspace = true
+
+[features]
+default = []
+# Level-3 integration tests against live BCS API (never run in CI).
+integration-live = []
+
+[lib]
+name = "brokapi_bcs_protocol"
+path = "src/lib.rs"

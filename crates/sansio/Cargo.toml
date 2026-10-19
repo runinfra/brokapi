@@ -1,0 +1,23 @@
+[package]
+name = "brokapi-sansio"
+description = "Sans-io BrokerCore trait and recorded-frame test harness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+
+[dependencies]
+brokapi-core.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true
+
+[lib]
+name = "brokapi_sansio"
+path = "src/lib.rs"
+
+[[test]]
+name = "harness_tests"
+path = "tests/harness_tests.rs"

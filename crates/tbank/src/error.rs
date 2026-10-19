@@ -1,0 +1,217 @@
+//! gRPC status -> public connector errors.
+//!
+//! T-Bank error codes (errors.md): `RESOURCE_EXHAUSTED` 80001/80002/80006 are limits, `NOT_FOUND`
+//! 500xx, `UNAUTHENTICATED` 40003, `PERMISSION_DENIED` 4000x, `INVALID_ARGUMENT` 300xx.
+//!
+//! Two functions decide the mapping. [`map_status`] is for reads, [`map_command_status`] is for
+//! commands. The difference matters: a failed read may be repeated, a command whose outcome is
+//! hidden must never be repeated, so it becomes [`Error::Unknown`].
+//!
+//! The error codes above are taken from the broker's documentation and the mock. They are not
+//! verified against the live API.
+//!
+//! # Examples
+//!
+//! ```
+//! use brokapi_core::Error;
+//! use brokapi_tbank::error::{map_command_status, map_status};
+//! use tonic::Status;
+//!
+//! // A read that timed out is a transport error: repeat it later.
+//! assert!(matches!(map_status(&Status::deadline_exceeded("slow")), Error::Transport(_)));
+//! // The same status on a command hides what the broker did.
+//! assert!(matches!(map_command_status(&Status::deadline_exceeded("slow")), Error::Unknown));
+//! // A refusal is a refusal either way.
+//! assert!(matches!(map_command_status(&Status::invalid_argument("30042")), Error::Rejected { .. }));
+//! ```
+
+use std::time::Duration;
+
+use brokapi_core::{ConfigError, Error, TransportError};
+use tonic::{Code, Status};
+
+fn retry_after(status: &Status) -> Duration {
+    // x-ratelimit-reset: seconds until the counter resets.
+    status
+        .metadata()
+        .get("x-ratelimit-reset")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(1))
+}
+
+fn rejected(status: &Status) -> Error {
+    Error::Rejected {
+        code: format!("{:?}", status.code()),
+        message: status.message().to_string(),
+    }
+}
+
+/// Status of a read-only call (snapshots, reference data).
+///
+/// - `ResourceExhausted` gives [`Error::RateLimited`], with `retry_after` taken from the
+///   `x-ratelimit-reset` header (seconds), else 1 s.
+/// - `InvalidArgument`, `NotFound`, `PermissionDenied`, `FailedPrecondition`, `Unimplemented`,
+///   `AlreadyExists`, `OutOfRange` gives [`Error::Rejected`], with the status code name as `code` (for
+///   example `"NotFound"`) and the status message as `message`.
+/// - `Unauthenticated` gives [`Error::Config`]: the token is wrong or expired, fix it.
+/// - everything else (`Unavailable`, `DeadlineExceeded`, `Internal`, ...) gives [`Error::Transport`].
+///
+/// # Examples
+///
+/// ```
+/// use brokapi_core::Error;
+/// use brokapi_tbank::error::map_status;
+/// use tonic::Status;
+///
+/// match map_status(&Status::not_found("50002")) {
+///     Error::Rejected { code, message } => {
+///         assert_eq!(code, "NotFound");
+///         assert_eq!(message, "50002");
+///     }
+///     other => panic!("unexpected {other:?}"),
+/// }
+/// assert!(matches!(map_status(&Status::resource_exhausted("80002")), Error::RateLimited { .. }));
+/// assert!(matches!(map_status(&Status::unauthenticated("40003")), Error::Config(_)));
+/// ```
+pub fn map_status(status: &Status) -> Error {
+    match status.code() {
+        Code::ResourceExhausted => Error::RateLimited {
+            retry_after: retry_after(status),
+        },
+        Code::InvalidArgument
+        | Code::NotFound
+        | Code::PermissionDenied
+        | Code::FailedPrecondition
+        | Code::Unimplemented
+        | Code::AlreadyExists
+        | Code::OutOfRange => rejected(status),
+        Code::Unauthenticated => Error::Config(ConfigError::Message(format!(
+            "unauthenticated: {}",
+            status.message()
+        ))),
+        _ => Error::Transport(TransportError::Message(format!(
+            "{:?}: {}",
+            status.code(),
+            status.message()
+        ))),
+    }
+}
+
+/// Status of a command (place / cancel / replace). Only statuses that prove the broker did not act
+/// become `Rejected`; anything that can hide a processed request is `Unknown`.
+///
+/// The statuses that prove the broker did not act (`ResourceExhausted`, `InvalidArgument`,
+/// `NotFound`, `PermissionDenied`, `Unauthenticated`, `FailedPrecondition`, `Unimplemented`,
+/// `AlreadyExists`, `OutOfRange`) are mapped like in [`map_status`]. Every other status
+/// (`DeadlineExceeded`, `Unavailable`, `Internal`, `Aborted`, `Cancelled`, `Unknown`, ...) is
+/// [`Error::Unknown`], because the request may have been processed before the answer was lost.
+/// Do not repeat the command after it: ask the broker for the order first.
+///
+/// # Examples
+///
+/// ```
+/// use brokapi_core::Error;
+/// use brokapi_tbank::error::map_command_status;
+/// use tonic::Status;
+///
+/// assert!(matches!(map_command_status(&Status::unavailable("reset")), Error::Unknown));
+/// assert!(matches!(map_command_status(&Status::not_found("50005")), Error::Rejected { .. }));
+/// ```
+pub fn map_command_status(status: &Status) -> Error {
+    match status.code() {
+        Code::ResourceExhausted
+        | Code::InvalidArgument
+        | Code::NotFound
+        | Code::PermissionDenied
+        | Code::Unauthenticated
+        | Code::FailedPrecondition
+        | Code::Unimplemented
+        | Code::AlreadyExists
+        | Code::OutOfRange => map_status(status),
+        _ => Error::Unknown,
+    }
+}
+
+/// `true` for the `NotFound` status: the broker does not know the order or the instrument.
+///
+/// # Examples
+///
+/// ```
+/// use brokapi_tbank::error::is_not_found;
+/// use tonic::Status;
+///
+/// assert!(is_not_found(&Status::not_found("50005")));
+/// assert!(!is_not_found(&Status::unavailable("x")));
+/// ```
+pub fn is_not_found(status: &Status) -> bool {
+    status.code() == Code::NotFound
+}
+
+/// Builds a [`Error::Transport`] with a text message.
+///
+/// # Examples
+///
+/// ```
+/// use brokapi_core::Error;
+///
+/// assert!(matches!(brokapi_tbank::error::transport("stream closed"), Error::Transport(_)));
+/// ```
+pub fn transport(msg: impl Into<String>) -> Error {
+    Error::Transport(TransportError::Message(msg.into()))
+}
+
+/// Builds a [`Error::Config`] with a text message.
+///
+/// # Examples
+///
+/// ```
+/// use brokapi_core::Error;
+///
+/// assert!(matches!(brokapi_tbank::error::config("no account"), Error::Config(_)));
+/// ```
+pub fn config(msg: impl Into<String>) -> Error {
+    Error::Config(ConfigError::Message(msg.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn limits_are_rate_limited() {
+        let e = map_status(&Status::resource_exhausted("80002"));
+        assert!(matches!(e, Error::RateLimited { .. }));
+    }
+
+    #[test]
+    fn command_timeout_is_unknown_not_rejected() {
+        assert!(matches!(
+            map_command_status(&Status::deadline_exceeded("t")),
+            Error::Unknown
+        ));
+        assert!(matches!(
+            map_command_status(&Status::unavailable("x")),
+            Error::Unknown
+        ));
+        assert!(matches!(
+            map_command_status(&Status::internal("x")),
+            Error::Unknown
+        ));
+    }
+
+    #[test]
+    fn command_refusal_is_rejected() {
+        let e = map_command_status(&Status::invalid_argument("30016"));
+        assert!(matches!(e, Error::Rejected { .. }));
+    }
+
+    #[test]
+    fn query_failure_is_transport() {
+        assert!(matches!(
+            map_status(&Status::unavailable("x")),
+            Error::Transport(_)
+        ));
+    }
+}

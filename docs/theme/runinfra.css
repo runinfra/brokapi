@@ -1,0 +1,253 @@
+/* brokapi documentation in the RunInfra style.
+   Colors of the site runinfra.ru: background #080a0f, text #fff, accent #32d2ff.
+   The dark theme is "navy" (the default), the light one is "light" with a darker accent for contrast on white.
+   mdBook gives the theme its colors through variables, so only the variables and a few places are set here. */
+
+:root {
+  --mono-font: 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  --ri-sans: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --ri-display: 'Orbitron', 'Geist', system-ui, sans-serif;
+  --ri-accent: #32d2ff;
+  --content-max-width: 820px;
+  --code-font-size: 0.86em;
+}
+
+.navy {
+  --bg: #080a0f;
+  --fg: #dfe4ee;
+  --ri-heading: #ffffff;
+  --ri-accent: #32d2ff;
+  --ri-accent-soft: rgba(50, 210, 255, 0.12);
+  --ri-line: rgba(255, 255, 255, 0.1);
+  --ri-code-bg: #0e131c;
+  --ri-muted: #8b95a8;
+
+  --sidebar-bg: #0b0e15;
+  --sidebar-fg: #aab3c5;
+  --sidebar-non-existant: #5d6679;
+  --sidebar-active: #32d2ff;
+  --sidebar-spacer: rgba(255, 255, 255, 0.08);
+  --sidebar-header-border-color: #32d2ff;
+
+  --scrollbar: #3a4355;
+  --icons: #7d879b;
+  --icons-hover: #ffffff;
+  --links: #32d2ff;
+  --inline-code-color: #9be8ff;
+
+  --theme-popup-bg: #0e131c;
+  --theme-popup-border: rgba(255, 255, 255, 0.18);
+  --theme-hover: #161d2a;
+
+  --quote-bg: #0e131c;
+  --quote-border: rgba(50, 210, 255, 0.35);
+  --warning-border: #ffb454;
+
+  --table-border-color: rgba(255, 255, 255, 0.1);
+  --table-header-bg: #111925;
+  --table-alternate-bg: #0b0f16;
+
+  --searchbar-border-color: rgba(255, 255, 255, 0.2);
+  --searchbar-bg: #0e131c;
+  --searchbar-fg: #ffffff;
+  --searchbar-shadow-color: rgba(50, 210, 255, 0.4);
+  --searchresults-header-fg: #8b95a8;
+  --searchresults-border-color: rgba(255, 255, 255, 0.15);
+  --searchresults-li-bg: #0e131c;
+  --search-mark-bg: #1d6f8a;
+
+  --color-scheme: dark;
+  --overlay-bg: rgba(0, 0, 0, 0.5);
+  --footnote-highlight: #1d6f8a;
+  --copy-button-filter: invert(52%) sepia(9%) saturate(500%) hue-rotate(185deg) brightness(92%);
+  --copy-button-filter-hover: invert(78%) sepia(55%) saturate(900%) hue-rotate(160deg) brightness(105%);
+}
+
+.light {
+  --bg: #ffffff;
+  --fg: #1c2433;
+  --ri-heading: #080a0f;
+  --ri-accent: #0076a3;
+  --ri-accent-soft: rgba(0, 118, 163, 0.08);
+  --ri-line: rgba(8, 10, 15, 0.12);
+  --ri-code-bg: #f3f6fa;
+  --ri-muted: #5b6678;
+
+  --sidebar-bg: #f5f8fb;
+  --sidebar-fg: #3b465a;
+  --sidebar-non-existant: #98a2b3;
+  --sidebar-active: #0076a3;
+  --sidebar-spacer: rgba(8, 10, 15, 0.08);
+  --sidebar-header-border-color: #0076a3;
+
+  --scrollbar: #b5bdca;
+  --icons: #6b7587;
+  --icons-hover: #080a0f;
+  --links: #0076a3;
+  --inline-code-color: #00566f;
+
+  --theme-popup-bg: #ffffff;
+  --theme-popup-border: rgba(8, 10, 15, 0.2);
+  --theme-hover: #eef3f8;
+
+  --quote-bg: #f3f6fa;
+  --quote-border: rgba(0, 118, 163, 0.4);
+  --warning-border: #b45f00;
+
+  --table-border-color: rgba(8, 10, 15, 0.12);
+  --table-header-bg: #eaf0f6;
+  --table-alternate-bg: #f7f9fc;
+
+  --searchbar-border-color: rgba(8, 10, 15, 0.25);
+  --searchbar-bg: #ffffff;
+  --searchbar-fg: #080a0f;
+  --searchbar-shadow-color: rgba(0, 118, 163, 0.35);
+  --searchresults-header-fg: #5b6678;
+  --searchresults-border-color: rgba(8, 10, 15, 0.15);
+  --searchresults-li-bg: #f5f8fb;
+  --search-mark-bg: #bfe9f7;
+
+  --color-scheme: light;
+  --overlay-bg: rgba(8, 10, 15, 0.25);
+  --footnote-highlight: #bfe9f7;
+  --copy-button-filter: invert(42%) sepia(8%) saturate(700%) hue-rotate(185deg) brightness(95%);
+  --copy-button-filter-hover: invert(30%) sepia(80%) saturate(1500%) hue-rotate(165deg) brightness(90%);
+}
+
+/* Text */
+html, body { font-family: var(--ri-sans); }
+body { background: var(--bg); color: var(--fg); -webkit-font-smoothing: antialiased; }
+.content { font-size: 1.6rem; line-height: 1.7; }
+.content main { font-feature-settings: 'ss01', 'cv11', 'liga' 0, 'calt' 0; }
+/* No ligatures anywhere: Geist joins "->" into an arrow, and the texts must show "->" as typed. */
+html, body, code, pre, .hljs { font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'calt' 0; }
+h1, h2, h3, h4, h5, h6 { font-family: var(--ri-sans); color: var(--ri-heading); letter-spacing: -0.01em; }
+h1, h2, h3, h4 { line-height: 1.25; }
+h1 { font-weight: 700; letter-spacing: -0.02em; font-size: 3.2rem; margin-top: 0.4em; }
+h2 { font-weight: 650; margin-top: 2.2em; padding-bottom: 0.3em; border-bottom: 1px solid var(--ri-line); }
+h3 { font-weight: 600; }
+a:link, a:visited, .content a:link, .content a:visited { color: var(--links); text-decoration: none; }
+.content a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+.header-link, a.header { color: inherit !important; }
+strong { color: var(--ri-heading); font-weight: 650; }
+
+/* Menu bar and brand */
+.menu-bar { background: var(--bg); border-bottom: 1px solid var(--ri-line); }
+.menu-bar .menu-title { display: none; }
+.brand {
+  display: flex; align-items: center; gap: 0.9rem; min-width: 0;
+  flex: 1 1 auto; justify-content: center;
+}
+/* Two links: mark + RUNINFRA -> runinfra.ru, library name -> first page. Touch area at least 44 px. */
+.brand-home, a.brand-lib {
+  display: inline-flex; align-items: center; min-height: 44px; min-width: 44px;
+  padding: 0 0.2rem; text-decoration: none !important;
+}
+.brand-home { gap: 0.9rem; color: var(--ri-heading) !important; flex: 0 0 auto; }
+.brand-home:hover .brand-word { color: var(--ri-accent); }
+.brand-mark { width: 3.4rem; height: auto; flex: 0 0 auto; }
+.brand-word {
+  font-family: var(--ri-display); font-weight: 700; font-size: 1.9rem; letter-spacing: 0.06em;
+  color: var(--ri-heading);
+}
+.brand-sep { width: 1px; height: 2.2rem; background: var(--ri-line); flex: 0 0 auto; margin: 0 0.3rem; }
+.brand-lib {
+  font-family: var(--mono-font); font-size: 1.6rem; font-weight: 500; letter-spacing: 0.01em;
+  color: var(--ri-accent) !important; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.brand-lib:hover { text-decoration: underline !important; text-underline-offset: 0.2em; }
+@media (max-width: 560px) {
+  .brand-word { font-size: 1.5rem; letter-spacing: 0.04em; }
+  .brand-mark { width: 2.7rem; }
+  .brand-lib { font-size: 1.4rem; }
+  .brand-sep { margin: 0; }
+  .brand, .brand-home { gap: 0.6rem; }
+  .right-buttons .icon-button:not(:last-child) { display: none; }
+}
+@media (max-width: 400px) { .brand-sep { display: none; } .brand-word { font-size: 1.35rem; } }
+
+/* Sidebar */
+.sidebar { font-size: 1.45rem; border-right: 1px solid var(--ri-line); }
+.sidebar .part-title {
+  font-family: var(--mono-font); font-size: 1.15rem; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--ri-muted); margin-top: 1.4em;
+}
+.chapter li.chapter-item { line-height: 1.5; }
+.chapter li a.active, .chapter a:hover { color: var(--sidebar-active); }
+.chapter li a.active { font-weight: 600; }
+
+/* Code */
+code, pre, .hljs, pre > .buttons { font-family: var(--mono-font); }
+:not(pre) > code {
+  background: var(--ri-code-bg); border: 1px solid var(--ri-line); border-radius: 5px;
+  padding: 0.1em 0.38em; color: var(--inline-code-color); font-size: 0.86em;
+}
+pre { border: 1px solid var(--ri-line); border-radius: 10px; background: var(--ri-code-bg); }
+pre > code, pre > .hljs { background: transparent; padding: 1.2rem 1.4rem; font-size: 1.35rem; line-height: 1.6; }
+pre:has(> code.language-text), .content pre code.language-text { color: var(--fg); }
+
+.navy .hljs, .navy pre code { color: #d6deeb; background: transparent; }
+.navy .hljs-comment, .navy .hljs-quote { color: #647089; font-style: italic; }
+.navy .hljs-keyword, .navy .hljs-selector-tag, .navy .hljs-literal, .navy .hljs-built_in { color: #32d2ff; }
+.navy .hljs-string, .navy .hljs-attr, .navy .hljs-template-variable { color: #8be9b7; }
+.navy .hljs-number, .navy .hljs-symbol, .navy .hljs-bullet { color: #ffb86b; }
+.navy .hljs-title, .navy .hljs-section, .navy .hljs-type, .navy .hljs-class .hljs-title { color: #ffe08a; }
+.navy .hljs-meta, .navy .hljs-attribute, .navy .hljs-variable { color: #c3a6ff; }
+.light .hljs, .light pre code { color: #1c2433; background: transparent; }
+.light .hljs-comment, .light .hljs-quote { color: #6b7587; font-style: italic; }
+.light .hljs-keyword, .light .hljs-selector-tag, .light .hljs-literal, .light .hljs-built_in { color: #0076a3; }
+.light .hljs-string, .light .hljs-attr, .light .hljs-template-variable { color: #0b7a4b; }
+.light .hljs-number, .light .hljs-symbol, .light .hljs-bullet { color: #b45f00; }
+.light .hljs-title, .light .hljs-section, .light .hljs-type, .light .hljs-class .hljs-title { color: #8a5a00; }
+.light .hljs-meta, .light .hljs-attribute, .light .hljs-variable { color: #6a3fc0; }
+
+/* Tables: a wide table scrolls inside its own box instead of stretching the page */
+.table-wrapper { overflow-x: auto; margin: 1.6rem 0; border: 1px solid var(--ri-line); border-radius: 10px; }
+.content table { margin: 0; border-collapse: collapse; font-size: 1.4rem; line-height: 1.5; width: 100%; }
+.content table th {
+  background: var(--table-header-bg); color: var(--ri-heading); font-weight: 600; text-align: left;
+  border: 0; border-bottom: 1px solid var(--ri-line); white-space: nowrap;
+}
+.content table td { border: 0; border-top: 1px solid var(--ri-line); vertical-align: top; min-width: 9em; }
+.content table td:first-child { min-width: 7em; }
+.content table th, .content table td { padding: 0.8rem 1.1rem; }
+.content table tbody tr:nth-child(2n) { background: var(--table-alternate-bg); }
+
+/* Quotes */
+blockquote {
+  background: var(--quote-bg); border: 0; border-left: 3px solid var(--ri-accent); border-radius: 0 8px 8px 0;
+  margin: 1.6rem 0; padding: 0.8rem 1.4rem;
+}
+
+/* Diagrams: a box that does not push the page wider */
+pre.mermaid, .mermaid {
+  background: var(--ri-code-bg); border: 1px solid var(--ri-line); border-radius: 10px;
+  padding: 1.4rem 0.6rem; margin: 1.6rem 0; text-align: center; overflow-x: auto;
+}
+.mermaid svg { max-width: 100%; height: auto; }
+
+/* Next and previous */
+.nav-chapters { color: var(--icons); }
+.nav-chapters:hover { color: var(--ri-accent); }
+hr { border: 0; border-top: 1px solid var(--ri-line); }
+::selection { background: var(--ri-accent-soft); }
+.content img { max-width: 100%; }
+@media (max-width: 560px) {
+  h1 { font-size: 2.6rem; }
+  h2 { font-size: 2.1rem; }
+  .content { font-size: 1.55rem; }
+  .content main { padding-bottom: 4rem; }
+}
+
+/* Stage strip under the menu bar (text in theme/index.hbs). Red on purpose: the library is in alpha. */
+.stage-strip {
+  display: block; padding: 0.7rem 1.5rem; text-align: center;
+  background: #3a0d12; color: #ff6b6b !important; border-bottom: 1px solid #7a1c24;
+  font-family: var(--mono-font); font-size: 1.3rem; letter-spacing: 0.02em; line-height: 1.4;
+  text-decoration: none !important;
+}
+.stage-strip:hover { text-decoration: underline !important; text-underline-offset: 0.2em; }
+.light .stage-strip { background: #fde8e8; color: #b3121f !important; border-bottom-color: #f2b8bd; }
+.stage-strip b { font-weight: 600; }
+@media (max-width: 560px) { .stage-strip { padding: 0.5rem 1rem; } .stage-detail { display: none; } }

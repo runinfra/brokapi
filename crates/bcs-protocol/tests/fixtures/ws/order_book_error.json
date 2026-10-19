@@ -1,0 +1,9 @@
+{
+  "responseType": "OrderBook",
+  "errors": [
+    {
+      "message": "Input JSON structure does not match structure, 'instruments' field is undefined.",
+      "code": "INCORRECT_JSON"
+    }
+  ]
+}

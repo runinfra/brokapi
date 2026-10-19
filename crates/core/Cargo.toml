@@ -1,0 +1,32 @@
+[package]
+name = "brokapi-core"
+description = "Domain types, capability traits, Envelope, errors - public connector API surface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
+rust_decimal_macros.workspace = true
+serde = { workspace = true, features = ["rc"] }
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true
+# Doctests of the traits run against the BCS connector on its mock (a dev-dependency cycle is fine for doctests).
+brokapi-bcs.workspace = true
+brokapi-mocks.workspace = true
+brokapi-bcs-protocol.workspace = true
+brokapi-runtime.workspace = true
+brokapi-conformance.workspace = true
+
+[lib]
+name = "brokapi_core"
+path = "src/lib.rs"

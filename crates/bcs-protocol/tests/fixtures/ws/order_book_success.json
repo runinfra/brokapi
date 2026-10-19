@@ -1,0 +1,5 @@
+{
+  "responseType": "OrderBookSuccess",
+  "instruments": [{ "ticker": "SBER", "classCode": "TQBR" }],
+  "depth": 20
+}

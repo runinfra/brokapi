@@ -1,0 +1,102 @@
+[workspace]
+members = [
+    ".",
+    "crates/bcs-protocol",
+    "crates/finam-protocol",
+    "crates/finam",
+    "crates/tbank-protocol",
+    "crates/core",
+    "crates/sansio",
+    "crates/runtime",
+    "crates/bcs",
+    "crates/tbank",
+    "crates/conformance",
+    "crates/mocks",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0-alpha.1"
+license = "MIT OR Apache-2.0"
+authors = ["The brokapi Authors"]
+homepage = "https://brokapi.runinfra.ru"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+dotenv = "0.15"
+futures-util = "0.3"
+kanal = "0.1"
+proptest = "1"
+rust_decimal = { version = "1", default-features = false, features = ["std", "serde"] }
+# `reexportable`: dec! does not need rust_decimal in the user crate, only `Decimal` in scope.
+rust_decimal_macros = { version = "1", features = ["reexportable"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_urlencoded = "0.7"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Internal crates
+brokapi-bcs-protocol = { path = "crates/bcs-protocol", version = "0.1.0-alpha.1" }
+brokapi-finam-protocol = { path = "crates/finam-protocol", version = "0.1.0-alpha.1" }
+brokapi-finam = { path = "crates/finam", version = "0.1.0-alpha.1" }
+brokapi-core = { path = "crates/core", version = "0.1.0-alpha.1" }
+brokapi-sansio = { path = "crates/sansio", version = "0.1.0-alpha.1" }
+brokapi-runtime = { path = "crates/runtime", version = "0.1.0-alpha.1" }
+brokapi-bcs = { path = "crates/bcs", version = "0.1.0-alpha.1" }
+brokapi-tbank-protocol = { path = "crates/tbank-protocol", version = "0.1.0-alpha.1" }
+brokapi-tbank = { path = "crates/tbank", version = "0.1.0-alpha.1" }
+brokapi-conformance = { path = "crates/conformance" }
+brokapi-mocks = { path = "crates/mocks" }
+
+[package]
+name = "brokapi"
+description = "One interface to the APIs of Russian brokers (BCS, T-Bank, Finam): market data, orders, reconciliation, rate limits."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["trading", "broker", "finance", "algotrading", "api"]
+categories = ["api-bindings", "finance"]
+
+[dependencies]
+brokapi-core.workspace = true
+brokapi-runtime.workspace = true
+brokapi-sansio.workspace = true
+brokapi-bcs = { workspace = true, optional = true }
+brokapi-bcs-protocol = { workspace = true, optional = true }
+brokapi-tbank = { workspace = true, optional = true }
+brokapi-tbank-protocol = { workspace = true, optional = true }
+brokapi-finam = { workspace = true, optional = true }
+brokapi-finam-protocol = { workspace = true, optional = true }
+
+[features]
+default = []
+# One flag per broker, like the features of tokio: `brokapi = { version = "...", features = ["bcs"] }`.
+bcs = ["dep:brokapi-bcs", "dep:brokapi-bcs-protocol"]
+tbank = ["dep:brokapi-tbank", "dep:brokapi-tbank-protocol"]
+finam = ["dep:brokapi-finam", "dep:brokapi-finam-protocol"]
+
+# The programs in examples/ are the code of the book (docs/src) and run in tests/examples.rs against
+# the in-process broker imitations: no network, no money.
+[dev-dependencies]
+# The crate itself with all brokers: examples and tests use it as a user does (`use brokapi::...`).
+brokapi = { path = ".", features = ["bcs", "tbank", "finam"] }
+brokapi-mocks.workspace = true
+dotenv.workspace = true
+tokio.workspace = true
+
+# Debug info is most of target/ size: keep line tables for backtraces, drop the rest.
+[profile.dev]
+debug = "line-tables-only"

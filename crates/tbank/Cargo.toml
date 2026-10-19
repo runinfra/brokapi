@@ -1,0 +1,66 @@
+[package]
+name = "brokapi-tbank"
+description = "T-Bank MarketDataConnector and UserDataConnector"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+brokapi-core.workspace = true
+brokapi-runtime.workspace = true
+brokapi-sansio.workspace = true
+futures-util.workspace = true
+prost-types = "0.14"
+brokapi-tbank-protocol.workspace = true
+tokio.workspace = true
+tokio-stream = "0.1"
+tokio-util.workspace = true
+tonic = { version = "0.14", default-features = false, features = ["channel", "codegen"] }
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+brokapi-conformance.workspace = true
+brokapi-mocks.workspace = true
+proptest.workspace = true
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[test]]
+name = "sansio_tests"
+path = "tests/sansio_tests.rs"
+
+[[test]]
+name = "connector_tests"
+path = "tests/connector_tests.rs"
+
+[[test]]
+name = "multi_account"
+path = "tests/multi_account.rs"
+
+[[test]]
+name = "stop_orders"
+path = "tests/stop_orders.rs"
+
+[[test]]
+name = "raw_access"
+path = "tests/raw_access.rs"
+
+[[test]]
+name = "live_sandbox"
+path = "tests/live_sandbox.rs"
+required-features = ["integration-live"]
+
+[lib]
+name = "brokapi_tbank"
+path = "src/lib.rs"
+
+[features]
+default = []
+# Level-3 tests against the live T-Bank API (sandbox): never run in CI, need TBANK_TOKEN in .env.
+integration-live = []

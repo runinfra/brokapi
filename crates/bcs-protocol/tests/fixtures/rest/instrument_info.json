@@ -1,0 +1,15 @@
+{
+  "ticker": "SBER",
+  "boards": [
+    { "classCode": "TQBR", "exchange": "MOEX" }
+  ],
+  "shortName": "Сбербанк",
+  "isin": "RU0009029540",
+  "type": "STOCK",
+  "tradingCurrency": "RUB",
+  "lotSize": 1,
+  "minimumStep": 0.01,
+  "scale": 2,
+  "stepPrice": 0.01,
+  "primaryBoard": "TQBR"
+}

@@ -1,0 +1,21 @@
+[package]
+name = "brokapi-conformance"
+description = "Shared behaviour scenarios every broker adapter must pass (run against its mock)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+brokapi-core.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+# The examples of the scenarios run against the BCS connector on its mock (a dev-dependency cycle is fine for doctests).
+brokapi-bcs-protocol.workspace = true
+brokapi-bcs.workspace = true
+brokapi-mocks.workspace = true
+brokapi-runtime.workspace = true

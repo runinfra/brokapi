@@ -1,0 +1,67 @@
+[package]
+name = "brokapi-bcs"
+description = "BCS MarketDataConnector and UserDataConnector"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+
+[dependencies]
+brokapi-bcs-protocol.workspace = true
+brokapi-core.workspace = true
+brokapi-runtime.workspace = true
+brokapi-sansio.workspace = true
+chrono.workspace = true
+serde_json.workspace = true
+uuid = { workspace = true, features = ["v5"] }
+async-trait.workspace = true
+kanal.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+brokapi-conformance.workspace = true
+brokapi-mocks.workspace = true
+futures-util.workspace = true
+proptest.workspace = true
+tokio-test = "0.4"
+uuid.workspace = true
+
+[[test]]
+name = "mock_integration"
+path = "tests/mock_integration.rs"
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[test]]
+name = "sansio_tests"
+path = "tests/sansio_tests.rs"
+
+[[test]]
+name = "connector_tests"
+path = "tests/connector_tests.rs"
+
+[[test]]
+name = "raw_access"
+path = "tests/raw_access.rs"
+
+[lib]
+name = "brokapi_bcs"
+path = "src/lib.rs"
+
+[features]
+default = []
+# Level-3 integration tests against live BCS API (never run in CI).
+integration-live = []
+
+[[example]]
+name = "bcs_raw_access"
+path = "examples/bcs_raw_access.rs"
+
+[[example]]
+name = "api_smoke"
+path = "examples/api_smoke.rs"

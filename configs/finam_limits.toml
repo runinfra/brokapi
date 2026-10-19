@@ -1,0 +1,104 @@
+# Finam Trade API rate limits for brokapi-finam.
+#
+# Sources:
+#  - "Слишком много запросов. Доступный лимит - 200 запросов в минуту" - 429 description of every
+#    method in the official swagger (finam-trade-api, docs/swagger/api.swagger.json). This is the
+#    only number Finam documents. No separate limit for orders, no limit for streams is published.
+#  - 429 maps to gRPC RESOURCE_EXHAUSTED.
+#  - UsageMetricsService.GetUsageMetrics ("метрики использования для пользователя", GET /v1/usage)
+#    returns the live quotas (name, limit, remaining, reset_time) without any account parameter.
+#
+# LIMIT SCOPE: Finam does not state it in words. The quota call is "for the user" and takes no
+# account_id, so the quota is read as PER USER (all tokens/secrets of one Finam user and all of his
+# accounts spend one budget). Spec 3.1 consequence: ONE BrokerLimiter per Finam user, shared by all
+# MarketDataConnector and UserDataConnector instances of that user, however many accounts or
+# secrets they cover. Open question for the live run: compare GetUsageMetrics between two secrets.
+#
+# Values below are deliberately below 200/min (conservative when data is missing).
+# Bucket "orders" is capped well under "global" so that "cancel" (its own bucket) always has room:
+# cancelling must not starve behind placing.
+
+[finam.buckets.global]
+rate = 200
+per = "60s"
+burst = 40
+
+[finam.buckets.orders]
+rate = 60
+per = "60s"
+burst = 5
+
+[finam.buckets.cancel]
+rate = 100
+per = "60s"
+burst = 10
+
+[finam.buckets.market_data]
+rate = 120
+per = "60s"
+burst = 20
+
+[finam.buckets.reference]
+rate = 100
+per = "60s"
+burst = 30
+
+[finam.buckets.reports]
+# Report generation is heavy on Finam's side and not documented separately; kept low on purpose.
+rate = 20
+per = "60s"
+burst = 3
+
+[finam.route]
+# "*" = any method with no route below (raw() calls to methods the library never named). Finam
+# documents one number for the whole API, so the default is the general "reference" budget.
+"*" = ["global", "reference"]
+PlaceOrder = ["global", "orders"]
+CancelOrder = ["global", "cancel"]
+GetOrder = ["global", "reference"]
+GetOrders = ["global", "reference"]
+GetAccount = ["global", "reference"]
+Trades = ["global", "reference"]
+GetAsset = ["global", "reference"]
+GetAssetParams = ["global", "reference"]
+Assets = ["global", "reference"]
+Schedule = ["global", "reference"]
+OrderBook = ["global", "market_data"]
+LatestTrades = ["global", "market_data"]
+Bars = ["global", "market_data"]
+# Opening a stream is a request too (assumed to count against the same minute budget).
+SubscribeOrderBook = ["global", "market_data"]
+SubscribeQuote = ["global", "market_data"]
+SubscribeLatestTrades = ["global", "market_data"]
+SubscribeBars = ["global", "market_data"]
+SubscribeOrders = ["global", "reference"]
+SubscribeTrades = ["global", "reference"]
+SubscribeAccount = ["global", "reference"]
+# The rest of the API, reachable through raw() and the stop order trait.
+PlaceSLTPOrder = ["global", "orders"]
+Transactions = ["global", "reference"]
+Exchanges = ["global", "reference"]
+OptionsChain = ["global", "reference"]
+Clock = ["global", "reference"]
+GetConstituents = ["global", "reference"]
+AllAssets = ["global", "reference"]
+LastQuote = ["global", "market_data"]
+GetUsageMetrics = ["global", "reference"]
+TokenDetails = ["global", "reference"]
+CreateAccountReport = ["global", "reports"]
+GetAccountReportInfo = ["global", "reports"]
+SubscribeAccountReportInfo = ["global", "reports"]
+GetFutureSplits = ["global", "reference"]
+GetPastSplits = ["global", "reference"]
+GetFutureBondsEvents = ["global", "reference"]
+GetPastBondsEvents = ["global", "reference"]
+GetFutureDividends = ["global", "reference"]
+GetPastDividends = ["global", "reference"]
+
+[finam.conns]
+# One HTTP/2 connection per connector, streams are multiplexed over it. The number of concurrent
+# streams per connection is not documented; 100 is the HTTP/2 default most servers advertise.
+max_conns = 1
+max_subs_per_conn = 100
+supports_multiplex = true
+dedicated_command_conns = 0

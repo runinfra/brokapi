@@ -1,0 +1,306 @@
+# Быстрый старт
+
+Цель страницы: за один заход получить работающую программу, которая подключается к брокеру, смотрит стакан,
+ставит одну заявку далеко от рынка, читает события и снимает заявку. Для каждого брокера свой короткий `main`,
+а общая часть одна.
+
+> Примеры собираются против текущего кода (проверено сборкой), но с настоящим API не запускались: вживую
+> коннекторы пока не пробовали. Начинайте с песочницы Т-Банка. Для БКС и Финама песочницы нет, заявка уйдет на
+> настоящий счет: ставьте минимальное количество и цену **заведомо ниже рынка**, кратную шагу цены.
+
+## Что понадобится
+
+Rust 1.85 или новее (редакция 2024). Подключается один крейт `brokapi`, брокеры включаются флагами, как у `tokio`:
+
+```toml
+[dependencies]
+brokapi = { version = "0.1.0-alpha.1", features = ["tbank"] }   # или "bcs", "finam", можно несколько
+tokio   = { version = "1", features = ["full"] }
+dotenv  = "0.15"
+```
+
+Закрытая альфа: крейт еще не опубликован на crates.io, пока его подключают по пути к клону репозитория
+(`brokapi = { path = "../brokapi", features = ["tbank"] }`). В коде все лежит под `brokapi::`: общее в
+`brokapi::core` и `brokapi::runtime`, брокеры в `brokapi::bcs`, `brokapi::tbank`, `brokapi::finam`, их клиенты нижнего
+слоя в `brokapi::bcs::protocol` и так далее.
+
+Что делает каждый крейт: [Карта](architecture.md#слои).
+
+## Переменные `.env`
+
+Файл `.env` лежит рядом с программой, в git не попадает. Токены не печатайте в логи и не кладите в коммиты.
+
+| Брокер | Переменная | Для чего |
+|---|---|---|
+| Т-Банк | `TBANK_TOKEN` | токен (обязательно). Для первого запуска - токен песочницы |
+| | `TBANK_SANDBOX` | `true` или `1` - песочница. Без нее адрес боевой |
+| | `TBANK_ACCOUNT_ID` | счет. Если не задан, берется единственный открытый счет токена, а при нескольких счетах коннектор не запустится |
+| | `TBANK_ENDPOINT`, `TBANK_APP_NAME` | необязательно: свой адрес, имя приложения в заголовке |
+| БКС | `BCS_REFRESH_TOKEN` | refresh-токен (обязательно). Счет определяет сам токен |
+| | `BCS_IS_WRITE` | `true` - токен на запись. Без нее торговые команды брокер не примет |
+| Финам | `FINAM_SECRET` | секрет Trade API (обязательно) |
+| | `FINAM_ACCOUNT_ID` | счет (обязательно для UD) |
+| | `FINAM_API_URL` | необязательно: другой адрес |
+| Пример | `EXAMPLE_PRICE` | цена лимитной заявки в примерах ниже. Это переменная примера, библиотека ее не читает |
+
+Счет Т-Банка в песочнице нужно открыть. Список своих счетов: `TbankClient::new(&cfg)?.list_accounts().await`
+(`brokapi::tbank::protocol::TbankClient`). Открывает счет песочницы метод `open_sandbox_account` клиента `sandbox()`,
+пример в `crates/tbank/tests/live_sandbox.rs`.
+
+## Общая часть
+
+Эта функция одинакова для всех брокеров, потому что работает через общие трейты `OrderBookSource` и
+`OrderExecutor`. Положите ее в тот же файл, что и `main` нужного брокера.
+
+```rust
+use std::time::Duration;
+
+use brokapi::core::{
+    Backpressure, ClientOrderId, Envelope, Error, Event, InstrumentId, OrderBook, OrderBookSource,
+    OrderExecutor, OrderType, PlaceOrderRequest, Price, Qty, Side, SubscribeOpts,
+};
+use tokio::sync::mpsc;
+use tokio::time::timeout;
+
+/// Читает события из общего канала заданное время и печатает самое интересное.
+async fn show_events(events: &mut mpsc::Receiver<Envelope>, how_long: Duration) {
+    let _ = timeout(how_long, async {
+        while let Some(env) = events.recv().await {
+            match env.payload {
+                Event::OrderBook(OrderBook::Snapshot { bids, asks, .. }) => println!(
+                    "[{} sub {:?}] стакан: покупка {:?}, продажа {:?}",
+                    env.source,
+                    env.sub,
+                    bids.first().map(|l| l.price),
+                    asks.first().map(|l| l.price),
+                ),
+                Event::Order(order) => println!("заявка {}: {:?}", order.cid, order.state),
+                Event::Execution(fill) => {
+                    println!("исполнение {}: {} по {}", fill.trade_id, fill.qty, fill.price)
+                }
+                Event::Resync { .. } => println!("стакан надо брать заново"),
+                Event::Overflow { .. } => println!("буфер переполнился, нужна сверка"),
+                _ => {}
+            }
+        }
+    })
+    .await;
+}
+
+/// Сверка, подписки, одна заявка, события, отмена.
+async fn trade_once<M, U>(
+    md: &M,
+    ud: &U,
+    instrument: InstrumentId,
+    qty: Qty,
+    price: Price,
+    events: &mut mpsc::Receiver<Envelope>,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    M: OrderBookSource,
+    U: OrderExecutor,
+{
+    // 1. Сверка. Пока она не прошла, UD отвечает NotReconciled на любую торговую команду.
+    //    Журнал бота пуст, поэтому список своих заявок пустой.
+    let report = ud.reconcile(&[]).await?;
+    println!("чужих заявок на счете: {}", report.foreign.len());
+
+    // 2. Подписки. Стакан можно склеивать: важен только свежий. Статусы своих заявок
+    //    всегда идут без потерь, режим выбирает сама библиотека.
+    let opts = SubscribeOpts { backpressure: Backpressure::Conflate, depth: Some(10) };
+    let book = md.subscribe_order_book(&instrument, opts).await?;
+    ud.subscribe_order_state().await?;
+
+    // 3. Одна заявка. Номер cid придумывает бот, не библиотека.
+    let cid = ClientOrderId::new_v4();
+    let request = PlaceOrderRequest {
+        cid,
+        instrument: instrument.clone(),
+        side: Side::Buy,
+        order_type: OrderType::Limit,
+        qty,
+        price: Some(price),
+    };
+    match ud.place(request).await {
+        Ok(ack) => println!("заявка принята, номер брокера {}", ack.broker_id.as_str()),
+        Err(Error::Rejected { code, message }) => {
+            println!("брокер отказал: {code}, {message}");
+            return Ok(());
+        }
+        Err(Error::Unknown) => {
+            // Неизвестно, дошла ли заявка. Повторять нельзя: спрашиваем брокера.
+            let snapshot = ud.order_state(cid).await?;
+            println!("итог был неясен, брокер говорит: {:?}", snapshot.state);
+        }
+        Err(other) => return Err(other.into()),
+    }
+
+    // 4. События: стакан, статус заявки.
+    show_events(events, Duration::from_secs(5)).await;
+
+    // 5. Снимаем заявку, дочитываем события, отписываемся.
+    ud.cancel(cid).await?;
+    show_events(events, Duration::from_secs(2)).await;
+    md.unsubscribe(book).await?;
+    Ok(())
+}
+```
+
+Разбор шагов: сверка - [Круг жизни](reconcile.md), заявка и ее исходы - [Круг команд](orders.md), режимы подписки -
+[Круг событий](streams.md), события и их поля - [События и возможности](events.md).
+
+## Т-Банк
+
+Количество у Т-Банка в **лотах**, цена за одну бумагу. Инструмент ищем через справочник: он отдает `uid`,
+которым пользуется брокер.
+
+```rust
+use brokapi::core::{InstrumentQuery, InstrumentSource, ShutdownMode};
+use brokapi::runtime::BrokerLimiter;
+use brokapi::tbank::limits::default_limits;
+use brokapi::tbank::{MarketDataConfig, MarketDataConnector, UserDataConfig, UserDataConnector};
+use brokapi::tbank::protocol::TbankConfig;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // TBANK_TOKEN, TBANK_SANDBOX, TBANK_ACCOUNT_ID берутся из .env
+    let cfg = TbankConfig::from_env()?;
+    let price: Price = std::env::var("EXAMPLE_PRICE")?.parse()?;
+
+    // Один счетчик лимитов на пользователя: Т-Банк считает лимит на все счета и токены сразу.
+    let limiter = BrokerLimiter::new(&default_limits());
+    // Один канал событий на оба коннектора. Кто прислал, видно по полю source.
+    let (tx, mut events) = mpsc::channel::<Envelope>(1024);
+
+    let md = MarketDataConnector::start(
+        MarketDataConfig::new(cfg.clone(), "tbank-md"),
+        limiter.clone(),
+        tx.clone(),
+    )
+    .await?;
+    let ud = UserDataConnector::start(UserDataConfig::new(cfg, "tbank-ud"), limiter, tx).await?;
+
+    let sber = md
+        .find(InstrumentQuery::ByTicker { ticker: "SBER".into(), exchange: Some("TQBR".into()) })
+        .await?
+        .into_iter()
+        .next()
+        .ok_or("SBER не найден")?
+        .id;
+
+    trade_once(&md, &ud, sber, Qty::from(1), price, &mut events).await?;
+
+    let stop = ShutdownMode::Graceful { deadline: Duration::from_secs(5) };
+    ud.shutdown(stop).await;
+    md.shutdown(stop).await;
+    Ok(())
+}
+```
+
+Что важно у Т-Банка: [страница Т-Банка](brokers/tbank.md).
+
+## БКС
+
+Счет определяет токен, поэтому `account_id` нет. Лимиты встроены в крейт: `brokapi::bcs::limits::default_limits()`, как у двух
+других брокеров (числа осторожные, брокер своих не публикует). Инструмент БКС задается тикером и классом (`SBER`, `TQBR`),
+справочник для этого не нужен.
+
+```rust
+use brokapi::bcs::protocol::config::BcsConfig;
+use brokapi::bcs::{MarketDataConfig, MarketDataConnector, UserDataConfig, UserDataConnector};
+use brokapi::bcs::limits::default_limits;
+use brokapi::core::{InstrumentKey, NativeId, ShutdownMode};
+use brokapi::runtime::BrokerLimiter;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // BCS_REFRESH_TOKEN и BCS_IS_WRITE берутся из .env
+    let cfg = BcsConfig::from_env()?;
+    let price: Price = std::env::var("EXAMPLE_PRICE")?.parse()?;
+
+    // Один счетчик лимитов на токен: оба коннектора пользуются одним.
+    let limiter = BrokerLimiter::new(&default_limits());
+    let (tx, mut events) = mpsc::channel::<Envelope>(1024);
+
+    let md = MarketDataConnector::start(
+        MarketDataConfig::new(cfg.clone(), "bcs-md"),
+        limiter.clone(),
+        tx.clone(),
+    )
+    .await?;
+    let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), limiter, tx).await?;
+
+    let sber = InstrumentId::new(
+        InstrumentKey::new("SBER", "TQBR"),
+        NativeId::TickerClass { ticker: "SBER".into(), class_code: "TQBR".into() },
+    );
+
+    trade_once(&md, &ud, sber, Qty::from(1), price, &mut events).await?;
+
+    let stop = ShutdownMode::Graceful { deadline: Duration::from_secs(5) };
+    ud.shutdown(stop).await;
+    md.shutdown(stop).await;
+    Ok(())
+}
+```
+
+Единицы количества у БКС (штуки или лоты) пока не подтверждены вживую: [страница БКС](brokers/bcs.md).
+
+## Финам
+
+Количество в штуках. Инструмент задается строкой `SBER@MISX`. Чтобы MD и UD не авторизовались дважды,
+создаем один менеджер токенов и отдаем его обоим.
+
+```rust
+use brokapi::core::ShutdownMode;
+use brokapi::finam::limits::default_limits;
+use brokapi::finam::util::instrument_from_symbol;
+use brokapi::finam::{api_config_from_env, MarketDataConfig, MarketDataConnector, UserDataConfig, UserDataConnector};
+use brokapi::runtime::BrokerLimiter;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // api_config_from_env сам .env не читает, поэтому загружаем его вручную
+    dotenv::dotenv().ok();
+    let (api, account) = api_config_from_env()?;
+    let account = account.ok_or("FINAM_ACCOUNT_ID не задан")?;
+    let price: Price = std::env::var("EXAMPLE_PRICE")?.parse()?;
+
+    // Один JWT на оба коннектора
+    let tokens = api.shared_tokens().await?;
+    let api = api.with_tokens(tokens);
+
+    let limiter = BrokerLimiter::new(&default_limits());
+    let (tx, mut events) = mpsc::channel::<Envelope>(1024);
+
+    let md = MarketDataConnector::start(
+        MarketDataConfig::new(api.clone(), "finam-md"),
+        limiter.clone(),
+        tx.clone(),
+    )
+    .await?;
+    let ud = UserDataConnector::start(UserDataConfig::new(api, account, "finam-ud"), limiter, tx).await?;
+
+    let sber = instrument_from_symbol("SBER@MISX");
+
+    trade_once(&md, &ud, sber, Qty::from(1), price, &mut events).await?;
+
+    let stop = ShutdownMode::Graceful { deadline: Duration::from_secs(5) };
+    ud.shutdown(stop).await;
+    md.shutdown(stop).await;
+    Ok(())
+}
+```
+
+Что важно у Финама: [страница Финама](brokers/finam.md).
+
+## Что произошло по шагам
+
+1. `start` поднял коннектор. У БКС и Финама он сразу проходит авторизацию и возвращает ошибку, если токен не
+   подошел. У Т-Банка при заданном счете `start` в сеть не ходит, о неверном токене скажет первый запрос.
+2. `reconcile(&[])` открыл шлюз команд. До него `place` вернул бы `NotReconciled`.
+3. Подписки дали `SubscriptionId`. По `source` и `sub` в конверте видно, чье это событие.
+4. `place` вернул `OrderAck` (или один из исходов, разобранных в [Заявках](orders.md)).
+5. События идут в канал сами. Программа их читает, как только они появились.
+6. `cancel` снял заявку, `shutdown` закрыл подписки. **Заявки на бирже при остановке не снимаются**: если
+   `cancel` не прошел, заявка останется.

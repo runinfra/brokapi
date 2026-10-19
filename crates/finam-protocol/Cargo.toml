@@ -1,0 +1,35 @@
+[package]
+name = "brokapi-finam-protocol"
+description = "Finam Trade API gRPC client: generated from the official .proto, JWT token manager, channel setup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+base64 = "0.22"
+prost = "0.14"
+prost-types = "0.14"
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tonic = { version = "0.14", default-features = false, features = ["codegen", "transport", "tls-ring", "tls-webpki-roots"] }
+tonic-prost = "0.14"
+tracing.workspace = true
+
+[build-dependencies]
+protox = "0.10"
+tonic-prost-build = "0.14"
+prost-types = "0.14"
+
+[lib]
+name = "brokapi_finam_protocol"
+path = "src/lib.rs"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+# Doctests run against the in-process Finam imitation (a dev-dependency cycle is fine for doctests).
+brokapi-mocks.workspace = true

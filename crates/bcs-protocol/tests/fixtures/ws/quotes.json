@@ -1,0 +1,10 @@
+{
+  "responseType": "Quotes",
+  "ticker": "SBER",
+  "classCode": "TQBR",
+  "dateTime": "2024-10-30T09:01:00.000Z",
+  "bid": 244.30,
+  "ask": 244.35,
+  "lastPrice": 244.32,
+  "volume": 1234567
+}

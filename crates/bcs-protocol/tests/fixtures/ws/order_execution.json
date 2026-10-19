@@ -1,0 +1,18 @@
+{
+  "clientOrderId": "550e8400-e29b-41d4-a716-446655440000",
+  "originalClientOrderId": "550e8400-e29b-41d4-a716-446655440000",
+  "data": {
+    "orderStatus": "0",
+    "executionType": "0",
+    "orderQuantity": 1,
+    "executedQuantity": 0,
+    "lastQuantity": 0,
+    "remainedQuantity": 1,
+    "ticker": "SBER",
+    "classCode": "TQBR",
+    "side": "1",
+    "orderType": "2",
+    "price": 100.0,
+    "orderId": "12345678"
+  }
+}

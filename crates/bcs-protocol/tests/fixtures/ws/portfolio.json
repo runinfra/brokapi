@@ -1,0 +1,16 @@
+[
+  {
+    "type": "depoLimit",
+    "ticker": "SBER",
+    "board": "TQBR",
+    "quantity": 10,
+    "balancePrice": 240.0,
+    "currentPrice": 244.0
+  },
+  {
+    "type": "moneyLimit",
+    "currency": "RUB",
+    "quantity": 50000.0,
+    "locked": 1000.0
+  }
+]
