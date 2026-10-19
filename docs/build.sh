@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Builds the whole documentation site into docs/book:
 #   - the book (mdBook) at the root,
-#   - the API reference (rustdoc, cargo doc --no-deps) in docs/book/api/<crate>/index.html.
+#   - the API reference (rustdoc, cargo doc --no-deps) in docs/book/api/<crate>/index.html,
+#   - for AI agents: llms.txt (index), llms-full.txt (the whole book as one markdown file) and the markdown of every
+#     page next to its HTML (page.html -> page.md), see docs/llms.py.
 #
 # The build goes to a temporary folder first. docs/book is replaced only when everything succeeded,
 # so a broken build leaves the previous version in place.
 #
 #   docs/build.sh
 #
-# Needs mdbook (and mdbook-mermaid) and a Rust toolchain.
+# Needs mdbook (and mdbook-mermaid), python3 (standard library only, for docs/llms.py) and a Rust toolchain.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
@@ -22,6 +24,9 @@ rm -rf "$NEW"
 
 echo "==> book"
 mdbook build docs --dest-dir "$(pwd)/$NEW"
+
+echo "==> files for AI agents (llms.txt, llms-full.txt, page.md)"
+python3 docs/llms.py docs "$NEW"
 
 echo "==> API reference"
 # Start from an empty doc folder: pages of crates built earlier (or excluded now) must not leak into the site.

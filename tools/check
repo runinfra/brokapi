@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full check before a push. Seven steps, in order, stops at the first failure:
+# Full check before a push. Eight steps, in order, stops at the first failure:
 #   1. cargo fmt --all --check
 #   2. cargo clippy --workspace --all-targets -- -D warnings
 #   3. cargo test --workspace
@@ -7,6 +7,7 @@
 #   5. RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam
 #   6. cargo build --examples
 #   7. mdbook build docs
+#   8. docs/llms.py: the files for AI agents (llms.txt, llms-full.txt, page.md), every page of the book described
 #
 # Every example in the documentation is a doctest or a program in examples/, and all of them run
 # against the in-process broker imitations (crate brokapi-mocks): no network, no money.
@@ -19,25 +20,28 @@ export PATH="$HOME/.local/bin:$PATH" # mdbook lives here on the build machines
 start=$(date +%s)
 step() { printf '\n==> %s\n' "$*"; }
 
-step "1/7 cargo fmt --all --check"
+step "1/8 cargo fmt --all --check"
 cargo fmt --all --check
 
-step "2/7 cargo clippy --workspace --all-targets -- -D warnings"
+step "2/8 cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
-step "3/7 cargo test --workspace"
+step "3/8 cargo test --workspace"
 cargo test --workspace
 
-step "4/7 cargo test --doc --workspace"
+step "4/8 cargo test --doc --workspace"
 cargo test --doc --workspace
 
-step "5/7 cargo doc --no-deps --workspace (warnings are errors)"
+step "5/8 cargo doc --no-deps --workspace (warnings are errors)"
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam
 
-step "6/7 cargo build --examples"
+step "6/8 cargo build --examples"
 cargo build --examples --workspace
 
-step "7/7 mdbook build docs"
+step "7/8 mdbook build docs"
 mdbook build docs
+
+step "8/8 files for AI agents (docs/llms.py)"
+python3 docs/llms.py docs docs/book
 
 printf '\nAll checks passed in %ss.\n' "$(( $(date +%s) - start ))"
