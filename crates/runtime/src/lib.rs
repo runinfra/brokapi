@@ -63,6 +63,7 @@
 #![warn(missing_docs)]
 
 mod backpressure;
+mod clock;
 mod command_gate;
 mod connection;
 mod emitter;
@@ -79,6 +80,7 @@ mod shutdown;
 mod supervisor;
 
 pub use backpressure::{BackpressureManager, PushResult, SubscriptionBuffer};
+pub use clock::now;
 pub use command_gate::CommandGate;
 pub use connection::{ConnectionState, SubState};
 pub use emitter::Emitter;

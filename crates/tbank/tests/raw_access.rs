@@ -211,16 +211,25 @@ async fn raw_command_without_an_answer_is_unknown_and_not_repeated() {
         instrument_id: "uid-sber".into(),
         ..Default::default()
     };
-    let err = md
-        .raw()
-        .call_command(
+    let err = brokapi_mocks::time::elapse_when(
+        "the order reached the mock",
+        || opts.post_calls.load(Ordering::SeqCst) == 1,
+        Duration::from_millis(200),
+        md.raw().call_command(
             "PostOrder",
             |c| async move { c.orders().post_order(req).await },
-        )
-        .await
-        .unwrap_err();
+        ),
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(err, Error::Unknown), "{err:?}");
-    tokio::time::sleep(Duration::from_millis(700)).await;
+    // No retry, neither at once nor later: an hour ahead on the clock, then a round trip behind it.
+    brokapi_mocks::time::jump(Duration::from_secs(3600)).await;
+    brokapi_tbank_protocol::TbankClient::new(&TbankConfig::for_mock(TOKEN, &server.endpoint))
+        .unwrap()
+        .list_accounts()
+        .await
+        .unwrap();
     assert_eq!(
         opts.post_calls.load(Ordering::SeqCst),
         1,

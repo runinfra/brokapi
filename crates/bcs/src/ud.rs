@@ -413,7 +413,7 @@ impl UserDataConnector {
     /// # }
     /// ```
     pub async fn shutdown(self, mode: ShutdownMode) -> ShutdownReport {
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         if let ShutdownMode::Graceful { deadline } = mode {
             drain_backlog(&self.inner.emitter, deadline).await;
         }
@@ -436,7 +436,7 @@ impl UserDataConnector {
     }
 
     async fn acquire(&self, method: &str) -> Result<(), Error> {
-        self.inner.limiter.acquire(method, Instant::now())
+        self.inner.limiter.acquire(method, brokapi_runtime::now())
     }
 
     async fn register_ud_sub(
@@ -570,7 +570,7 @@ impl UserDataConnector {
         cid: ClientOrderId,
         resp: &OrderStateListResponse,
     ) -> Result<brokapi_core::OrderSnapshot, Error> {
-        map_state_list(Some(cid), resp, Instant::now()).ok_or(Error::Unknown)
+        map_state_list(Some(cid), resp, brokapi_runtime::now()).ok_or(Error::Unknown)
     }
 
     /// A cancel that waited for the broker: done when the order is cancelled, refused when the broker
@@ -619,7 +619,7 @@ impl UserDataConnector {
             .orders
             .lock()
             .await
-            .apply_signal(cid, signal, Instant::now());
+            .apply_signal(cid, signal, brokapi_runtime::now());
     }
 
     fn ack_of(
@@ -693,7 +693,7 @@ impl OrderExecutor for UserDataConnector {
         let _instrument = self.inner.instrument_locks.lock(&req.instrument).await;
         self.inner.instrument_locks.bind(req.cid, &req.instrument);
 
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         {
             let mut orders = self.inner.orders.lock().await;
             if !orders.try_place_once(req.cid) {
@@ -764,7 +764,7 @@ impl OrderExecutor for UserDataConnector {
                     .get_order("1", &req.original_cid.hyphenated().to_string())
                     .await
                     .map_err(map_err)?;
-                let snap = map_state_list(Some(req.original_cid), &cur, Instant::now())
+                let snap = map_state_list(Some(req.original_cid), &cur, brokapi_runtime::now())
                     .ok_or(Error::Unknown)?;
                 if q.is_none() && snap.filled.is_positive() {
                     return Err(Error::Rejected {
@@ -803,7 +803,7 @@ impl OrderExecutor for UserDataConnector {
             .edit_order_sync(&http_req)
             .await
             .map_err(map_order_cmd_err)?;
-        let (ack, order_id) = self.ack_of(req.cid, &resp, Instant::now())?;
+        let (ack, order_id) = self.ack_of(req.cid, &resp, brokapi_runtime::now())?;
         if let Some(id) = order_id {
             self.learn(&id, req.cid).await;
         }
@@ -820,7 +820,7 @@ impl OrderExecutor for UserDataConnector {
             .get_order("1", &cid.hyphenated().to_string())
             .await
             .map_err(map_err)?;
-        let snap = map_state_list(Some(cid), &resp, Instant::now()).ok_or_else(|| {
+        let snap = map_state_list(Some(cid), &resp, brokapi_runtime::now()).ok_or_else(|| {
             Error::Transport(brokapi_core::TransportError::Message(
                 "order status answer has no report".into(),
             ))
@@ -838,7 +838,7 @@ impl OrderExecutor for UserDataConnector {
         let records = self
             .list_orders(&[LIST_STATUS_ACTIVE], &PLAIN_LIST_TYPES)
             .await?;
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         let mut out = Vec::new();
         for r in &records {
             let cid = match self.cid_of_order_id(&r.order_id).await {
@@ -874,7 +874,7 @@ impl OrderExecutor for UserDataConnector {
                 .get_order("1", &cid.hyphenated().to_string())
                 .await
             {
-                Ok(resp) => match map_state_list(Some(*cid), &resp, Instant::now()) {
+                Ok(resp) => match map_state_list(Some(*cid), &resp, brokapi_runtime::now()) {
                     Some(snap) => {
                         // Teaches the cid of this broker order, so the list below names it.
                         if let Some(id) = &snap.broker_id {
@@ -922,7 +922,7 @@ impl ExecutionSource for UserDataConnector {
         Ok(resp
             .records
             .iter()
-            .filter_map(|r| map_trade_record(r, Instant::now()))
+            .filter_map(|r| map_trade_record(r, brokapi_runtime::now()))
             .collect())
     }
 
@@ -944,7 +944,7 @@ impl PortfolioSource for UserDataConnector {
     async fn portfolio(&self) -> Result<Portfolio, Error> {
         self.acquire("GetPortfolio").await?;
         let resp = self.inner.http.get_portfolio().await.map_err(map_err)?;
-        Ok(map_rest_portfolio(&resp, Instant::now()))
+        Ok(map_rest_portfolio(&resp, brokapi_runtime::now()))
     }
 
     async fn positions(&self) -> Result<Vec<Position>, Error> {
@@ -984,7 +984,7 @@ impl StopOrderExecutor for UserDataConnector {
         self.acquire("PlaceStopOrder").await?;
         let _instrument = self.inner.instrument_locks.lock(&req.instrument).await;
         self.inner.instrument_locks.bind(req.cid, &req.instrument);
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         {
             let mut orders = self.inner.orders.lock().await;
             if !orders.try_place_once(req.cid) {
@@ -1052,7 +1052,7 @@ impl StopOrderExecutor for UserDataConnector {
         let records = self
             .list_orders(&[LIST_STATUS_ACTIVE], &STOP_LIST_TYPES)
             .await?;
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         let mut out = Vec::new();
         for r in &records {
             let cid = self.cid_of_order_id(&r.order_id).await;

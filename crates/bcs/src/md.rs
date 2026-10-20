@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use brokapi_bcs_protocol::http::client::BcsHttpClient;
@@ -351,7 +351,7 @@ impl MarketDataConnector {
     }
 
     async fn acquire(&self, method: &str) -> Result<(), Error> {
-        self.inner.limiter.acquire(method, Instant::now())
+        self.inner.limiter.acquire(method, brokapi_runtime::now())
     }
 
     async fn register_md_sub(
@@ -422,7 +422,7 @@ impl OrderBookSource for MarketDataConnector {
             .get_order_book(&req)
             .await
             .map_err(map_err)?;
-        match map_rest_order_book(&resp, Instant::now()) {
+        match map_rest_order_book(&resp, brokapi_runtime::now()) {
             brokapi_core::Event::OrderBook(book) => Ok(book),
             _ => Err(Error::Transport(brokapi_core::TransportError::Message(
                 "order book mapping failed".into(),
@@ -482,7 +482,7 @@ impl MarketDataSource for MarketDataConnector {
             .map_err(map_err)?;
         // Oldest first; records without a time keep their place (stable sort on a None key).
         resp.sort_by_key(|t| crate::map::parse_broker_ts(t.date_time.as_deref()));
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         let mut trades: Vec<MarketTrade> = resp
             .iter()
             .filter_map(|t| map_rest_last_trade(t, id, now))
@@ -549,7 +549,7 @@ impl MarketDataSource for MarketDataConnector {
             time_frame: label.to_string(),
         };
         let resp = self.inner.http.get_candles(&req).await.map_err(map_err)?;
-        Ok(map_rest_candles(&resp, tf, Instant::now()))
+        Ok(map_rest_candles(&resp, tf, brokapi_runtime::now()))
     }
 
     /// One request returns at most 1440 bars (BCS documentation of `candles-chart`), so the span is
@@ -754,7 +754,12 @@ impl InstrumentSource for MarketDataConnector {
             .await
             .map_err(map_err)?;
         let day = nanos_to_datetime(range.from).date_naive();
-        Ok(map_daily_schedule(exchange, day, &resp, Instant::now()))
+        Ok(map_daily_schedule(
+            exchange,
+            day,
+            &resp,
+            brokapi_runtime::now(),
+        ))
     }
 }
 

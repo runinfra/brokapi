@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use brokapi_core::{
@@ -145,7 +145,10 @@ impl Shared {
             self.cancel.child_token(),
         );
         tokio::spawn(async move {
-            if limiter.acquire("GetOrders", Instant::now()).is_err() {
+            if limiter
+                .acquire("GetOrders", brokapi_runtime::now())
+                .is_err()
+            {
                 return;
             }
             let mut c = client.orders();
@@ -173,7 +176,7 @@ impl Shared {
                 _ = self.cancel.cancelled() => return,
                 frame = rx.recv() => {
                     let Some(frame) = frame else { return };
-                    self.with_core(|c, s| c.on_frame(frame, Instant::now(), s));
+                    self.with_core(|c, s| c.on_frame(frame, brokapi_runtime::now(), s));
                 }
                 _ = tokio::time::sleep(Duration::from_millis(20)), if backlog => {
                     self.emitter.flush();
@@ -687,7 +690,7 @@ impl UserDataConnector {
     /// ```
     pub async fn shutdown(self, mode: ShutdownMode) -> ShutdownReport {
         let inner = &self.inner;
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         inner
             .ctl
             .lock()
@@ -718,8 +721,8 @@ impl UserDataConnector {
                 inner.stop_stream(*kind);
                 unsubscribed += 1;
             }
-            let end = Instant::now() + deadline;
-            while inner.emitter.has_backlog() && Instant::now() < end {
+            let end = brokapi_runtime::now() + deadline;
+            while inner.emitter.has_backlog() && brokapi_runtime::now() < end {
                 inner.emitter.flush();
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
@@ -747,7 +750,7 @@ impl UserDataConnector {
     }
 
     fn acquire(&self, method: &str) -> Result<(), Error> {
-        self.inner.limiter.acquire(method, Instant::now())
+        self.inner.limiter.acquire(method, brokapi_runtime::now())
     }
 
     fn account(&self) -> String {
@@ -850,7 +853,7 @@ impl UserDataConnector {
         };
         let mut c = self.inner.client.orders();
         let r = query(self.inner.request_timeout, c.get_orders(req)).await?;
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         let mut core = self.inner.core.lock().expect("ud core poisoned");
         Ok(r.orders
             .iter()
@@ -1050,7 +1053,7 @@ impl OrderExecutor for UserDataConnector {
         // Waits for earlier commands on this instrument, released on every exit path.
         let _instrument = self.inner.locks.lock(&req.instrument).await;
 
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         self.core(|c, _| c.begin_place(&req, lots, now))?;
 
         let wire = pb::PostOrderRequest {
@@ -1166,7 +1169,7 @@ impl OrderExecutor for UserDataConnector {
         let mut c = self.inner.client.orders();
         match command(self.inner.request_timeout, c.cancel_order(wire)).await {
             CommandOutcome::Done(_) => {
-                let now = Instant::now();
+                let now = brokapi_runtime::now();
                 self.core(|c, s| c.cancel_ok(cid, now, s));
                 Ok(())
             }
@@ -1292,7 +1295,7 @@ impl OrderExecutor for UserDataConnector {
             .map(price_to_quotation)
             .transpose()?;
 
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         self.core(|c, _| c.begin_replace(req.cid, original, now))?;
         let wire = pb::ReplaceOrderRequest {
             account_id: self.account(),
@@ -1383,7 +1386,7 @@ impl OrderExecutor for UserDataConnector {
         let st = self.get_state(cid.hyphenated().to_string(), true).await?;
         let parts = map_order::parts_from_state(&st);
         self.core(|c, _| c.note_order(&parts));
-        Ok(map_order::snapshot(&parts, Instant::now()))
+        Ok(map_order::snapshot(&parts, brokapi_runtime::now()))
     }
 
     /// Orders that are live at the broker now (`GetOrders`) for this account.
@@ -1654,7 +1657,7 @@ impl ExecutionSource for UserDataConnector {
             };
             let mut c = self.inner.client.operations();
             let r = query(self.inner.request_timeout, c.get_operations_by_cursor(req)).await?;
-            let now = Instant::now();
+            let now = brokapi_runtime::now();
             for item in &r.items {
                 out.extend(execution::from_operation(item, now));
             }
@@ -1783,7 +1786,7 @@ impl PortfolioSource for UserDataConnector {
     async fn portfolio(&self) -> Result<Portfolio, Error> {
         let positions = self.fetch_positions().await?;
         let portfolio = self.fetch_portfolio().await?;
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         let cash = map_portfolio::balances_from_positions(&positions, now);
         Ok(map_portfolio::portfolio(&portfolio, cash, now))
     }
@@ -1825,7 +1828,10 @@ impl PortfolioSource for UserDataConnector {
     /// ```
     async fn positions(&self) -> Result<Vec<Position>, Error> {
         let p = self.fetch_portfolio().await?;
-        Ok(map_portfolio::positions_from_portfolio(&p, Instant::now()))
+        Ok(map_portfolio::positions_from_portfolio(
+            &p,
+            brokapi_runtime::now(),
+        ))
     }
 
     /// Cash by currency from `GetPositions`: `available` money and the `blocked` part.
@@ -1865,7 +1871,10 @@ impl PortfolioSource for UserDataConnector {
     /// ```
     async fn balances(&self) -> Result<Vec<Balance>, Error> {
         let p = self.fetch_positions().await?;
-        Ok(map_portfolio::balances_from_positions(&p, Instant::now()))
+        Ok(map_portfolio::balances_from_positions(
+            &p,
+            brokapi_runtime::now(),
+        ))
     }
 
     /// `PortfolioStream` (positions with prices) and `PositionsStream` (cash and balances) under one id.
@@ -2027,7 +2036,7 @@ impl StopOrderExecutor for UserDataConnector {
                 message: "auto-retry of place_stop is forbidden".into(),
             });
         }
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         let mut c = self.inner.client.stop_orders();
         let cid = req.cid;
         match command(self.inner.request_timeout, c.post_stop_order(wire)).await {
@@ -2181,7 +2190,7 @@ impl StopOrderExecutor for UserDataConnector {
         };
         let mut c = self.inner.client.stop_orders();
         let r = query(self.inner.request_timeout, c.get_stop_orders(req)).await?;
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         let stops = self.inner.stops.lock().expect("stops poisoned");
         Ok(r.stop_orders
             .iter()

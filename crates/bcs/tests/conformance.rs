@@ -126,13 +126,8 @@ async fn own_orders_events_active_replace_and_executions() {
     let (ud, mut rx) = ud(&server).await;
     conf::reconcile(&ud).await;
     // The order-events socket connects in the background: events before that are not delivered.
-    tokio::time::timeout(std::time::Duration::from_secs(8), async {
-        while opts.event_sockets() == 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("order events socket connected");
+    brokapi_mocks::time::wait_until("order events socket connected", || opts.event_sockets() > 0)
+        .await;
     conf::order_state_events(&ud, &mut rx, "bcs-ud", &sber(), Price::new(dec!(100.0))).await;
     conf::active_orders_lifecycle(&ud, &sber(), Price::new(dec!(100.0))).await;
     assert!(ud.caps().supports_replace);

@@ -199,7 +199,16 @@ async fn place_timeout_is_unknown_and_never_retried() {
 
     server.opts.post_delay_ms.store(600, Ordering::SeqCst);
     let cid = ClientOrderId::new_v4();
-    let err = ud.place(limit_order(cid)).await.unwrap_err();
+    // The request reaches the mock, which holds it for 600 ms. The clock goes 200 ms ahead: the 150 ms
+    // timeout of the connector is due, the mock's delay is not.
+    let err = brokapi_mocks::time::elapse_when(
+        "the order reached the mock",
+        || server.opts.post_calls.load(Ordering::SeqCst) == 1,
+        Duration::from_millis(200),
+        ud.place(limit_order(cid)),
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(err, Error::Unknown), "{err:?}");
     let snap = next_order(&mut rx, |s| matches!(s, OrderState::Unknown { .. })).await;
     assert_eq!(snap.cid, cid);
@@ -210,12 +219,17 @@ async fn place_timeout_is_unknown_and_never_retried() {
         matches!(&again, Error::Rejected { code, .. } if code == "duplicate_place"),
         "{again:?}"
     );
-    tokio::time::sleep(Duration::from_millis(700)).await;
-    assert_eq!(server.opts.post_calls.load(Ordering::SeqCst), 1);
 
-    // the stream shows the order the broker did take: Unknown resolves to Acked
+    // The mock's delay ends: the broker took the order after all. The stream shows it, Unknown resolves to Acked.
+    brokapi_mocks::time::jump(Duration::from_millis(500)).await;
     let acked = next_order(&mut rx, |s| matches!(s, OrderState::Acked { .. })).await;
     assert_eq!(acked.cid, cid);
+
+    // No retry came, neither at once nor later: let the clock run an hour ahead, then make a round trip
+    // that ends behind anything a retry would have sent.
+    brokapi_mocks::time::jump(Duration::from_secs(3600)).await;
+    ud.reconcile(&[]).await.unwrap();
+    assert_eq!(server.opts.post_calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -762,9 +776,11 @@ async fn quotes_and_book_of_one_instrument_use_one_wire_subscription() {
 
     // unsubscribing the book keeps quotes alive: depth goes back to 1
     md.unsubscribe(b).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let reqs = server.opts.md_requests.lock().unwrap().clone();
-    assert_eq!(reqs.last().map(|r| (r.0, r.2)), Some((1, 1)));
+    brokapi_mocks::time::wait_until("the book subscription is back to depth 1", || {
+        let reqs = server.opts.md_requests.lock().unwrap();
+        reqs.last().map(|r| (r.0, r.2)) == Some((1, 1))
+    })
+    .await;
     md.unsubscribe(q).await.unwrap();
 }
 
@@ -835,10 +851,15 @@ async fn unconfirmed_subscription_times_out() {
         limiter(),
     )
     .await;
-    let e = md
-        .subscribe_order_book(&sber(), SubscribeOpts::conflate())
-        .await
-        .unwrap_err();
+    // The mock reads the request and stays silent: the clock goes past the 200 ms timeout at once.
+    let e = brokapi_mocks::time::elapse_when(
+        "the subscribe request reached the mock",
+        || !server.opts.md_requests.lock().unwrap().is_empty(),
+        Duration::from_millis(300),
+        md.subscribe_order_book(&sber(), SubscribeOpts::conflate()),
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(e, Error::Transport(_)), "{e:?}");
 }
 
@@ -1024,11 +1045,11 @@ async fn rate_limited_place_leaves_the_cid_usable() {
         Err(Error::RateLimited { retry_after }) => retry_after,
         other => panic!("expected RateLimited, got {other:?}"),
     };
-    tokio::time::sleep(retry_after + Duration::from_millis(50)).await;
+    brokapi_mocks::time::jump(retry_after + Duration::from_millis(50)).await;
     ud.place(limit_order(cid))
         .await
         .expect("the same cid after RateLimited");
-    tokio::time::sleep(Duration::from_millis(450)).await;
+    brokapi_mocks::time::jump(Duration::from_millis(450)).await;
     assert!(matches!(
         ud.place(limit_order(cid)).await,
         Err(Error::Rejected { ref code, .. }) if code == "duplicate_place"

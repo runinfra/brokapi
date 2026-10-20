@@ -475,7 +475,7 @@ impl WsSession {
             };
 
             info!("WS {:?} session established", channel);
-            let connected_at = std::time::Instant::now();
+            let connected_at = tokio::time::Instant::now();
             let (mut write, mut read) = ws_stream.split();
 
             // 3. Pong watchdog state

@@ -57,7 +57,7 @@ fn event_ts(ev: &Event) -> Timestamps {
         Event::Balances(v) => v.first().map(|b| b.ts),
         Event::Resync { .. } | Event::Overflow { .. } => None,
     };
-    ts.unwrap_or_else(|| Timestamps::new(now_nanos(), Instant::now()))
+    ts.unwrap_or_else(|| Timestamps::new(now_nanos(), brokapi_runtime::now()))
 }
 
 struct Egress {
@@ -248,7 +248,7 @@ pub async fn run_pump<F, H>(
             },
             frame = rx.recv() => match frame {
                 Some(f) => {
-                    let now = Instant::now();
+                    let now = brokapi_runtime::now();
                     for ev in handle(f, now) {
                         eg.ingest(ev, &backpressure, on_overflow.as_ref());
                     }

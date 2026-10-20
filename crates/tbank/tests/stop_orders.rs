@@ -172,7 +172,14 @@ async fn no_answer_is_unknown_and_never_repeated() {
     let ud = ud_for(&server, ACCOUNT_A, Duration::from_millis(150)).await;
     ud.reconcile(&[]).await.unwrap();
     let req = stop(StopOrderKind::StopLoss, dec!(1.0), None);
-    let err = ud.place_stop(req.clone()).await.unwrap_err();
+    let err = brokapi_mocks::time::elapse_when(
+        "the stop order reached the mock",
+        || opts.stop_post_calls.load(Ordering::SeqCst) == 1,
+        Duration::from_millis(200),
+        ud.place_stop(req.clone()),
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(err, Error::Unknown), "{err:?}");
     // The cid stays used: the broker may have the order.
     let err = ud.place_stop(req).await.unwrap_err();
@@ -180,7 +187,9 @@ async fn no_answer_is_unknown_and_never_repeated() {
         matches!(err, Error::Rejected { ref code, .. } if code == "duplicate_place"),
         "{err:?}"
     );
-    tokio::time::sleep(Duration::from_millis(700)).await;
+    // No retry, neither at once nor later: an hour ahead on the clock, then a round trip behind it.
+    brokapi_mocks::time::jump(Duration::from_secs(3600)).await;
+    ud.reconcile(&[]).await.unwrap();
     assert_eq!(
         opts.stop_post_calls.load(Ordering::SeqCst),
         1,

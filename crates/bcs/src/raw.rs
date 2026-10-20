@@ -57,7 +57,6 @@
 
 use std::future::Future;
 use std::sync::Arc;
-use std::time::Instant;
 
 use brokapi_bcs_protocol::error::BcsApiError;
 use brokapi_bcs_protocol::http::client::BcsHttpClient;
@@ -158,7 +157,7 @@ impl BcsRaw {
         F: FnOnce(BcsHttpClient) -> Fut,
         Fut: Future<Output = Result<T, BcsApiError>>,
     {
-        self.limiter.acquire(method, Instant::now())?;
+        self.limiter.acquire(method, brokapi_runtime::now())?;
         f(self.http.clone()).await.map_err(map_err)
     }
 
@@ -222,7 +221,7 @@ impl BcsRaw {
         F: FnOnce(BcsHttpClient) -> Fut,
         Fut: Future<Output = Result<T, BcsApiError>>,
     {
-        self.limiter.acquire(method, Instant::now())?;
+        self.limiter.acquire(method, brokapi_runtime::now())?;
         f(self.http.clone()).await.map_err(map_command_err)
     }
 
@@ -278,7 +277,7 @@ impl BcsRaw {
         event_tx: AsyncSender<IncomingMessage>,
     ) -> Result<WsSession, Error> {
         self.limiter
-            .acquire(&format!("Connect{channel:?}"), Instant::now())?;
+            .acquire(&format!("Connect{channel:?}"), brokapi_runtime::now())?;
         Ok(WsSession::spawn(channel, self.http.clone(), event_tx))
     }
 }

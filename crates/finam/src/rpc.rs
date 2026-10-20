@@ -124,7 +124,7 @@ impl Rpc {
     /// [`brokapi_core::Error::RateLimited`] when a bucket on the route of `method` is empty. Nothing
     /// is consumed in that case and the request must not be sent.
     pub fn acquire(&self, method: &str) -> Result<(), brokapi_core::Error> {
-        self.limiter.acquire(method, std::time::Instant::now())
+        self.limiter.acquire(method, brokapi_runtime::now())
     }
 
     /// A read-only call: quota, deadline, one re-auth retry, public error mapping.

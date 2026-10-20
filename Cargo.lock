@@ -355,6 +355,7 @@ dependencies = [
  "brokapi-conformance",
  "brokapi-core",
  "brokapi-finam-protocol",
+ "brokapi-runtime",
  "brokapi-tbank-protocol",
  "chrono",
  "futures-util",

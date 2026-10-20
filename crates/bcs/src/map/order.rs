@@ -116,7 +116,7 @@ fn list_state(record: &OrderRecord, cid: ClientOrderId) -> OrderState {
         Some(3) => OrderState::Acked { cid, broker_id },
         _ => OrderState::Unknown {
             cid,
-            since: Instant::now(),
+            since: brokapi_runtime::now(),
         },
     }
 }
@@ -351,7 +351,7 @@ fn map_bcs_status(data: &OrderExecutionData, cid: ClientOrderId) -> OrderState {
         },
         OrderStatus::Unknown => OrderState::Unknown {
             cid,
-            since: Instant::now(),
+            since: brokapi_runtime::now(),
         },
     }
 }
@@ -392,7 +392,7 @@ fn map_rest_status(data: &RestOrderExecutionData, cid: ClientOrderId) -> OrderSt
         },
         _ => OrderState::Unknown {
             cid,
-            since: Instant::now(),
+            since: brokapi_runtime::now(),
         },
     }
 }

@@ -46,6 +46,20 @@ fn test_limiter() -> Arc<BrokerLimiter> {
     BrokerLimiter::new(&default_limits())
 }
 
+/// The next order book event in the channel, with the envelope.
+async fn event_of_book(rx: &mut mpsc::Receiver<Envelope>) -> Envelope {
+    timeout(Duration::from_secs(8), async {
+        while let Some(env) = rx.recv().await {
+            if matches!(env.payload, Event::OrderBook(_)) {
+                return env;
+            }
+        }
+        panic!("event channel closed before an order book");
+    })
+    .await
+    .expect("an order book within 8s")
+}
+
 async fn wait_for_event(rx: &mut mpsc::Receiver<Envelope>, pred: impl Fn(&Envelope) -> bool) {
     timeout(Duration::from_secs(8), async {
         while let Some(env) = rx.recv().await {
@@ -284,19 +298,23 @@ async fn partial_subscribe_failure_does_not_crash_connector() {
     // Good instrument still works on REST.
     md.order_book(&sber(), 5).await.expect("rest still works");
 
-    // No OrderBook events for bad sub within short window (error frame only).
-    let maybe_book = timeout(Duration::from_millis(800), async {
-        while let Some(env) = rx.recv().await {
-            if matches!(env.payload, Event::OrderBook(_)) {
-                return Some(());
-            }
-        }
-        None
-    })
-    .await;
-
-    assert!(
-        maybe_book.ok().flatten().is_none(),
+    // The bad subscription gets an error frame and no OrderBook events. A good subscription is the fence:
+    // its book comes after everything the bad one could have sent, so the first book in the channel
+    // must be the good one's.
+    let good = md
+        .subscribe_order_book(
+            &sber(),
+            SubscribeOpts {
+                backpressure: Backpressure::Conflate,
+                depth: Some(20),
+            },
+        )
+        .await
+        .expect("subscribe the good instrument");
+    let first_book = event_of_book(&mut rx).await;
+    assert_eq!(
+        first_book.sub,
+        Some(good),
         "bad subscribe should not produce OrderBook events"
     );
 
@@ -323,13 +341,10 @@ async fn executions_stream_from_the_order_events_socket() {
         .await
         .expect("subscribe_executions");
     // The socket connects in the background: push only when it is there.
-    timeout(Duration::from_secs(8), async {
-        while options.event_sockets() == 0 {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+    brokapi_mocks::time::wait_until("order events socket connected", || {
+        options.event_sockets() > 0
     })
-    .await
-    .expect("order events socket connected");
+    .await;
 
     let fill = std::fs::read_to_string(format!(
         "{}/../bcs-protocol/tests/fixtures/ws/order_execution_fill.json",
@@ -340,18 +355,33 @@ async fn executions_stream_from_the_order_events_socket() {
     server.push_event(&fill);
     let second = fill.replace("TQBR-Z3fE7c-S-1-1-N", "TQBR-Z3fE7c-S-1-2-N");
     server.push_event(&second);
+    // The third, new fill is the fence: when it has arrived, a repeat of the first one would have too.
+    let third = fill.replace("TQBR-Z3fE7c-S-1-1-N", "TQBR-Z3fE7c-S-1-3-N");
+    server.push_event(&third);
 
     let mut got = Vec::new();
-    let _ = timeout(Duration::from_millis(1500), async {
+    timeout(Duration::from_secs(8), async {
         while let Some(env) = rx.recv().await {
             if let Event::Execution(x) = env.payload {
                 assert_eq!(env.sub, Some(sub));
                 got.push(x.trade_id);
+                if got.last().map(String::as_str) == Some("TQBR-Z3fE7c-S-1-3-N") {
+                    break;
+                }
             }
         }
     })
-    .await;
-    assert_eq!(got, vec!["TQBR-Z3fE7c-S-1-1-N", "TQBR-Z3fE7c-S-1-2-N"]);
+    .await
+    .expect("the fills arrive");
+    assert_eq!(
+        got,
+        vec![
+            "TQBR-Z3fE7c-S-1-1-N",
+            "TQBR-Z3fE7c-S-1-2-N",
+            "TQBR-Z3fE7c-S-1-3-N"
+        ],
+        "each executionId once"
+    );
 
     ud.shutdown(ShutdownMode::Immediate).await;
 }
@@ -382,13 +412,10 @@ async fn lossless_overflow_is_visible_and_degrades_until_reconcile() {
         .subscribe_executions()
         .await
         .expect("subscribe_executions");
-    timeout(Duration::from_secs(8), async {
-        while options.event_sockets() == 0 {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+    brokapi_mocks::time::wait_until("order events socket connected", || {
+        options.event_sockets() > 0
     })
-    .await
-    .expect("order events socket connected");
+    .await;
 
     ud.reconcile(&[])
         .await
@@ -410,16 +437,13 @@ async fn lossless_overflow_is_visible_and_degrades_until_reconcile() {
         server.push_event(&fill.replace("TQBR-Z3fE7c-S-1-1-N", &format!("TQBR-Z3fE7c-S-1-{n}-N")));
     }
     // The buffer fills while nobody reads: commands are refused.
-    timeout(Duration::from_secs(8), async {
-        loop {
-            match ud.place(place(ClientOrderId::new_v4())).await {
-                Err(Error::Degraded) => return,
-                _ => tokio::time::sleep(Duration::from_millis(20)).await,
-            }
-        }
+    brokapi_mocks::time::wait_until_async("Degraded after the overflow", || async {
+        matches!(
+            ud.place(place(ClientOrderId::new_v4())).await,
+            Err(Error::Degraded)
+        )
     })
-    .await
-    .expect("Degraded after the overflow");
+    .await;
     assert!(matches!(
         ud.cancel(ClientOrderId::new_v4()).await,
         Err(Error::Degraded)
@@ -427,19 +451,31 @@ async fn lossless_overflow_is_visible_and_degrades_until_reconcile() {
 
     // The bot reads the channel to the end: Overflow is there, once, for this subscription.
     let mut overflows = 0;
-    let _ = timeout(Duration::from_millis(600), async {
+    let mut seen = |env: Envelope| {
+        if let Event::Overflow { sub: s, .. } = env.payload {
+            assert_eq!(s, sub);
+            assert_eq!(env.sub, Some(sub));
+            overflows += 1;
+        }
+    };
+    timeout(Duration::from_secs(8), async {
         while let Some(env) = rx.recv().await {
-            if let Event::Overflow { sub: s, .. } = env.payload {
-                assert_eq!(s, sub);
-                assert_eq!(env.sub, Some(sub));
-                overflows += 1;
+            let overflow = matches!(env.payload, Event::Overflow { .. });
+            seen(env);
+            if overflow {
+                break;
             }
         }
     })
-    .await;
+    .await
+    .expect("the Overflow reaches the bot");
+    // A round trip to the broker, then what is still queued: no second Overflow.
+    ud.reconcile(&[]).await.expect("reconcile");
+    while let Ok(env) = rx.try_recv() {
+        seen(env);
+    }
     assert_eq!(overflows, 1, "one Overflow per subscription");
 
-    ud.reconcile(&[]).await.expect("reconcile");
     ud.place(place(ClientOrderId::new_v4()))
         .await
         .expect("trading is open again");

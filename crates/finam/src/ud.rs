@@ -568,7 +568,7 @@ impl UserDataConnector {
         let (mut ok, mut failed) = (0usize, 0usize);
         match mode {
             ShutdownMode::Graceful { deadline } => {
-                let started = Instant::now();
+                let started = brokapi_runtime::now();
                 for h in handles {
                     let left = deadline.saturating_sub(started.elapsed());
                     if h.stop(left).await {
@@ -584,7 +584,7 @@ impl UserDataConnector {
         let report = {
             let mut shutdown = self.inner.shutdown.lock().expect("shutdown poisoned");
             let mut core = self.inner.core.lock().expect("core poisoned");
-            shutdown.shutdown_local(mode, Instant::now(), core.orders(), || (ok, failed))
+            shutdown.shutdown_local(mode, brokapi_runtime::now(), core.orders(), || (ok, failed))
         };
         let _ = self.pump.await;
         report
@@ -616,7 +616,7 @@ impl UserDataConnector {
                 async move { api.orders().get_orders(req).await }
             })
             .await?;
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         let mut core = self.inner.core.lock().expect("core poisoned");
         Ok(resp
             .orders
@@ -752,7 +752,7 @@ impl UserDataConnector {
             .lock()
             .expect("core poisoned")
             .orders()
-            .apply_signal(cid, signal, Instant::now());
+            .apply_signal(cid, signal, brokapi_runtime::now());
     }
 }
 
@@ -802,7 +802,8 @@ impl OrderExecutor for UserDataConnector {
                     message: "auto-retry of place is forbidden".into(),
                 });
             }
-            core.orders().register_place(req.cid, Instant::now());
+            core.orders()
+                .register_place(req.cid, brokapi_runtime::now());
         }
         self.inner.index.know(req.cid);
 
@@ -842,7 +843,7 @@ impl OrderExecutor for UserDataConnector {
                     broker_id,
                     ts: timestamps(
                         os.accept_at.as_ref().or(os.transact_at.as_ref()),
-                        Instant::now(),
+                        brokapi_runtime::now(),
                     ),
                 })
             }
@@ -926,7 +927,7 @@ impl OrderExecutor for UserDataConnector {
             })
             .await?;
         let mut core = self.inner.core.lock().expect("core poisoned");
-        Ok(core.ingest_order(&os, Instant::now()))
+        Ok(core.ingest_order(&os, brokapi_runtime::now()))
     }
 
     /// Orders of the account that are still working (`GetOrders`, filtered). Stop orders are not in
@@ -1086,7 +1087,7 @@ impl ExecutionSource for UserDataConnector {
                 async move { api.accounts().trades(req).await }
             })
             .await?;
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         let index = &self.inner.index;
         Ok(resp
             .trades
@@ -1142,7 +1143,7 @@ impl PortfolioSource for UserDataConnector {
                 async move { api.accounts().get_account(req).await }
             })
             .await?;
-        Ok(map_account(&resp, Instant::now()))
+        Ok(map_account(&resp, brokapi_runtime::now()))
     }
 
     /// The positions of [`portfolio`](PortfolioSource::portfolio). One `GetAccount` request.
@@ -1272,7 +1273,7 @@ impl StopOrderExecutor for UserDataConnector {
                     broker_id: brokapi_core::BrokerOrderId::new(os.order_id.clone()),
                     ts: timestamps(
                         os.accept_at.as_ref().or(os.transact_at.as_ref()),
-                        Instant::now(),
+                        brokapi_runtime::now(),
                     ),
                 })
             }
@@ -1347,7 +1348,7 @@ impl StopOrderExecutor for UserDataConnector {
                 async move { api.orders().get_orders(req).await }
             })
             .await?;
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         let mut out = Vec::new();
         for os in resp.orders.iter().filter(|os| map_stop::is_stop(os)) {
             // Keep the id <-> cid index current, then show the cid only when it is really ours.

@@ -65,7 +65,7 @@ async fn run_pump<C>(
             _ = cancel.cancelled() => break,
             msg = rx.recv() => {
                 let Ok(msg) = msg else { break };
-                let now = Instant::now();
+                let now = brokapi_runtime::now();
                 let mut sink = EventSink::new();
                 step(&mut *core.lock().await, msg, now, &mut sink);
                 emitter.emit(sink.drain());
@@ -77,8 +77,8 @@ async fn run_pump<C>(
 
 /// Gives the bot's channel time to take what the buffers still hold (shutdown).
 pub async fn drain_backlog(emitter: &Emitter, deadline: Duration) {
-    let end = Instant::now() + deadline;
-    while emitter.has_backlog() && Instant::now() < end {
+    let end = brokapi_runtime::now() + deadline;
+    while emitter.has_backlog() && brokapi_runtime::now() < end {
         emitter.flush();
         tokio::time::sleep(Duration::from_millis(5)).await;
     }

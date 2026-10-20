@@ -387,7 +387,7 @@ impl MarketDataConnector {
         let (mut ok, mut failed) = (0usize, 0usize);
         match mode {
             ShutdownMode::Graceful { deadline } => {
-                let started = Instant::now();
+                let started = brokapi_runtime::now();
                 for h in handles {
                     let left = deadline.saturating_sub(started.elapsed());
                     if h.stop(left).await {
@@ -609,7 +609,7 @@ impl OrderBookSource for MarketDataConnector {
             id,
             &resp,
             depth.min(MAX_DEPTH),
-            Instant::now(),
+            brokapi_runtime::now(),
         ))
     }
 
@@ -698,7 +698,7 @@ impl MarketDataSource for MarketDataConnector {
                 async move { api.market_data().latest_trades(req).await }
             })
             .await?;
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         let mut trades: Vec<MarketTrade> = resp
             .trades
             .iter()
@@ -817,7 +817,7 @@ impl MarketDataSource for MarketDataConnector {
                 async move { api.market_data().bars(req).await }
             })
             .await?;
-        let now = Instant::now();
+        let now = brokapi_runtime::now();
         if tf == Timeframe::M10 {
             let m5: Vec<Candle> = resp
                 .bars
@@ -984,7 +984,7 @@ impl InstrumentSource for MarketDataConnector {
             &resp,
             range.from,
             range.to,
-            Instant::now(),
+            brokapi_runtime::now(),
         ))
     }
 }

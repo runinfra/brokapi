@@ -79,7 +79,6 @@ use brokapi_runtime::BrokerLimiter;
 use futures_util::future::BoxFuture;
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::JoinHandle;
-use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tonic::{Code, Streaming};
 use tracing::{debug, warn};
@@ -218,7 +217,7 @@ where
             return;
         }
         // Opening a stream spends quota like any call.
-        if let Err(e) = p.limiter.acquire(p.method, std::time::Instant::now()) {
+        if let Err(e) = p.limiter.acquire(p.method, brokapi_runtime::now()) {
             let wait = match e {
                 brokapi_core::Error::RateLimited { retry_after } => retry_after,
                 _ => BACKOFF_MAX,
@@ -242,7 +241,7 @@ where
                 if !forward(&p, &cancel, StreamEvent::Connected).await {
                     return;
                 }
-                let started = Instant::now();
+                let started = brokapi_runtime::now();
                 match read(&mut p, stream, &cancel, &restart).await {
                     ReadEnd::Cancelled => return,
                     ReadEnd::Restart => {

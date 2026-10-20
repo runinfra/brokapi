@@ -144,7 +144,12 @@ pub async fn download(
                 id,
                 tf,
                 TimeRange::new(from, range.to),
-                HistoryOpts::default(),
+                // The library repeats a window after a network error by itself: 2 times, the pause doubles.
+                // A short first pause (the default is a second) keeps the demonstration quick.
+                HistoryOpts {
+                    transport_backoff: Duration::from_millis(20),
+                    ..HistoryOpts::default()
+                },
             );
             let outcome = loop {
                 match pages.next_page().await {
@@ -250,12 +255,12 @@ pub async fn play(
 }
 // ANCHOR_END: record
 
-/// A deliberately small budget, so the history download has to wait for the limiter: 20 requests per second, a burst
-/// of 2. The real defaults of each broker are in `brokapi::<broker>::limits::default_limits()`.
+/// A deliberately small budget, so the history download has to wait for the limiter: a burst of 2, then one request
+/// per 5 ms. The real defaults of each broker are in `brokapi::<broker>::limits::default_limits()`.
 fn small_budget() -> std::sync::Arc<BrokerLimiter> {
     let raw = r#"
 [demo.buckets.market]
-rate = 20
+rate = 200
 per = "1s"
 burst = 2
 [demo.route]
@@ -419,17 +424,13 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
     // A read the broker refuses for good (`Rejected`) ends in the report, the engine goes on with the next instrument.
     tbank_opts.candle_fail.store(1, Ordering::SeqCst);
     let fatal = download(&venues[1], Timeframe::H1, year, &dir.join("fatal")).await?;
-    // A read that fails on the network: the engine waits and continues from the file. The imitation heals after a moment.
-    tbank_opts.candle_fail.store(2, Ordering::SeqCst);
-    let heal = {
-        let opts = tbank_opts.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(1200)).await;
-            opts.candle_fail.store(0, Ordering::SeqCst);
-        })
-    };
+    // A read that fails on the network: the engine waits and continues from the file. The imitation fails the
+    // next two calls and then heals.
+    tbank_opts.candle_fail.store(0, Ordering::SeqCst);
+    tbank_opts
+        .candle_network_failures
+        .store(2, Ordering::SeqCst);
     let transient = download(&venues[1], Timeframe::H1, year, &dir.join("transient")).await?;
-    heal.await?;
 
     // ---- 2. The deals of the tape: the latest ones, to a file of their own.
     for v in &venues {

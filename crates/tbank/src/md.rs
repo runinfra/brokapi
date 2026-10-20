@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use brokapi_core::{
@@ -94,7 +94,7 @@ impl Shared {
             }
             let (req_tx, req_rx) = mpsc::unbounded_channel::<pb::MarketDataRequest>();
             self.with_core(|c, s| {
-                c.on_frame(MdFrame::Connected, Instant::now(), s);
+                c.on_frame(MdFrame::Connected, brokapi_runtime::now(), s);
                 Self::forward(c, &req_tx);
             });
             let mut client = self.client.market_data_stream();
@@ -136,7 +136,7 @@ impl Shared {
             let retry_in = {
                 let core = self.core.lock().expect("md core poisoned");
                 core.poll_timeout()
-                    .map(|t| t.saturating_duration_since(Instant::now()))
+                    .map(|t| t.saturating_duration_since(brokapi_runtime::now()))
             };
             let backlog = self.emitter.has_backlog();
             tokio::select! {
@@ -148,7 +148,7 @@ impl Shared {
                     Ok(Some(msg)) => {
                         last_rx = tokio::time::Instant::now();
                         self.with_core(|c, s| {
-                            c.on_frame(MdFrame::Response(msg), Instant::now(), s);
+                            c.on_frame(MdFrame::Response(msg), brokapi_runtime::now(), s);
                             Self::forward(c, req_tx);
                         });
                     }
@@ -160,7 +160,7 @@ impl Shared {
                 }
                 _ = tokio::time::sleep(retry_in.unwrap_or(Duration::from_secs(3600))), if retry_in.is_some() => {
                     self.with_core(|c, s| {
-                        c.on_timeout(Instant::now(), s);
+                        c.on_timeout(brokapi_runtime::now(), s);
                         Self::forward(c, req_tx);
                     });
                 }
@@ -470,7 +470,7 @@ impl MarketDataConnector {
             inner.subs.lock().expect("subs poisoned").clear();
             inner.with_core(|c, _| c.apply(&SubscriptionSet::new()));
             inner.notify.notify_one();
-            let end = Instant::now() + deadline;
+            let end = brokapi_runtime::now() + deadline;
             loop {
                 let pending = inner
                     .core
@@ -478,7 +478,7 @@ impl MarketDataConnector {
                     .expect("md core poisoned")
                     .unsubscribe_progress()
                     .2;
-                if pending == 0 || Instant::now() >= end {
+                if pending == 0 || brokapi_runtime::now() >= end {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -490,8 +490,8 @@ impl MarketDataConnector {
                 ok = o;
                 failed = f;
             }
-            let end = Instant::now() + deadline;
-            while inner.emitter.has_backlog() && Instant::now() < end {
+            let end = brokapi_runtime::now() + deadline;
+            while inner.emitter.has_backlog() && brokapi_runtime::now() < end {
                 inner.emitter.flush();
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
@@ -509,7 +509,7 @@ impl MarketDataConnector {
         if self.inner.closing.load(Ordering::SeqCst) {
             return Err(Error::ShuttingDown);
         }
-        self.inner.limiter.acquire(method, Instant::now())
+        self.inner.limiter.acquire(method, brokapi_runtime::now())
     }
 
     /// Registers a logical subscription and waits until the broker confirms (or refuses) it.
@@ -648,7 +648,7 @@ impl OrderBookSource for MarketDataConnector {
             &r.asks,
             depth.max(1) as usize,
             r.orderbook_ts.as_ref(),
-            Instant::now(),
+            brokapi_runtime::now(),
         ))
     }
 
@@ -773,7 +773,7 @@ impl MarketDataSource for MarketDataConnector {
         };
         let mut c = self.inner.client.market_data();
         let r = query(self.inner.request_timeout, c.get_last_trades(req)).await?;
-        let rx = Instant::now();
+        let rx = brokapi_runtime::now();
         let mut trades: Vec<MarketTrade> = r
             .trades
             .iter()
@@ -895,7 +895,7 @@ impl MarketDataSource for MarketDataConnector {
         };
         let mut c = self.inner.client.market_data();
         let r = query(self.inner.request_timeout, c.get_candles(req)).await?;
-        let rx = Instant::now();
+        let rx = brokapi_runtime::now();
         Ok(r.candles
             .iter()
             .map(|x| market::historic_candle(id, tf, x, rx))
@@ -1225,11 +1225,11 @@ impl InstrumentSource for MarketDataConnector {
             .find(|s| s.exchange.eq_ignore_ascii_case(exchange))
             .or_else(|| r.exchanges.first());
         match found {
-            Some(s) => Ok(map_schedule::schedule(exchange, s, Instant::now())),
+            Some(s) => Ok(map_schedule::schedule(exchange, s, brokapi_runtime::now())),
             None => Ok(Schedule {
                 exchange: exchange.to_string(),
                 sessions: Vec::new(),
-                ts: stamps(Instant::now(), None),
+                ts: stamps(brokapi_runtime::now(), None),
             }),
         }
     }

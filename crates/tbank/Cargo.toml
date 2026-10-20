@@ -23,6 +23,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 brokapi-conformance.workspace = true
 brokapi-mocks.workspace = true
 proptest.workspace = true

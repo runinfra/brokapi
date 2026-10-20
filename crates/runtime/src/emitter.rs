@@ -10,7 +10,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use brokapi_core::{
     Backpressure, ENVELOPE_SCHEMA, Envelope, Event, InstrumentId, InstrumentKey, NativeId,
@@ -232,7 +231,7 @@ impl Emitter {
             schema: ENVELOPE_SCHEMA,
             source: Arc::clone(&self.source),
             sub,
-            ts: Timestamps::new(wall_nanos(), Instant::now()),
+            ts: Timestamps::new(wall_nanos(), crate::now()),
             payload,
         }
     }
@@ -332,6 +331,7 @@ impl Emitter {
 mod tests {
     use super::*;
     use brokapi_core::{Balance, Money};
+    use std::time::Instant;
 
     fn ev(n: u32) -> CoreEvent {
         CoreEvent {

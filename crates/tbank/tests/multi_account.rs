@@ -150,15 +150,28 @@ async fn two_connectors_one_token_see_only_their_own_account() {
     .await
     .expect("A got its fill");
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    while let Ok(env) = rx_b.try_recv() {
-        assert_eq!(env.source.as_ref(), "tbank-ud-b");
-        match env.payload {
-            Event::Order(s) => assert_eq!(s.cid, cid_b, "B must not see A's order"),
-            Event::Execution(_) => panic!("B must not see A's trades"),
-            _ => {}
+    // B must not have seen the fill of A. B's own fill is the fence: events come in the order the broker
+    // sent them, so A's fill (sent first) would be in B's channel before B's own.
+    server.fill(ACCOUNT_B, &cid_b.hyphenated().to_string());
+    timeout(Duration::from_secs(5), async {
+        while let Some(env) = rx_b.recv().await {
+            assert_eq!(env.source.as_ref(), "tbank-ud-b");
+            match env.payload {
+                Event::Order(s) => {
+                    assert_eq!(s.cid, cid_b, "B must not see A's order");
+                    if matches!(s.state, OrderState::Filled { .. }) {
+                        break;
+                    }
+                }
+                Event::Execution(x) => {
+                    assert_eq!(x.cid, Some(cid_b), "B must not see A's trades");
+                }
+                _ => {}
+            }
         }
-    }
+    })
+    .await
+    .expect("B got its own fill");
 
     // portfolio streams are per account too
     let sub_a = a

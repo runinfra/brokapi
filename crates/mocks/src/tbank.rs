@@ -60,6 +60,9 @@ pub struct MockOptions {
     /// With `synthetic_candles`: 1 makes `GetCandles` answer `INVALID_ARGUMENT` (the caller sees `Rejected`, the read
     /// fails again), 2 makes it answer `UNAVAILABLE` (a network error, a later try may pass), 0 is normal.
     pub candle_fail: std::sync::atomic::AtomicU8,
+    /// With `synthetic_candles`: the next this many `GetCandles` calls answer `UNAVAILABLE`, then the reads pass
+    /// again. A network error that heals by itself, without a timer in the test.
+    pub candle_network_failures: std::sync::atomic::AtomicU32,
     /// Every `GetCandles` request seen: (interval, from seconds, to seconds).
     pub candle_requests: Mutex<Vec<(i32, i64, i64)>>,
     /// Delay before `PostOrder` answers (to provoke a client timeout).
@@ -312,6 +315,13 @@ impl MarketDataService for Mock {
                 .lock()
                 .unwrap()
                 .push((r.interval, from, to));
+            if opts
+                .candle_network_failures
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .is_ok()
+            {
+                return Err(Status::unavailable("mock: candle read failed"));
+            }
             match opts.candle_fail.load(Ordering::Relaxed) {
                 1 => return Err(Status::invalid_argument("mock: candle read refused")),
                 2 => return Err(Status::unavailable("mock: candle read failed")),

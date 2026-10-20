@@ -123,12 +123,10 @@ async fn own_orders_events_active_replace_and_executions() {
                     .find(|o| o.order.as_ref().is_some_and(|x| x.comment == comment))
                     .expect("our order at the mock");
                 // The trades stream is opened by a background task: wait until the server has it.
-                for _ in 0..100 {
-                    if server.state.count_calls("SubscribeTrades") > 0 {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                }
+                brokapi_mocks::time::wait_until("the trades stream is open", || {
+                    server.state.count_calls("SubscribeTrades") > 0
+                })
+                .await;
                 let dec = |v: &str| {
                     Some(brokapi_finam_protocol::pb::google::r#type::Decimal { value: v.into() })
                 };

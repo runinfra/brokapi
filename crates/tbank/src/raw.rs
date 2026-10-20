@@ -59,7 +59,7 @@
 
 use std::future::Future;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use brokapi_core::Error;
 use brokapi_runtime::BrokerLimiter;
@@ -277,7 +277,7 @@ impl TbankRaw {
         F: FnOnce(TbankClient) -> Fut,
         Fut: Future<Output = Result<Response<T>, Status>>,
     {
-        self.limiter.acquire(method, Instant::now())?;
+        self.limiter.acquire(method, brokapi_runtime::now())?;
         query(self.timeout, f(self.client.clone())).await
     }
 
@@ -341,7 +341,7 @@ impl TbankRaw {
         F: FnOnce(TbankClient) -> Fut,
         Fut: Future<Output = Result<Response<T>, Status>>,
     {
-        self.limiter.acquire(method, Instant::now())?;
+        self.limiter.acquire(method, brokapi_runtime::now())?;
         match command(self.timeout, f(self.client.clone())).await {
             CommandOutcome::Done(v) => Ok(v),
             CommandOutcome::Refused(_, err) => Err(err),

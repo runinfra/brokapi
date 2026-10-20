@@ -300,8 +300,20 @@ async fn two_accounts_share_one_jwt_and_see_only_their_own_data() {
     .await;
     assert_eq!(env.sub, Some(sub1));
     assert_eq!(env.source.as_ref(), "finam-ud-ACC1");
-    tokio::time::sleep(Duration::from_millis(150)).await;
-    assert!(rx2.try_recv().is_err(), "ACC2 must not see ACC1's order");
+    // ACC2 must not see ACC1's order. ACC2's own order is the fence: ACC1's was pushed first, so if it
+    // had leaked into this channel it would be here before ACC2's own.
+    let own = limit_buy(dec!(2.0));
+    let own_cid = own.cid;
+    ud2.place(own).await.unwrap();
+    let env2 = next_matching("acc2 stream", &mut rx2, |e| {
+        matches!(e.payload, Event::Order(_))
+    })
+    .await;
+    assert!(
+        matches!(&env2.payload, Event::Order(s) if s.cid == own_cid),
+        "ACC2 must not see ACC1's order: {:?}",
+        env2.payload
+    );
 
     // Portfolio: separate accounts, separate money.
     let p1 = ud1.portfolio().await.unwrap();
@@ -480,7 +492,16 @@ async fn timeout_gives_unknown_never_a_retry_and_the_state_is_found_by_query() {
 
     let req = limit_buy(dec!(1.0));
     let cid = req.cid;
-    let err = ud.place(req.clone()).await.unwrap_err();
+    // The request reaches the mock, which holds it for 900 ms. The clock goes 300 ms ahead: the 250 ms
+    // timeout of the connector is due, the mock's delay is not.
+    let err = brokapi_mocks::time::elapse_when(
+        "the order reached the mock",
+        || server.state.count_calls("PlaceOrder") == 1,
+        Duration::from_millis(300),
+        ud.place(req.clone()),
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(err, Error::Unknown), "{err:?}");
     assert_eq!(err.class(), brokapi_core::ErrorClass::Unknown);
 
@@ -493,6 +514,7 @@ async fn timeout_gives_unknown_never_a_retry_and_the_state_is_found_by_query() {
     assert_eq!(server.state.count_calls("PlaceOrder"), 1);
 
     // The way out of Unknown: ask the broker. The order was applied, it is found by its cid.
+    brokapi_mocks::time::jump(Duration::from_secs(1)).await;
     let snap = ud.order_state(cid).await.unwrap();
     assert_eq!(snap.cid, cid);
     assert!(matches!(snap.state, OrderState::Acked { .. }));
@@ -643,31 +665,25 @@ async fn lossless_overflow_emits_overflow_degrades_and_reconcile_recovers() {
     }
 
     // The reading task was not blocked: the connector becomes Degraded and refuses commands.
-    let mut degraded = false;
-    for _ in 0..100 {
-        if matches!(
+    brokapi_mocks::time::wait_until_async("overflow must degrade the connector", || async {
+        matches!(
             ud.cancel(ClientOrderId::new_v4()).await,
             Err(Error::Degraded)
-        ) {
-            degraded = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(degraded, "overflow must degrade the connector");
+        )
+    })
+    .await;
     assert!(matches!(
         ud.place(limit_buy(dec!(1.0))).await,
         Err(Error::Degraded)
     ));
 
     // The consumer finally reads: the gap is announced, not hidden.
-    let mut seen_overflow = false;
-    while let Ok(Some(env)) = tokio::time::timeout(Duration::from_millis(400), rx.recv()).await {
-        if matches!(env.payload, Event::Overflow { sub: s, .. } if s == sub) {
-            seen_overflow = true;
-        }
-    }
-    assert!(seen_overflow, "Event::Overflow must reach the consumer");
+    next_matching(
+        "the overflow reaches the consumer",
+        &mut rx,
+        |e| matches!(e.payload, Event::Overflow { sub: s, .. } if s == sub),
+    )
+    .await;
 
     // Exit from Degraded is reconcile and nothing else.
     ud.reconcile(&[]).await.unwrap();
@@ -675,11 +691,14 @@ async fn lossless_overflow_emits_overflow_degrades_and_reconcile_recovers() {
         ud.cancel(ClientOrderId::new_v4()).await,
         Err(Error::Degraded)
     ));
+    // The events that were queued before are old. The order after recovery differs in its status.
     let mut os = base.clone();
     os.exec_id = "after".into();
+    os.status = po::OrderStatus::Filled as i32;
     server.state.push_order("ACC1", os);
     next_matching("after recovery", &mut rx, |e| {
-        matches!(&e.payload, Event::Order(_)) && e.sub == Some(sub)
+        matches!(&e.payload, Event::Order(o) if matches!(o.state, OrderState::Filled { .. }))
+            && e.sub == Some(sub)
     })
     .await;
 }
@@ -707,12 +726,10 @@ async fn executions_history_and_stream() {
         ..Default::default()
     };
     // The stream is opened by a background task: wait until the server has it.
-    for _ in 0..100 {
-        if server.state.count_calls("SubscribeTrades") > 0 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    brokapi_mocks::time::wait_until("the trades stream is open", || {
+        server.state.count_calls("SubscribeTrades") > 0
+    })
+    .await;
     server.state.push_trade("ACC1", trade);
     let env = next_matching("execution", &mut rx, |e| {
         matches!(e.payload, Event::Execution(_))
@@ -1193,11 +1210,11 @@ async fn rate_limited_place_leaves_the_cid_usable() {
         Err(Error::RateLimited { retry_after }) => retry_after,
         other => panic!("expected RateLimited, got {other:?}"),
     };
-    tokio::time::sleep(retry_after + Duration::from_millis(50)).await;
+    brokapi_mocks::time::jump(retry_after + Duration::from_millis(50)).await;
     ud.place(req.clone())
         .await
         .expect("the same cid after RateLimited");
-    tokio::time::sleep(Duration::from_millis(450)).await;
+    brokapi_mocks::time::jump(Duration::from_millis(450)).await;
     assert!(matches!(
         ud.place(req).await,
         Err(Error::Rejected { ref code, .. }) if code == "duplicate_place"

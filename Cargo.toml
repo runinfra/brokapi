@@ -95,7 +95,7 @@ finam = ["dep:brokapi-finam", "dep:brokapi-finam-protocol"]
 brokapi = { path = ".", features = ["bcs", "tbank", "finam"] }
 brokapi-mocks.workspace = true
 dotenv.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 
 # Debug info is most of target/ size: keep line tables for backtraces, drop the rest.
 [profile.dev]

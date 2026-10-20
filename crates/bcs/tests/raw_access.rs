@@ -192,13 +192,7 @@ async fn raw_opens_a_websocket_channel_with_the_same_token_and_quota() {
         .connect_ws(BcsWsChannel::OrderEvents, tx)
         .expect("channel opens");
     // The channel pushes nothing by itself: wait for the socket, then send it a status message.
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while opts.event_sockets() == 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("socket connected");
+    brokapi_mocks::time::wait_until("socket connected", || opts.event_sockets() > 0).await;
     server.push_event(
         &std::fs::read_to_string(format!(
             "{}/../bcs-protocol/tests/fixtures/ws/order_execution.json",

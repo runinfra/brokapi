@@ -36,6 +36,7 @@
 pub mod bcs;
 pub mod finam;
 pub mod tbank;
+pub mod time;
 
 /// One synthetic bar: open time in seconds since the epoch, open, high, low, close, volume.
 pub type SyntheticBar = (

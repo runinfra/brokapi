@@ -254,10 +254,14 @@ async fn no_answer_is_unknown() {
         .options
         .place_delay_ms
         .store(600, std::sync::atomic::Ordering::SeqCst);
-    let err = ud
-        .place_stop(stop(Side::Sell, StopOrderKind::StopLoss, dec!(100.0), None))
-        .await
-        .unwrap_err();
+    let err = brokapi_mocks::time::elapse_when(
+        "the stop order reached the mock",
+        || server.state.count_calls("PlaceOrder") == 1,
+        std::time::Duration::from_millis(200),
+        ud.place_stop(stop(Side::Sell, StopOrderKind::StopLoss, dec!(100.0), None)),
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(err, Error::Unknown), "{err:?}");
 }
 

@@ -98,13 +98,10 @@ fn stop_req(kind: StopOrderKind, stop: Decimal, limit: Option<Decimal>) -> Place
 
 /// Waits until the order-events socket is connected (the session connects in the background).
 async fn events_connected(opts: &MockOptions, n: usize) {
-    timeout(Duration::from_secs(8), async {
-        while opts.event_sockets() < n {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+    brokapi_mocks::time::wait_until("order events socket connected", || {
+        opts.event_sockets() >= n
     })
-    .await
-    .expect("order events socket connected");
+    .await;
 }
 
 async fn next_event(rx: &mut mpsc::Receiver<Envelope>, pred: impl Fn(&Event) -> bool) -> Envelope {
@@ -618,25 +615,21 @@ async fn two_accounts_with_two_tokens_see_only_their_own_orders_and_events() {
     let report = b.reconcile(&[cid]).await.unwrap();
     assert_eq!(report.closed_offline, vec![cid]);
 
-    // Events: A's stream has A's order, B's stream stays quiet.
+    // Events: A's stream has A's order, B's stream has nothing of A. B's own order is the fence: the
+    // event of A was sent first, so if it had leaked it would be in B's channel before B's own.
     next_event(&mut rx_a, |e| matches!(e, Event::Order(o) if o.cid == cid)).await;
-    let quiet = timeout(Duration::from_millis(400), async {
-        while let Some(env) = rx_b.recv().await {
-            if matches!(env.payload, Event::Order(_)) {
-                return true;
-            }
-        }
-        false
-    })
-    .await;
-    assert!(
-        quiet.is_err() || quiet == Ok(false),
-        "B got an order event of A"
-    );
 
     // B places on its own, with its own limiter budget untouched by A.
-    b.place(limit_buy(dec!(100.0))).await.unwrap();
+    let own = limit_buy(dec!(100.0));
+    let own_cid = own.cid;
+    b.place(own).await.unwrap();
     assert_eq!(b.active_orders().await.unwrap().len(), 1);
+    let first = next_event(&mut rx_b, |e| matches!(e, Event::Order(_))).await;
+    assert!(
+        matches!(&first.payload, Event::Order(o) if o.cid == own_cid),
+        "B got an order event of A: {:?}",
+        first.payload
+    );
     a.shutdown(ShutdownMode::Immediate).await;
     b.shutdown(ShutdownMode::Immediate).await;
 }
@@ -704,19 +697,19 @@ async fn a_refusal_before_the_wire_leaves_the_cid_usable() {
         1,
         "nothing was sent for the refused place"
     );
-    tokio::time::sleep(retry_after + Duration::from_millis(50)).await;
+    brokapi_mocks::time::jump(retry_after + Duration::from_millis(50)).await;
     ud.place(second.clone())
         .await
         .expect("the same cid after RateLimited");
     assert_eq!(opts.served_count("POST /orders/sync"), 2);
     // Once it has gone out, the cid is spent.
-    tokio::time::sleep(Duration::from_millis(450)).await;
+    brokapi_mocks::time::jump(Duration::from_millis(450)).await;
     assert!(
         matches!(ud.place(second).await, Err(Error::Rejected { ref code, .. }) if code == "duplicate_place")
     );
 
     // The same for a conditional order.
-    tokio::time::sleep(Duration::from_millis(450)).await;
+    brokapi_mocks::time::jump(Duration::from_millis(450)).await;
     let stop = stop_req(StopOrderKind::StopLoss, dec!(250.0), None);
     ud.place_stop(stop_req(StopOrderKind::StopLoss, dec!(251.0), None))
         .await
@@ -725,7 +718,7 @@ async fn a_refusal_before_the_wire_leaves_the_cid_usable() {
         Err(Error::RateLimited { retry_after }) => retry_after,
         other => panic!("expected RateLimited, got {other:?}"),
     };
-    tokio::time::sleep(retry_after + Duration::from_millis(50)).await;
+    brokapi_mocks::time::jump(retry_after + Duration::from_millis(50)).await;
     ud.place_stop(stop)
         .await
         .expect("the same cid of a stop order after RateLimited");
