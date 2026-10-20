@@ -27,7 +27,7 @@ CRATES = [
 KINDS = ("struct", "enum", "trait", "fn", "type", "constant", "macro")
 SKIP_SECTIONS = {
     "synthetic-implementations", "blanket-implementations", "trait-implementations",
-    "implementors", "foreign-impls", "synthetic-implementors", "implementations",
+    "implementors", "foreign-impls", "synthetic-implementors",
 }
 
 

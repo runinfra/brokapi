@@ -32,7 +32,7 @@ tokio         = { version = "1", features = ["full"] }
 | Адрес | `server.http_base` | `server.endpoint` | `server.url` |
 | Настройка клиента | `BcsConfig::for_mock("mock-refresh-token", &server.http_base).with_write(true)` | `TbankConfig::for_mock(TOKEN, &server.endpoint).with_account(ACCOUNT_A)` | `FinamApiConfig::new(SECRET).with_endpoint(server.url.clone())` |
 | Счета | один счет на refresh-токен: другое имя после `mock-refresh-` дает отдельный счет | `ACCOUNT_A` и `ACCOUNT_B` с разными данными | `"ACC1"` и `"ACC2"` |
-| Инструменты | любой тикер, класс `TQBR` | `SBER` и `GAZP` (`uid-sber`, `uid-gazp`), лот 10 | `SBER@MISX`, `GAZP@MISX` |
+| Инструменты | любой тикер, класс `TQBR` | справочник (`find`) знает `SBER` и `GAZP` (`uid-sber`, `uid-gazp`), лот 10. Для неизвестного тикера `find` отвечает **пустым списком**, не ошибкой. Свечи с `synthetic_candles` отдаются и для идентификатора `TickerClass` любого тикера | справочник знает `SBER@MISX`, `GAZP@MISX`. Свечи с `synthetic_candles` отдаются для любого символа |
 
 ```rust,ignore
 use std::sync::Arc;
@@ -102,6 +102,7 @@ while opts.event_sockets() == 0 {
 | Обрыв потока | `opts.disconnect_after_data_frames` | `opts.md_cut_after` | `opts.book_drop_after` |
 | `Overflow` | канал на одно место, никто не читает, `cfg.order_state_buffer = 2` и несколько исполнений подряд | то же | то же |
 | `RateLimited` | малый бюджет: свои числа в `BrokerLimiter::new` ([формат файла](limits.md#свои-числа-формат-файла)). «Один отказ, потом проходит»: `burst = 1`, длинный `per` | то же | то же |
+| Чтение свечей падает | не предусмотрено | `opts.candle_fail`: `1` - отказ навсегда (`Rejected`), `2` - сбой сети (`Transport`), `0` - норма. Только с `synthetic_candles` | не предусмотрено |
 | Свечи по заданному периоду | `opts.synthetic_candles` | `opts.synthetic_candles` | `server.state.options.synthetic_candles` |
 
 `opts` - это `Arc<MockOptions>`, который передается в `start`. Для Финама рычаги лежат в `server.state.options`. Все поля - атомарные
