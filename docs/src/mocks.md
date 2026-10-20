@@ -13,6 +13,7 @@
 ## Подключение
 
 ```toml
+# edition = "2024" в [package], Rust 1.85 или новее
 [dev-dependencies]
 brokapi       = { path = "../brokapi", features = ["bcs", "tbank", "finam"] }
 brokapi-mocks = { path = "../brokapi/crates/mocks" }
@@ -98,7 +99,7 @@ while opts.event_sockets() == 0 {
 |---|---|---|---|
 | Исполнить заявку | `server.fill(&cid.hyphenated().to_string(), qty, price)` | `server.fill(ACCOUNT_A, &cid.hyphenated().to_string())` | вручную: `server.state.push_order(счет, ...)` |
 | `Rejected` на постановке (цена задается в тесте, не берется из стакана) | лимитная цена `brokapi_conformance::REJECT_PRICE` (13.37), в теле ответа 200 - цена 13.38 (`mbcs::REJECT_IN_BODY_PRICE`) | `REJECT_PRICE` (13.37) | `REJECT_PRICE` (13.37) |
-| `Unknown` на постановке | **рычага нет**. Проверяйте этот путь на имитации Т-Банка или Финама | `opts.post_delay_ms` больше, чем `with_request_timeout(...)` клиента. Либо `opts.post_fail` с кодом gRPC | `opts.place_delay_ms` больше таймаута клиента, либо `opts.place_error` |
+| `Unknown` на постановке | **рычага нет, этот путь у БКС в тесте не воспроизвести**. Проверяйте путь бота на имитации Т-Банка: `trading_bot_leaves_unknown_through_order_state` в `tests/examples.rs` показывает, как | `opts.post_delay_ms` больше, чем `with_request_timeout(...)` клиента. Либо `opts.post_fail` с кодом gRPC | `opts.place_delay_ms` больше таймаута клиента, либо `opts.place_error` |
 | Обрыв потока | `opts.disconnect_after_data_frames` | `opts.md_cut_after` | `opts.book_drop_after` |
 | `Overflow` | канал на одно место, никто не читает, `cfg.order_state_buffer = 2` и несколько исполнений подряд | то же | то же |
 | `RateLimited` | малый бюджет: свои числа в `BrokerLimiter::new` ([формат файла](limits.md#свои-числа-формат-файла)). «Один отказ, потом проходит»: `burst = 1`, длинный `per` | то же | то же |

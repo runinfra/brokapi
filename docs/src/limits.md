@@ -72,6 +72,23 @@ supports_multiplex = false
 Читают его `brokapi::bcs::limits::limits_from_toml_str` (и `limits_from_toml_path`; у Т-Банка `brokapi::tbank::limits`, у Финама
 `brokapi::finam::limits::parse_limits`), либо общая `BrokerLimits::from_toml_str` из `brokapi::runtime`, которая берет единственный
 раздел файла. Дальше `BrokerLimiter::new(&limits)`: он возвращает `Arc<BrokerLimiter>`, делится он через `Arc` (`.clone()` у `Arc`), а не копией.
+Полный разбираемый файл, который дает «первая заявка прошла, вторая получила `RateLimited`». `dedicated_command_conns` необязателен.
+`retry_after` показывает, сколько ведру нужно до одного токена (при `per = "2s"` порядка 1,8 секунды сразу после траты):
+
+```toml
+[bcs.buckets.orders]
+rate = 1
+per = "2s"
+burst = 1
+[bcs.route]
+"*" = ["orders"]
+PlaceOrder = ["orders"]
+[bcs.conns]
+max_conns = 4
+max_subs_per_conn = 50
+supports_multiplex = false
+```
+
 Рабочий пример малого бюджета, чтобы поймать `RateLimited`, - `small_budget` в `examples/research.rs`. `burst = 0` не пропускает
 ничего никогда, а `retry_after` в этом случае все равно показывает период: ведро не пополнится само.
 Чтобы получить «один раз отказали, потом прошло»: `burst = 1` и длинный `per`, первый вызов проходит, второй сразу получает `RateLimited`.
