@@ -49,6 +49,8 @@
             hint.className = 'mermaid-scroll-hint';
             hint.textContent = 'схема листается вбок';
             box.insertAdjacentElement('afterend', hint);
+            // Open at the middle: the trunk of a top-down diagram is in the center, not at the left edge.
+            box.scrollLeft = (box.scrollWidth - box.clientWidth) / 2;
         }
     };
     const draw = () => mermaid.run({ querySelector: 'pre.mermaid' }).then(widen);
