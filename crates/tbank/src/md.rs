@@ -983,12 +983,12 @@ impl MarketDataConnector {
             InstrumentKind::Currency => "Currencies",
             InstrumentKind::MutualFund => {
                 return Err(Error::Unsupported {
-                    capability: "find_by_kind: T-Bank has no listing of mutual funds",
+                    capability: "find_by_kind: T-Bank has no listing of mutual funds".into(),
                 });
             }
             InstrumentKind::Other => {
                 return Err(Error::Unsupported {
-                    capability: "find_by_kind: kind Other has no T-Bank listing (indicatives, assets are not requested)",
+                    capability: "find_by_kind: kind Other has no T-Bank listing (indicatives, assets are not requested)".into(),
                 });
             }
         };

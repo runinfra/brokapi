@@ -2242,7 +2242,7 @@ impl StopOrderExecutor for UserDataConnector {
     /// ```
     async fn subscribe_stop_orders(&self) -> Result<SubscriptionId, Error> {
         Err(Error::Unsupported {
-            capability: "stop_order_stream",
+            capability: "stop_order_stream".into(),
         })
     }
 }

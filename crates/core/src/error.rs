@@ -8,8 +8,10 @@
 //! replace) may or may not have reached the broker. Never repeat the command after it: look at the
 //! order first, see [`Error::Unknown`].
 
+use std::borrow::Cow;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// A configuration problem: a value that is missing, malformed, or of the wrong kind for this broker.
@@ -24,7 +26,7 @@ use thiserror::Error;
 /// let e: Error = ConfigError::Message("token is empty".into()).into();
 /// assert_eq!(e.to_string(), "configuration error: token is empty");
 /// ```
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize)]
 pub enum ConfigError {
     /// What is wrong, in words.
     #[error("{0}")]
@@ -43,7 +45,7 @@ pub enum ConfigError {
 /// let e: Error = TransportError::Message("connection reset".into()).into();
 /// assert_eq!(e.to_string(), "transport error: connection reset");
 /// ```
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize)]
 pub enum TransportError {
     /// What went wrong, in words.
     #[error("{0}")]
@@ -60,7 +62,7 @@ pub enum TransportError {
 /// assert_eq!(Error::Unknown.class(), ErrorClass::Unknown);
 /// assert_eq!(Error::NotReconciled.class(), ErrorClass::Fatal);
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ErrorClass {
     /// The call failed for a reason that can pass: the network, a rate limit. Reading calls may be
     /// repeated, after the delay in [`Error::RateLimited`] if there is one. For a command, first find
@@ -106,7 +108,7 @@ pub enum ErrorClass {
 /// assert_eq!(e.class(), ErrorClass::Retryable);
 /// assert_eq!(next_step(&e), "wait and repeat");
 /// ```
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize)]
 pub enum Error {
     /// The setup is wrong: a bad config value, or an input that cannot work with this broker (for
     /// example an [`InstrumentId`](crate::InstrumentId) whose [`NativeId`](crate::NativeId) is of
@@ -183,8 +185,9 @@ pub enum Error {
     /// [`MarketDataCaps`](crate::MarketDataCaps), which declare what a connector can do.
     #[error("unsupported capability: {capability}")]
     Unsupported {
-        /// Short name of the missing capability. Safe to compare with `==`.
-        capability: &'static str,
+        /// Short name of the missing capability. Safe to compare with `==` against a `&str`.
+        /// A `Cow` so that the error survives serialization (for example across a process boundary).
+        capability: Cow<'static, str>,
     },
 
     /// The trading gate is closed: this connector has not run [`OrderExecutor::reconcile`](crate::OrderExecutor::reconcile)

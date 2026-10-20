@@ -543,7 +543,7 @@ impl MarketDataSource for MarketDataConnector {
         range: TimeRange,
     ) -> Result<Vec<Candle>, Error> {
         let label = timeframe_label(tf).ok_or(Error::Unsupported {
-            capability: "candles_m10",
+            capability: "candles_m10".into(),
         })?;
         self.acquire("GetCandles").await?;
         let req = CandlesRequest {
@@ -570,7 +570,7 @@ impl MarketDataSource for MarketDataConnector {
         opts: SubscribeOpts,
     ) -> Result<SubscriptionId, Error> {
         let label = timeframe_label(tf).ok_or(Error::Unsupported {
-            capability: "candles_m10",
+            capability: "candles_m10".into(),
         })?;
         let key = require_ticker_class(id)?;
         let ws = MarketDataSubscribe::last_candle(vec![key], label);
@@ -781,10 +781,10 @@ fn instrument_type(kind: brokapi_core::InstrumentKind) -> Result<&'static str, E
         K::MutualFund => Ok("MUTUAL_FUNDS"),
         K::Currency => Ok("CURRENCY"),
         K::Option => Err(Error::Unsupported {
-            capability: "find_options_by_kind",
+            capability: "find_options_by_kind".into(),
         }),
         K::Other => Err(Error::Unsupported {
-            capability: "find_other_by_kind",
+            capability: "find_other_by_kind".into(),
         }),
     }
 }

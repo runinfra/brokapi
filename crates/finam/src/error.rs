@@ -117,5 +117,7 @@ pub fn transport(msg: impl Into<String>) -> Error {
 
 /// An [`Error::Unsupported`] naming the capability the broker does not offer (for example `replace_order`).
 pub fn unsupported(capability: &'static str) -> Error {
-    Error::Unsupported { capability }
+    Error::Unsupported {
+        capability: capability.into(),
+    }
 }

@@ -37,7 +37,13 @@ fn error_texts_are_on_the_errors_page() {
         },
         v,
     );
-    assert_on_page(&page, Error::Unsupported { capability: "@@" }, v);
+    assert_on_page(
+        &page,
+        Error::Unsupported {
+            capability: "@@".into(),
+        },
+        v,
+    );
     assert_on_page(&page, Error::Unknown, v);
     assert_on_page(&page, Error::NotReconciled, v);
     assert_on_page(&page, Error::Degraded, v);
