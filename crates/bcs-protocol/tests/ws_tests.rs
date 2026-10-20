@@ -47,8 +47,8 @@ async fn test_ws_limits() {
                                 println!("  • {} ({}) | {} шт @ {:.2} ₽",
                                     pos.ticker.as_deref().unwrap_or("?"),
                                     pos.class_code.as_deref().unwrap_or("?"),
-                                    pos.quantity.as_ref().map(|q| q.value).unwrap_or(0.0),
-                                    pos.average_price.unwrap_or(0.0)
+                                    pos.quantity.as_ref().map(|q| q.value).unwrap_or_default(),
+                                    pos.average_price.unwrap_or_default()
                                 );
                             }
                         }
@@ -61,8 +61,8 @@ async fn test_ws_limits() {
                                     "  • {} {}: qty={:.2} locked={:.2}",
                                     money.exchange.as_deref().unwrap_or("?"),
                                     money.currency.as_deref().unwrap_or("?"),
-                                    money.quantity.as_ref().map(|q| q.value).unwrap_or(0.0),
-                                    money.locked.unwrap_or(0.0)
+                                    money.quantity.as_ref().map(|q| q.value).unwrap_or_default(),
+                                    money.locked.unwrap_or_default()
                                 );
                             }
                         }
@@ -138,10 +138,10 @@ async fn test_ws_portfolio() {
                                 let blocked = if p.is_blocked.unwrap_or(false) { " [BLOCKED]" } else { "" };
                                 println!("  • {} | qty={:.2} locked={:.2} | balance={:.2} rub={:.2}{}",
                                     p.ticker.as_deref().unwrap_or("?"),
-                                    p.quantity.unwrap_or(0.0),
-                                    p.locked.unwrap_or(0.0),
-                                    p.balance_value.unwrap_or(0.0),
-                                    p.balance_value_rub.unwrap_or(0.0),
+                                    p.quantity.unwrap_or_default(),
+                                    p.locked.unwrap_or_default(),
+                                    p.balance_value.unwrap_or_default(),
+                                    p.balance_value_rub.unwrap_or_default(),
                                     blocked
                                 );
                             }
@@ -152,16 +152,16 @@ async fn test_ws_portfolio() {
                             println!("║ Депо позиции: {} инструментов", depo_positions.len());
                             for p in depo_positions.iter().take(5) {
                                 let name = p.display_name.as_deref().unwrap_or("?");
-                                let pl = p.unrealized_pl.unwrap_or(0.0);
-                                let pl_pct = p.unrealized_percent_pl.unwrap_or(0.0);
-                                let pl_sign = if pl >= 0.0 { "+" } else { "" };
-                                let share = p.portfolio_share.unwrap_or(0.0);
+                                let pl = p.unrealized_pl.unwrap_or_default();
+                                let pl_pct = p.unrealized_percent_pl.unwrap_or_default();
+                                let pl_sign = if !pl.is_sign_negative() { "+" } else { "" };
+                                let share = p.portfolio_share.unwrap_or_default();
 
                                 println!("  • {} ({}) | qty={:.0} @ {:.2} ₽",
                                     p.ticker.as_deref().unwrap_or("?"),
                                     name,
-                                    p.quantity.unwrap_or(0.0),
-                                    p.current_price.unwrap_or(0.0)
+                                    p.quantity.unwrap_or_default(),
+                                    p.current_price.unwrap_or_default()
                                 );
                                 println!("    └ P/L: {}{:.2} ({}{:.2}%) | Share: {:.2}%",
                                     pl_sign, pl, pl_sign, pl_pct, share);
@@ -231,9 +231,9 @@ async fn test_ws_quotes() {
 
                         // Распаковываем Quotes данные
                         if let MarketDataMessage::Quotes(q) = md {
-                            let change = q.change.unwrap_or(0.0);
-                            let change_pct = q.change_rate.unwrap_or(0.0);
-                            let sign = if change >= 0.0 { "+" } else { "" };
+                            let change = q.change.unwrap_or_default();
+                            let change_pct = q.change_rate.unwrap_or_default();
+                            let sign = if !change.is_sign_negative() { "+" } else { "" };
 
                             println!("║ Обновление #{}", received);
                             println!("  • {}:{} | {}",
@@ -241,21 +241,21 @@ async fn test_ws_quotes() {
                                 q.date_time.as_deref().unwrap_or("?")
                             );
                             println!("  ├ Цены: bid={:.2} ₽ / last={:.2} ₽ / ask={:.2} ₽",
-                                q.bid.unwrap_or(0.0),
-                                q.last_price.unwrap_or(0.0),
-                                q.ask.unwrap_or(0.0)
+                                q.bid.unwrap_or_default(),
+                                q.last_price.unwrap_or_default(),
+                                q.ask.unwrap_or_default()
                             );
                             println!("  ├ Изменение: {}{:.2} ₽ ({}{:.2}%)",
                                 sign, change, sign, change_pct
                             );
                             println!("  ├ Диапазон: {:.2} - {:.2} ₽ (O:{:.2} C:{:.2})",
-                                q.low.unwrap_or(0.0),
-                                q.high.unwrap_or(0.0),
-                                q.open.unwrap_or(0.0),
-                                q.close.unwrap_or(0.0)
+                                q.low.unwrap_or_default(),
+                                q.high.unwrap_or_default(),
+                                q.open.unwrap_or_default(),
+                                q.close.unwrap_or_default()
                             );
                             println!("  └ Объем: {:.0} шт ({} сделок)",
-                                q.volume.unwrap_or(0.0),
+                                q.volume.unwrap_or_default(),
                                 q.trade_num.unwrap_or(0)
                             );
                         } else {
@@ -354,7 +354,7 @@ async fn test_ws_order_book() {
                             let spread = if !ob.bids.is_empty() && !ob.asks.is_empty() {
                                 ob.asks[0].price - ob.bids[0].price
                             } else {
-                                0.0
+                                rust_decimal::Decimal::ZERO
                             };
                             println!("  └ Спред: {:.2} ₽", spread);
                         } else {
@@ -445,7 +445,7 @@ async fn test_ws_last_trades() {
                                 side_emoji,
                                 trades_data.price,
                                 trades_data.quantity,
-                                trades_data.volume.unwrap_or(0.0)
+                                trades_data.volume.unwrap_or_default()
                             );
                             println!("  └ Время: {}",
                                 trades_data.date_time.as_deref().unwrap_or("?")
@@ -525,10 +525,10 @@ async fn test_ws_last_candle() {
                         if let MarketDataMessage::LastCandle(candle) = md {
                             received += 1;
 
-                            let open = candle.open.unwrap_or(0.0);
-                            let close = candle.close.unwrap_or(0.0);
+                            let open = candle.open.unwrap_or_default();
+                            let close = candle.close.unwrap_or_default();
                             let change = close - open;
-                            let sign = if change >= 0.0 { "+" } else { "" };
+                            let sign = if !change.is_sign_negative() { "+" } else { "" };
 
                             println!(
                                 "║ Свеча #{} | {}:{} | {}",
@@ -540,8 +540,8 @@ async fn test_ws_last_candle() {
                             println!(
                                     "  ├ OHLC: O:{:.2} H:{:.2} L:{:.2} C:{:.2}",
                                     open,
-                                    candle.high.unwrap_or(0.0),
-                                    candle.low.unwrap_or(0.0),
+                                    candle.high.unwrap_or_default(),
+                                    candle.low.unwrap_or_default(),
                                     close
                                 );
                             println!(
@@ -549,11 +549,11 @@ async fn test_ws_last_candle() {
                                     sign,
                                     change,
                                     sign,
-                                    if open > 0.0 { change / open * 100.0 } else { 0.0 }
+                                    if open.is_sign_positive() && !open.is_zero() { change / open * rust_decimal::Decimal::from(100) } else { rust_decimal::Decimal::ZERO }
                                                                                 );
                             println!(
                                     "  └ Объем: {:.0} | {}",
-                                    candle.volume.unwrap_or(0.0),
+                                    candle.volume.unwrap_or_default(),
                                     candle.timestamp.as_deref().unwrap_or("?")
                                 );
 
@@ -626,12 +626,12 @@ async fn test_ws_marginal_indicators() {
 
                         // Стоимость портфеля
                         if let Some(portfolio) = &mi.portfolio_current_value {
-                            let change = portfolio.daily_portfolio_change_rub.unwrap_or(0.0);
-                            let sign = if change >= 0.0 { "+" } else { "" };
+                            let change = portfolio.daily_portfolio_change_rub.unwrap_or_default();
+                            let sign = if !change.is_sign_negative() { "+" } else { "" };
                             println!("  ├ Портфель: {:.2} ₽ | Изм: {}{:.2} ₽ ({}{:.2}%)",
-                                portfolio.current_value_rub.unwrap_or(0.0),
+                                portfolio.current_value_rub.unwrap_or_default(),
                                 sign, change, sign,
-                                portfolio.daily_portfolio_change_perc.unwrap_or(0.0)
+                                portfolio.daily_portfolio_change_perc.unwrap_or_default()
                             );
                         }
 
@@ -649,14 +649,14 @@ async fn test_ws_marginal_indicators() {
                             for cash in &mi.cash_by_currency {
                                 println!("  │  • {}: {:.2}",
                                     cash.currency.as_deref().unwrap_or("?"),
-                                    cash.sum.unwrap_or(0.0)
+                                    cash.sum.unwrap_or_default()
                                 );
                             }
                         }
 
                         // Задолженности
                         if let Some(debt) = &mi.money_debt {
-                            println!("  ├ Задолженность: {:.2}", debt.total_money_debt.unwrap_or(0.0));
+                            println!("  ├ Задолженность: {:.2}", debt.total_money_debt.unwrap_or_default());
                         }
 
                         // Маржинальные позиции
@@ -665,8 +665,8 @@ async fn test_ws_marginal_indicators() {
                             for pos in securities.margin_by_security.iter().take(3) {
                                 println!("    • {}: qty={:.0} value={:.2}",
                                     pos.ticker.as_deref().unwrap_or("?"),
-                                    pos.quantity.unwrap_or(0.0),
-                                    pos.current_value.unwrap_or(0.0)
+                                    pos.quantity.unwrap_or_default(),
+                                    pos.current_value.unwrap_or_default()
                                 );
                             }
                         }

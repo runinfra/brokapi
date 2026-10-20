@@ -19,6 +19,68 @@
 исполнений. Коннекторы это не покрывает: актуальные синхронные методы заявок БКС, поток `orders/events/ws` и
 условные заявки вживую не пробовались.
 
+## Эталоны: как записать ответы брокера
+
+Имитации и код писал один автор по одной документации. Если он понял документацию неверно, код и тест ошибутся одинаково и
+останутся зелеными. Чтобы поймать это, живой прогон **записывает ответы брокера в файлы-эталоны**, а обычный тест без сети
+сверяет с ними имитацию. Сейчас эталонов нет, ни один живой прогон не делался.
+
+**Как это устроено.** Для каждого брокера есть список проб: фиксированных запросов (стакан, свечи, портфель, неизвестная заявка,
+постановка и отмена одной заявки). Живой прогон выполняет пробы на брокере и кладет каждый ответ в файл. Тест
+`live_reference` выполняет те же пробы на имитации и сравнивает **форму**: какие поля есть, какого они типа, каким кодом брокер
+отказывает. Значения не сравниваются.
+
+| Что сверяется | Расхождение |
+|---|---|
+| поле есть у брокера, нет у имитации | `$.order.status: the broker sends it (number), the mock does not` |
+| поле есть у имитации, нет у брокера | `$.extra: the mock sends it (string), the broker does not` |
+| тип другой (число вместо строки) | `$.price: the broker sends string, the mock sends number` |
+| отказ с другим кодом, или ответ вместо отказа | `order_unknown_cid: the broker refuses with http_404, the mock answers` |
+
+Что брокер не показал, у имитации не спрашивается: поле, которое было `null`, и содержимое пустого списка. `null` подходит к
+любому типу. Целое и дробное число - один тип `number`, а число, записанное строкой (`"244.30"`), - другой.
+
+**Что чистится до записи на диск.** Токены, номера счетов, номера заявок брокера и `clientOrderId`, ФИО, почта, телефон, названия
+счетов: значение заменяется на `<redacted>` (строка) или `0` (число), тип сохраняется. Чистка идет по имени поля, по виду значения
+(JWT, токен Т-Банка, UUID, длинный номер) и по смыслу (`id` и `name` счета). Последним шагом из текста вырезаются токены и
+номер счета самого прогона. Рыночные данные (тикеры, цены, объемы) остаются. Тест чистки проверяет на примере, что ни один
+секрет в файле не остался. После прогона все равно посмотрите `git diff` до коммита.
+
+**Куда ложатся файлы.** `crates/<брокер>/tests/fixtures/live/<проба>.json`, по файлу на пробу: `crates/bcs/...`,
+`crates/tbank/...`, `crates/finam/...`. Файлы коммитятся в репозиторий.
+
+**Как прогнать** (токены только в `.env`, торговые заявки только по слову владельца):
+
+```powershell
+# БКС: чтение. Токен на чтение. Добавьте BCS_LIVE_TRADE=1 и BCS_LIVE_PRICE=<цена далеко от рынка>, чтобы записать и заявку
+cargo test -p brokapi-bcs --features integration-live --test live live_record_reference -- --nocapture --test-threads=1
+
+# Т-Банк: песочница, счет открывается и закрывается самим тестом
+cargo test -p brokapi-tbank --features integration-live --test live_sandbox record_reference -- --nocapture --test-threads=1
+cargo test -p brokapi-tbank --features integration-live --test live_sandbox repeated_order_id_in_sandbox -- --nocapture --test-threads=1
+
+# Финам: чтение. Заявка (боевой счет!) только с FINAM_LIVE_TRADE=1 и FINAM_LIVE_PRICE
+cargo test -p brokapi-finam --features integration-live --test live live_record_reference -- --nocapture --test-threads=1
+```
+
+Заявки в пробах - как в быстром старте: одна лимитная покупка на минимальный объем, цена далеко от рынка, сразу отмена. У БКС
+в пробе есть повтор того же `clientOrderId`: он отвечает на вопрос, что брокер делает с повтором.
+
+**Потом.** Запустите сверку и разберите каждое расхождение: либо ошибка в имитации (правим имитацию и тест, который ее проверял),
+либо в коннекторе:
+
+```powershell
+cargo test -p brokapi-bcs --test live_reference
+cargo test -p brokapi-tbank --test live_reference
+cargo test -p brokapi-finam --test live_reference
+```
+
+Пока эталонов нет, `the_mock_answers_like_the_live_broker` печатает `SKIPPED: no live reference for <брокер>` (видно с
+`-- --nocapture`) и проходит. Когда файлы появятся, тот же тест начнет проверять сам. Второй тест, `every_probe_runs_on_the_mock`, идет
+всегда: он держит пробы рабочими на имитации, чтобы ко дню прогона они были проверены.
+
+Устройство записи, чистки и сверки - в rustdoc модуля `brokapi_mocks::live` (`crates/mocks/src/live/`).
+
 ## Правила
 
 - Токены лежат только в `.env`. В чат, в логи и в коммиты они не попадают.
@@ -51,8 +113,9 @@
 | Финам | секрет Trade API и номер счета |
 
 Переменные `.env` для каждого брокера перечислены ниже в чеклисте. Живые тесты написаны (`tests/live*.rs` в крейтах
-брокеров, флаг сборки `integration-live`) и пока только собираются. Тесты Т-Банка отказываются запускаться против боевого
-адреса.
+брокеров, флаг сборки `integration-live`) и пока только собираются. Что они собираются, проверяет каждый запуск `tools/check`:
+раньше это было не так, после перехода на точные числа они перестали собираться, и никто не заметил. Тесты Т-Банка
+отказываются запускаться против боевого адреса.
 
 ## Чеклист и вопросы
 
@@ -125,6 +188,7 @@ cargo test -p brokapi-bcs --features integration-live --test live live_stop_orde
 | `live_ud_portfolio_and_reconcile_read_only` | на чтение | `reconcile(&[])`, портфель и его поток, потоки заявок и исполнений, история исполнений за 7 дней, неизвестный cid (должен попасть в `closed_offline`) |
 | `live_order_roundtrip` | на запись, `BCS_IS_WRITE` не нужен (тест сам включает запись) | **только при `BCS_LIVE_TRADE=1`**: одна лимитная покупка далеко от рынка, чтение по cid, `replace`, отмена, отказанная заявка (цена 0.0001) не блокирует следующую. Теперь через актуальные синхронные методы |
 | `live_stop_order_roundtrip` (новое) | на запись | **только при `BCS_LIVE_TRADE=1`**: три SELL-условных заявки далеко от рынка (стоп-лосс, стоп-лимит, тейк-профит), список, отмена по cid и по номеру брокера. Печатает строки `ANSWER:` - это ответы на вопросы 12-14 |
+| `live_record_reference` (новое) | на чтение, для заявки на запись | записывает ответы брокера в эталоны (раздел «Эталоны» выше). **С `BCS_LIVE_TRADE=1` и `BCS_LIVE_PRICE`** еще одна лимитная покупка далеко от рынка, ее состояние, повтор того же `clientOrderId` и отмена |
 
 Дополнительные переменные `.env`: `BCS_LIVE_TICKER` (по умолчанию `SBER`), `BCS_LIVE_CLASS` (`TQBR`), `BCS_LIVE_TRADE=1`,
 `BCS_LIVE_PRICE` (цена покупки заведомо ниже рынка, кратная шагу), `BCS_LIVE_QTY` (по умолчанию 1),
@@ -250,8 +314,9 @@ cargo test -p brokapi-bcs --features integration-live --test live live_stop_orde
 cargo test -p brokapi-tbank --features integration-live --test live_sandbox -- --nocapture --test-threads=1
 ```
 
-Один тест: `... --test live_sandbox market_data_scenarios -- --nocapture`. В файле пять тестов:
-`market_data_scenarios`, `trading_scenarios`, `stop_order_scenarios` (новое: стоп-заявка далеко от рынка, список, отмена), `portfolio_scenarios`, `accounts_are_listed_for_the_token`.
+Один тест: `... --test live_sandbox market_data_scenarios -- --nocapture`. В файле семь тестов:
+`market_data_scenarios`, `trading_scenarios`, `stop_order_scenarios` (новое: стоп-заявка далеко от рынка, список, отмена), `portfolio_scenarios`, `accounts_are_listed_for_the_token`,
+`record_reference` и `repeated_order_id_in_sandbox` (запись эталонов, см. выше).
 Тесты сами открывают счет песочницы, кладут на него 1 000 000 руб, торгуют заявкой по 1 руб и закрывают счет.
 
 ### Порядок
@@ -265,7 +330,11 @@ cargo test -p brokapi-tbank --features integration-live --test live_sandbox -- -
 
 ### Вопросы, которые прогон должен закрыть
 
-1. **Повторный `order_id`**: прежний отчет, ошибка 30057 или вторая заявка. От этого зависит `PlaceIdempotency`.
+1. **Повторный `order_id`**: прежний отчет, ошибка 30057 или вторая заявка. От этого зависит `PlaceIdempotency`. Ответ дает
+   `repeated_order_id_in_sandbox` (только песочница): одна и та же заявка с тем же `order_id` дважды, потом по списку
+   заявок считается, сколько заявок встало. Строка `ANSWER: repeated order_id -> N order(s) stand` и файлы
+   `repeat_first_post`, `repeat_second_post`, `repeat_summary`. Одна заявка - брокер сам отбрасывает дубль. Две - повтор
+   остается запрещенным (`duplicate_place`).
 2. **Единицы `OrderTrade.quantity`** (лоты или штуки) и `OperationItem.quantity`.
 3. **Цена в `OrderStateStream`** для чужих заявок: за бумагу или за лот.
 4. **`ReplaceOrder`**: сохраняет ли цену при пустом поле, что приходит в `order_request_id` новой заявки. Меняется ли
@@ -322,8 +391,9 @@ cargo test -p brokapi-finam --features integration-live --test live -- --nocaptu
 ```
 
 Тесты: `live_token_and_accounts`, `live_market_data`, `live_portfolio_and_orders_read_only`, `live_order_roundtrip`,
-`live_stop_order_roundtrip` (новое). Два последних выполняются только при `FINAM_LIVE_TRADE=1`, стоп-тесту нужна еще
-`FINAM_LIVE_STOP_PRICE` (цена заведомо ниже рынка: сценарий ставит SELL-стопы).
+`live_stop_order_roundtrip` (новое). Эти два выполняются только при `FINAM_LIVE_TRADE=1`, стоп-тесту нужна еще
+`FINAM_LIVE_STOP_PRICE` (цена заведомо ниже рынка: сценарий ставит SELL-стопы). Еще `live_record_reference` (новое: запись
+эталонов, см. выше): читает всегда, заявку ставит только при `FINAM_LIVE_TRADE=1`.
 
 ### Порядок
 

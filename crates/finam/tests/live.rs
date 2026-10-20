@@ -8,7 +8,7 @@
 //! Run: `cargo test -p brokapi-finam --features integration-live --test live -- --nocapture`.
 //! What these runs should answer is listed on the live runs page of the book (<https://brokapi.runinfra.ru/live.html>).
 
-use brokapi_core::{Decimal, dec};
+use brokapi_core::Decimal;
 use std::time::Duration;
 
 use brokapi_core::{
@@ -119,7 +119,7 @@ async fn live_market_data() {
             Event::OrderBook(OrderBook::Snapshot { bids, asks, .. }) => {
                 if let (Some(b), Some(a)) = (bids.first(), asks.first()) {
                     assert!(
-                        b.price.value() < a.price.value(),
+                        b.price.decimal() < a.price.decimal(),
                         "crossed book: {b:?} / {a:?}"
                     );
                 }
@@ -265,8 +265,8 @@ async fn live_order_roundtrip() {
             order_type: OrderType::Limit,
             qty: Qty::new(
                 env("FINAM_LIVE_QTY")
-                    .and_then(|q| q.parse().ok())
-                    .unwrap_or(1.0),
+                    .and_then(|q| q.parse::<Decimal>().ok())
+                    .unwrap_or(Decimal::ONE),
             ),
             price: Some(Price::new(price)),
         })
@@ -325,9 +325,55 @@ async fn live_stop_order_roundtrip() {
     let (ud, _rx) = ud().await;
     ud.reconcile(&[]).await.expect("reconcile");
     assert!(ud.caps().supports_stop_orders);
-    brokapi_conformance::stop_order_far_from_market(&ud, &symbol(), stop).await;
+    brokapi_conformance::stop_order_far_from_market(&ud, &symbol(), Price::new(stop)).await;
     ud.shutdown(ShutdownMode::Graceful {
         deadline: Duration::from_secs(5),
     })
     .await;
+}
+
+/// Where the answers of the live broker go: the reference files the imitation is checked against
+/// (`tests/live_reference.rs`).
+const REFERENCE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/live");
+
+/// Records the answers of the broker as reference files in `tests/fixtures/live`, cleaned: no secret,
+/// no account or order numbers (`brokapi_mocks::live::scrub`). Reads only, unless `FINAM_LIVE_TRADE=1`
+/// and `FINAM_LIVE_PRICE` are set: then also ONE limit buy far below the market, its state and the cancel
+/// (Finam has no sandbox: it is the real account).
+///
+/// After the run: look at the files (`git diff`), run `cargo test -p brokapi-finam --test live_reference` and
+/// commit them. A difference reported there is a place where the imitation is wrong.
+#[tokio::test]
+async fn live_record_reference() {
+    use brokapi_finam_protocol::{FinamApi, start_token_manager};
+    use brokapi_mocks::live::{Outcome, Recorder, finam as probes};
+
+    let cfg = api();
+    let secret = env("FINAM_SECRET").expect("FINAM_SECRET in .env");
+    let account = account();
+    let sym = env("FINAM_LIVE_SYMBOL").unwrap_or_else(|| "SBER@MISX".into());
+    let endpoint = cfg.endpoint.clone();
+    let tokens = start_token_manager(&endpoint, &secret, "")
+        .await
+        .expect("auth");
+    let finam = FinamApi::connect(&endpoint, tokens, cfg.bearer).expect("client");
+    let recorder = Recorder::new("finam", REFERENCE_DIR).with_secrets([secret, account.clone()]);
+
+    let mut answers = probes::read_only(&finam, &account, &sym).await;
+    if env("FINAM_LIVE_TRADE").as_deref() == Some("1") {
+        let price = env("FINAM_LIVE_PRICE").expect("FINAM_LIVE_PRICE with FINAM_LIVE_TRADE=1");
+        let qty = env("FINAM_LIVE_QTY").unwrap_or_else(|| "1".into());
+        answers.extend(probes::order_roundtrip(&finam, &account, &sym, &price, &qty).await);
+    } else {
+        println!(
+            "no order: set FINAM_LIVE_TRADE=1 and FINAM_LIVE_PRICE to record the order probes too"
+        );
+    }
+    for (name, outcome) in &answers {
+        let path = recorder.record(name, outcome);
+        println!("recorded {name}: {}", path.display());
+        if let Outcome::Refused { code, .. } = outcome {
+            println!("ANSWER: {name} -> refused with {code}");
+        }
+    }
 }

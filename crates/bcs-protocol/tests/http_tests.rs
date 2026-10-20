@@ -173,10 +173,10 @@ async fn test_limits() {
         for (i, l) in limits.futures_limits.iter().take(5).enumerate() {
             let currency = l.currency.as_deref().unwrap_or("N/A");
             let exchange = l.exchange.as_deref().unwrap_or("N/A");
-            let cbp_limit = l.cbp_limit.unwrap_or(0.0);
-            let cbpl_used = l.cbpl_used.unwrap_or(0.0);
-            let cbpl_planned = l.cbpl_planned.unwrap_or(0.0);
-            let var_margin = l.var_margin.unwrap_or(0.0);
+            let cbp_limit = l.cbp_limit.unwrap_or_default();
+            let cbpl_used = l.cbpl_used.unwrap_or_default();
+            let cbpl_planned = l.cbpl_planned.unwrap_or_default();
+            let var_margin = l.var_margin.unwrap_or_default();
 
             println!(
                 "    {}. {} ({}) | Лимит: {:.2} | Использовано: {:.2} | План: {:.2} | Вар.маржа: {:.2}",
@@ -263,7 +263,7 @@ async fn test_instruments_by_tickers() {
             "     Название: {}",
             inst.display_name.as_deref().unwrap_or("N/A")
         );
-        println!("     Лот: {}", inst.lot_size.unwrap_or(0.0));
+        println!("     Лот: {}", inst.lot_size.unwrap_or_default());
         println!("     ISIN: {}", inst.isin.as_deref().unwrap_or("N/A"));
         println!(
             "     Валюта: {}",
@@ -312,7 +312,7 @@ async fn test_instruments_by_isins() {
             "     Тип:      {}",
             inst.instrument_type.as_deref().unwrap_or("N/A")
         );
-        println!("     Лот:      {}", inst.lot_size.unwrap_or(0.0));
+        println!("     Лот:      {}", inst.lot_size.unwrap_or_default());
 
         // Площадки
         if !inst.boards.is_empty() {
@@ -509,8 +509,12 @@ async fn test_candles() {
         );
 
         // Показать изменение цены
-        let change = ((last.close - first.open) / first.open) * 100.0;
-        let emoji = if change >= 0.0 { "📈" } else { "📉" };
+        let change = ((last.close - first.open) / first.open) * rust_decimal::Decimal::from(100);
+        let emoji = if change >= rust_decimal::Decimal::ZERO {
+            "📈"
+        } else {
+            "📉"
+        };
         println!("  Изменение: {:.2}% {}", change, emoji);
     }
 }
@@ -566,16 +570,16 @@ async fn test_trades() {
         println!("     Направление: {}", side_str);
         println!(
             "     Цена:        {:.2} {}",
-            data.price.unwrap_or(0.0),
+            data.price.unwrap_or_default(),
             data.currency.as_deref().unwrap_or("RUB")
         );
         println!(
             "     Объём:       {:.0}",
-            data.executed_quantity.unwrap_or(0.0)
+            data.executed_quantity.unwrap_or_default()
         );
         println!(
             "     Сумма:       {:.2}",
-            data.execution_value.unwrap_or(0.0)
+            data.execution_value.unwrap_or_default()
         );
     }
 

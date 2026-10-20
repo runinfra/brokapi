@@ -25,7 +25,7 @@ async fn test_create_order() {
     let class_code = "TQBR".to_string();
 
     // 3) Только LIMIT заявка
-    let limit_price = 30.00;
+    let limit_price = rust_decimal::Decimal::new(3000, 2);
 
     println!("╔══════════════════════════════════════════╗");
     println!("║      CREATE ORDER (LIMIT ONLY)           ║");
@@ -45,7 +45,8 @@ async fn test_create_order() {
 
     let side = format!("{:?}", request.side);
     let order_type = format!("{:?}", request.order_type);
-    let notional = request.price.unwrap_or(0.0) * request.order_quantity as f64;
+    let notional =
+        request.price.unwrap_or_default() * rust_decimal::Decimal::from(request.order_quantity);
 
     println!("╔════════════════════════════════════════════════════╗");
     println!("║                ORDER SEND REQUEST                 ║");
@@ -249,7 +250,7 @@ async fn test_modify_order() {
     let request = ModifyOrderRequest {
         client_order_id: Uuid::new_v4(),
         order_quantity: 1,
-        price: Some(31.00),
+        price: Some(rust_decimal::Decimal::new(3100, 2)),
     };
 
     let started = std::time::Instant::now();

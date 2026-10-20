@@ -320,9 +320,9 @@ async fn live_order_roundtrip() {
         .expect("BCS_LIVE_PRICE")
         .parse()
         .expect("a number");
-    let qty: f64 = env("BCS_LIVE_QTY")
+    let qty: Decimal = env("BCS_LIVE_QTY")
         .and_then(|q| q.parse().ok())
-        .unwrap_or(1.0);
+        .unwrap_or(Decimal::ONE);
     let id = instrument();
     let (ud, mut rx) = ud(true, limiter()).await;
     ud.reconcile(&[]).await.expect("reconcile");
@@ -373,7 +373,7 @@ async fn live_order_roundtrip() {
 
     // 3. replace (open question 7: which field carries the id of the new order)
     let new_cid = ClientOrderId::new_v4();
-    let new_price = price + 0.01;
+    let new_price = price + dec!(0.01);
     let rep = ud
         .replace(ReplaceOrderRequest {
             cid: new_cid,
@@ -408,7 +408,7 @@ async fn live_order_roundtrip() {
             side: Side::Buy,
             order_type: OrderType::Limit,
             qty: Qty::new(qty),
-            price: Some(Price::new(0.0001)),
+            price: Some(Price::new(dec!(0.0001))),
         })
         .await;
     println!("order with an invalid price: {bad:?}");
@@ -463,9 +463,9 @@ async fn live_stop_order_roundtrip() {
         .expect("BCS_LIVE_TAKE_PRICE")
         .parse()
         .expect("a number");
-    let qty: f64 = env("BCS_LIVE_QTY")
+    let qty: Decimal = env("BCS_LIVE_QTY")
         .and_then(|q| q.parse().ok())
-        .unwrap_or(1.0);
+        .unwrap_or(Decimal::ONE);
     let id = instrument();
     let (ud, _rx) = ud(true, limiter()).await;
     ud.reconcile(&[]).await.expect("reconcile");
@@ -480,7 +480,7 @@ async fn live_stop_order_roundtrip() {
         expiry: StopExpiry::GoodTillCancel,
     };
     let sl = req(StopOrderKind::StopLoss, stop, None);
-    let sll = req(StopOrderKind::StopLimit, stop, Some(stop * 0.99));
+    let sll = req(StopOrderKind::StopLimit, stop, Some(stop * dec!(0.99)));
     let tp = req(StopOrderKind::TakeProfit, take, None);
     let mut placed = Vec::new();
     for r in [sl, sll, tp] {
@@ -498,9 +498,9 @@ async fn live_stop_order_roundtrip() {
             s.kind,
             s.cid,
             s.broker_id.as_str(),
-            s.stop_price.value(),
-            s.limit_price.map(|p| p.value()),
-            s.qty.value(),
+            s.stop_price.decimal(),
+            s.limit_price.map(|p| p.decimal()),
+            s.qty.decimal(),
             s.expiry,
             s.state
         );
@@ -534,4 +534,54 @@ async fn live_stop_order_roundtrip() {
         deadline: Duration::from_secs(5),
     })
     .await;
+}
+
+/// Where the answers of the live broker go: the reference files the imitation is checked against
+/// (`tests/live_reference.rs`).
+const REFERENCE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/live");
+
+/// Records the answers of the broker as reference files in `tests/fixtures/live`, cleaned: no tokens,
+/// no account or order numbers (`brokapi_mocks::live::scrub`). Reads only, unless `BCS_LIVE_TRADE=1`
+/// and `BCS_LIVE_PRICE` are set: then also ONE limit buy far below the market, its state, a repeat of the
+/// same `clientOrderId`, and the cancel. A read token is enough for the reads; the order needs a trade token.
+///
+/// After the run: look at the files (`git diff`), run `cargo test -p brokapi-bcs --test live_reference` and
+/// commit them. A difference reported there is a place where the imitation is wrong.
+#[tokio::test]
+async fn live_record_reference() {
+    use brokapi_bcs_protocol::http::client::BcsHttpClient;
+    use brokapi_mocks::live::{Recorder, bcs as probes};
+
+    // `from_env` reads `.env` first, so the variables below are there.
+    let base = BcsConfig::from_env().expect("BCS_REFRESH_TOKEN in .env");
+    let trade = env("BCS_LIVE_TRADE").as_deref() == Some("1");
+    let http = BcsHttpClient::new(base.with_write(trade)).expect("client");
+    let ticker = env("BCS_LIVE_TICKER").unwrap_or_else(|| "SBER".into());
+    let class = env("BCS_LIVE_CLASS").unwrap_or_else(|| "TQBR".into());
+
+    let mut secrets = vec![env("BCS_REFRESH_TOKEN").expect("BCS_REFRESH_TOKEN in .env")];
+    secrets.push(http.get_access_token().await.expect("access token"));
+    let recorder = Recorder::new("bcs", REFERENCE_DIR).with_secrets(secrets);
+
+    let mut answers = probes::read_only(&http, &ticker, &class).await;
+    if trade {
+        let price = env("BCS_LIVE_PRICE").expect("BCS_LIVE_PRICE with BCS_LIVE_TRADE=1");
+        let qty: i64 = env("BCS_LIVE_QTY")
+            .and_then(|q| q.parse().ok())
+            .unwrap_or(1);
+        answers.extend(probes::order_roundtrip(&http, &ticker, &class, &price, qty).await);
+    } else {
+        println!(
+            "no order: set BCS_LIVE_TRADE=1 and BCS_LIVE_PRICE to record the order probes too"
+        );
+    }
+    for (name, outcome) in &answers {
+        let path = recorder.record(name, outcome);
+        println!("recorded {name}: {}", path.display());
+    }
+    for (name, outcome) in &answers {
+        if let brokapi_mocks::live::Outcome::Refused { code, .. } = outcome {
+            println!("ANSWER: {name} -> refused with {code}");
+        }
+    }
 }

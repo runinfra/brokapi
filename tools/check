@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Full check before a push. Eight steps, in order, stops at the first failure:
 #   1. cargo fmt --all --check
-#   2. cargo clippy --workspace --all-targets -- -D warnings
+#   2. cargo clippy --workspace --all-targets -- -D warnings, then cargo check of the live tests (integration-live)
 #   3. cargo test --workspace
 #   4. cargo test --doc --workspace
 #   5. RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam,
@@ -24,8 +24,12 @@ step() { printf '\n==> %s\n' "$*"; }
 step "1/8 cargo fmt --all --check"
 cargo fmt --all --check
 
-step "2/8 cargo clippy --workspace --all-targets -- -D warnings"
+step "2/8 cargo clippy --workspace --all-targets -- -D warnings, and the live tests still compile"
 cargo clippy --workspace --all-targets -- -D warnings
+# The live tests (tests/live*.rs, feature integration-live) are never run here, they need tokens. Without this
+# line nothing would notice when a change of the library breaks them.
+cargo check --workspace --all-targets \
+    --features brokapi-bcs/integration-live,brokapi-tbank/integration-live,brokapi-finam/integration-live,brokapi-bcs-protocol/integration-live
 
 step "3/8 cargo test --workspace"
 cargo test --workspace

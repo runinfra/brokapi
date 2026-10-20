@@ -14,7 +14,6 @@
 
 #![cfg(feature = "integration-live")]
 
-use brokapi_core::{Decimal, dec};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -148,7 +147,7 @@ async fn trading_scenarios() {
         .expect("order state stream");
 
     // far from the market: a buy at 1 rub rests in the book
-    conf::place_and_cancel(&ud, &sber, 1.0).await;
+    conf::place_and_cancel(&ud, &sber, Price::from(1)).await;
 
     // Q1 (open question): what does the broker do with a repeated order_id (idempotency)?
     let cid = ClientOrderId::new_v4();
@@ -157,8 +156,8 @@ async fn trading_scenarios() {
         instrument: sber.clone(),
         side: Side::Buy,
         order_type: OrderType::Limit,
-        qty: Qty::new(1.0),
-        price: Some(Price::new(1.0)),
+        qty: Qty::from(1),
+        price: Some(Price::from(1)),
     };
     ud.place(req.clone()).await.expect("first place");
     println!(
@@ -245,7 +244,7 @@ async fn stop_order_scenarios() {
     conf::reconcile(&ud).await;
     assert!(ud.caps().supports_stop_orders);
     // SELL stops at 1 rub are far below any market price and never trigger.
-    conf::stop_order_far_from_market(&ud, &sber, 1.0).await;
+    conf::stop_order_far_from_market(&ud, &sber, Price::from(1)).await;
     close_account(&cfg, &account).await;
 }
 
@@ -281,4 +280,94 @@ async fn accounts_are_listed_for_the_token() {
             .map(|a| (&a.id, a.status))
             .collect::<Vec<_>>()
     );
+}
+
+/// Where the answers of the live broker go: the reference files the imitation is checked against
+/// (`tests/live_reference.rs`).
+const REFERENCE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/live");
+
+/// Records the answers of the sandbox as reference files in `tests/fixtures/live`, cleaned: no token,
+/// no account or order numbers (`brokapi_mocks::live::scrub`). It opens its own sandbox account, reads,
+/// places ONE limit buy at 1 rub (far below the market) with its state and the cancel, and closes the account.
+///
+/// After the run: look at the files (`git diff`), run `cargo test -p brokapi-tbank --test live_reference` and
+/// commit them. A difference reported there is a place where the imitation is wrong.
+#[tokio::test]
+async fn record_reference() {
+    use brokapi_mocks::live::{Outcome, Recorder, tbank as probes};
+
+    let cfg = config();
+    let account = sandbox_account(&cfg).await;
+    let (tx, _rx) = mpsc::channel(8);
+    let md = MarketDataConnector::start(
+        MarketDataConfig::new(cfg.clone(), "tbank-md"),
+        limiter(),
+        tx,
+    )
+    .await
+    .unwrap();
+    let sber = find_sber(&md).await;
+    let NativeId::Uid(uid) = &sber.native else {
+        panic!("the directory gave no uid: {:?}", sber.native)
+    };
+    md.shutdown(ShutdownMode::Immediate).await;
+
+    let client = TbankClient::new(&cfg).unwrap();
+    let recorder =
+        Recorder::new("tbank", REFERENCE_DIR).with_secrets([cfg.token.clone(), account.clone()]);
+    let mut answers = probes::read_only(&client, &account, uid, "SBER", "TQBR").await;
+    answers.extend(probes::order_roundtrip(&client, &account, uid, "1.0", 1).await);
+    close_account(&cfg, &account).await;
+    for (name, outcome) in &answers {
+        let path = recorder.record(name, outcome);
+        println!("recorded {name}: {}", path.display());
+        if let Outcome::Refused { code, .. } = outcome {
+            println!("ANSWER: {name} -> refused with {code}");
+        }
+    }
+}
+
+/// Review item 9: the same order with the same `order_id` twice. How many orders stand? Sandbox only.
+///
+/// Prints `ANSWER: repeated order_id -> N order(s) stand` and records the three probes of the question
+/// (`repeat_first_post`, `repeat_second_post`, `repeat_summary`) as reference files. If it is ONE order, T-Bank
+/// drops the duplicate itself, and the library may allow a repeat of `place` with the same `cid` when the bot
+/// asks for it; if it is TWO, the repeat stays forbidden (`duplicate_place`).
+#[tokio::test]
+async fn repeated_order_id_in_sandbox() {
+    use brokapi_mocks::live::{Outcome, Recorder, tbank as probes};
+
+    let cfg = config();
+    let account = sandbox_account(&cfg).await;
+    let (tx, _rx) = mpsc::channel(8);
+    let md = MarketDataConnector::start(
+        MarketDataConfig::new(cfg.clone(), "tbank-md"),
+        limiter(),
+        tx,
+    )
+    .await
+    .unwrap();
+    let sber = find_sber(&md).await;
+    let NativeId::Uid(uid) = &sber.native else {
+        panic!("the directory gave no uid: {:?}", sber.native)
+    };
+    md.shutdown(ShutdownMode::Immediate).await;
+
+    let client = TbankClient::new(&cfg).unwrap();
+    let answers = probes::repeated_order_id(&client, &account, uid, "1.0", 1).await;
+    close_account(&cfg, &account).await;
+
+    let recorder =
+        Recorder::new("tbank", REFERENCE_DIR).with_secrets([cfg.token.clone(), account.clone()]);
+    for (name, outcome) in &answers {
+        recorder.record(name, outcome);
+        if let (true, Outcome::Answered(summary)) = (name == "repeat_summary", outcome) {
+            println!(
+                "ANSWER: repeated order_id -> {} order(s) stand; second post {}; same exchange id: {}",
+                summary["orders_with_this_order_id"],
+                summary["second_post"],
+                summary["same_exchange_id"]
+            );
+        }
+    }
 }

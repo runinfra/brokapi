@@ -361,12 +361,14 @@ dependencies = [
  "futures-util",
  "http",
  "prost-types",
+ "reqwest",
  "rust_decimal",
  "serde_json",
  "tokio",
  "tokio-stream",
  "tokio-util",
  "tonic",
+ "uuid",
 ]
 
 [[package]]
