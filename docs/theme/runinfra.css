@@ -251,3 +251,6 @@ hr { border: 0; border-top: 1px solid var(--ri-line); }
 .light .stage-strip { background: #fde8e8; color: #b3121f !important; border-bottom-color: #f2b8bd; }
 .stage-strip b { font-weight: 600; }
 @media (max-width: 560px) { .stage-strip { padding: 0.5rem 1rem; } .stage-detail { display: none; } }
+
+/* Under a diagram that is wider than the page (set by mermaid-init.js). */
+.mermaid-scroll-hint { margin: -0.6rem 0 1.2rem; font-size: 1.2rem; color: var(--ri-muted, #8b95a8); text-align: right; }

@@ -29,10 +29,30 @@
         transitionColor: '#4d5a6e', transitionLabelColor: '#1c2433', specialStateColor: '#0076a3',
     };
     mermaid.initialize({
-        startOnLoad: true,
+        startOnLoad: false,
         theme: 'base',
         themeVariables: Object.assign({ fontFamily: "'Geist', system-ui, sans-serif", fontSize: '14px' }, isDark ? dark : light),
     });
+
+    // Wide diagrams: squeezed to the page they become unreadable on a phone (text around 7 px). If the natural width
+    // is more than 1.4 of the column, draw at 80% of the natural width and let the block scroll sideways.
+    const widen = () => {
+        for (const svg of document.querySelectorAll('pre.mermaid svg')) {
+            const box = svg.parentElement;
+            const natural = parseFloat(svg.style.maxWidth) || (svg.viewBox && svg.viewBox.baseVal.width) || 0;
+            if (!natural || natural <= box.clientWidth * 1.4 || box.dataset.wide) continue;
+            box.dataset.wide = '1';
+            svg.style.maxWidth = 'none';
+            svg.style.width = Math.round(natural * 0.8) + 'px';
+            box.style.overflowX = 'auto';
+            const hint = document.createElement('div');
+            hint.className = 'mermaid-scroll-hint';
+            hint.textContent = 'схема листается вбок';
+            box.insertAdjacentElement('afterend', hint);
+        }
+    };
+    const draw = () => mermaid.run({ querySelector: 'pre.mermaid' }).then(widen);
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', draw); else draw();
 
     // A change of the theme draws the diagrams again: the simplest way is to reload the page.
     for (const id of ['navy', 'light']) {
