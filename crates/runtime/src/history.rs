@@ -173,12 +173,14 @@ impl<'a, S: MarketDataSource + ?Sized> CandlePages<'a, S> {
         self.next_from
     }
 
-    /// How many `candles` requests were made, repeats included.
+    /// How many `candles` calls were made, repeats included. A call that the local rate limiter refused is counted
+    /// too, although it never reached the broker: count the requests that went out on the broker's side if you
+    /// need them.
     pub fn requests(&self) -> u32 {
         self.requests
     }
 
-    /// How many times a rate limit was waited out.
+    /// How many times a rate limit was waited out inside this reader (a wait of your own loop is not counted).
     pub fn rate_waits(&self) -> u32 {
         self.rate_waits
     }

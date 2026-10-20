@@ -143,6 +143,15 @@ async fn research_engine_downloads_a_year_records_and_replays() {
     );
     // The small budget made the engine wait, not fail.
     assert!(r.reports.values().any(|v| v.rate_waits > 0));
+    // A read refused for good ends in the report and the engine goes on; a network failure is waited out.
+    assert_eq!(
+        r.fatal.failed.len(),
+        2,
+        "both instruments are reported: {:?}",
+        r.fatal
+    );
+    assert!(r.transient.failed.is_empty(), "{:?}", r.transient);
+    assert_eq!(r.transient.bars, 2 * 365 * 24);
     // A second run finds the files complete.
     assert_eq!(r.second_run_requests, 0);
 

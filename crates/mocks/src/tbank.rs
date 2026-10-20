@@ -57,6 +57,9 @@ pub struct MockOptions {
     /// `GetCandles` answers a series of bars for the range asked (one per interval step) and refuses a range
     /// longer than the T-Invest limit for the interval with `INVALID_ARGUMENT` 30014. Off: two fixed bars.
     pub synthetic_candles: AtomicBool,
+    /// With `synthetic_candles`: 1 makes `GetCandles` answer `INVALID_ARGUMENT` (the caller sees `Rejected`, the read
+    /// fails again), 2 makes it answer `UNAVAILABLE` (a network error, a later try may pass), 0 is normal.
+    pub candle_fail: std::sync::atomic::AtomicU8,
     /// Every `GetCandles` request seen: (interval, from seconds, to seconds).
     pub candle_requests: Mutex<Vec<(i32, i64, i64)>>,
     /// Delay before `PostOrder` answers (to provoke a client timeout).
@@ -309,6 +312,11 @@ impl MarketDataService for Mock {
                 .lock()
                 .unwrap()
                 .push((r.interval, from, to));
+            match opts.candle_fail.load(Ordering::Relaxed) {
+                1 => return Err(Status::invalid_argument("mock: candle read refused")),
+                2 => return Err(Status::unavailable("mock: candle read failed")),
+                _ => {}
+            }
             if to < from {
                 return Err(Status::invalid_argument("30012"));
             }

@@ -18,8 +18,9 @@ use std::time::Duration;
 
 // ANCHOR: imports
 use brokapi::core::{
-    Candle, Envelope, Event, InstrumentId, InstrumentQuery, InstrumentSource, MarketDataSource,
-    NativeId, OrderBook, OrderBookSource, SubscribeOpts, TimeRange, Timeframe, UnixNanos,
+    Candle, Envelope, Error, ErrorClass, Event, InstrumentId, InstrumentQuery, InstrumentSource,
+    MarketDataSource, NativeId, OrderBook, OrderBookSource, SubscribeOpts, TimeRange, Timeframe,
+    UnixNanos,
 };
 use brokapi::runtime::history::{CandlePages, HistoryError, HistoryOpts};
 use brokapi::runtime::record::{EnvelopeReader, EnvelopeWriter, ReplaySpeed, replay};
@@ -93,17 +94,36 @@ fn rows(bars: &[Candle]) -> String {
 // ANCHOR_END: files
 
 /// What one venue's download did.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 pub struct VenueReport {
     pub requests: u32,
     pub rate_waits: u32,
     pub bars: usize,
+    /// Instruments that could not be finished: ticker and the reason.
+    pub failed: Vec<(String, String)>,
 }
 
 // ANCHOR: download
+/// Waits out `RateLimited` for any read. EVERY read spends quota, `find` and `last_trades` included, not only candles.
+async fn waiting<T, F, Fut>(mut call: F) -> Result<T, Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, Error>>,
+{
+    for _ in 0..20 {
+        match call().await {
+            Err(Error::RateLimited { retry_after }) => tokio::time::sleep(retry_after).await,
+            other => return other,
+        }
+    }
+    call().await
+}
+
 /// Downloads `tf` bars of every instrument of the venue over `range` into files. Restart-safe: run it again after a
 /// stop and it continues where each file ends. The library cuts the range into windows the broker accepts, waits out
-/// the rate limit and joins the windows without duplicates; this function decides what happens to each page.
+/// the rate limit and joins the windows without duplicates; this function decides what happens to each page and to
+/// each failure: a failure that may pass (`Retryable`) is waited out and the instrument is continued from its file, a
+/// failure that will repeat (`Fatal`) is written to the report and the next instrument goes on.
 pub async fn download(
     venue: &Venue<'_>,
     tf: Timeframe,
@@ -114,39 +134,56 @@ pub async fn download(
     for (ticker, id) in &venue.instruments {
         let path = bars_path(dir, venue.name, ticker, tf);
         fs::create_dir_all(path.parent().expect("a file has a folder"))?;
-        repair(&path)?;
-        let from = resume_point(&path, tf, range.from);
-        let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-
-        let mut pages = CandlePages::new(
-            venue.md,
-            id,
-            tf,
-            TimeRange::new(from, range.to),
-            HistoryOpts::default(),
-        );
+        let mut attempts = 0;
         loop {
-            match pages.next_page().await {
-                Ok(Some(bars)) => {
-                    // One write per page, then to disk. The page is on disk before the next one is asked for.
-                    file.write_all(rows(&bars).as_bytes())?;
-                    file.sync_data()?;
-                    report.bars += bars.len();
+            repair(&path)?;
+            let from = resume_point(&path, tf, range.from);
+            let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+            let mut pages = CandlePages::new(
+                venue.md,
+                id,
+                tf,
+                TimeRange::new(from, range.to),
+                HistoryOpts::default(),
+            );
+            let outcome = loop {
+                match pages.next_page().await {
+                    Ok(Some(bars)) => {
+                        // One write per page, then to disk. The page is on disk before the next one is asked for.
+                        file.write_all(rows(&bars).as_bytes())?;
+                        file.sync_data()?;
+                        report.bars += bars.len();
+                    }
+                    Ok(None) => break Ok(()),
+                    Err(e) => break Err(e),
                 }
-                Ok(None) => break,
-                // A stop in the middle: what was written stays, a rerun continues from `resume_from`. The error
-                // class tells whether to retry later (RateLimited, Transport) or to fix the request (the rest).
-                Err(HistoryError { error, resume_from }) => {
-                    return Err(format!(
-                        "{} {ticker}: stopped at {resume_from:?}: {error}",
-                        venue.name
-                    )
-                    .into());
+            };
+            report.requests += pages.requests();
+            report.rate_waits += pages.rate_waits();
+            let HistoryError { error, .. } = match outcome {
+                Ok(()) => break,
+                Err(e) => e,
+            };
+            // Progress resets the patience: only an instrument that does not move at all gives up.
+            if resume_point(&path, tf, range.from) > from {
+                attempts = 0;
+            }
+            match error.class() {
+                ErrorClass::Retryable if attempts < 5 => {
+                    attempts += 1;
+                    let pause = match error {
+                        Error::RateLimited { retry_after } => retry_after,
+                        _ => Duration::from_millis(500),
+                    };
+                    tokio::time::sleep(pause).await;
+                }
+                // Fatal (the same read fails again) or the patience is spent: write it down, go to the next one.
+                _ => {
+                    report.failed.push((ticker.clone(), error.to_string()));
+                    break;
                 }
             }
         }
-        report.requests += pages.requests();
-        report.rate_waits += pages.rate_waits();
     }
     Ok(report)
 }
@@ -213,12 +250,12 @@ pub async fn play(
 }
 // ANCHOR_END: record
 
-/// A deliberately small budget, so the history download has to wait for the limiter: 200 requests per second, a burst
+/// A deliberately small budget, so the history download has to wait for the limiter: 20 requests per second, a burst
 /// of 2. The real defaults of each broker are in `brokapi::<broker>::limits::default_limits()`.
 fn small_budget() -> std::sync::Arc<BrokerLimiter> {
     let raw = r#"
 [demo.buckets.market]
-rate = 200
+rate = 20
 per = "1s"
 burst = 2
 [demo.route]
@@ -243,6 +280,10 @@ pub struct Result3 {
     pub tbank_requests: Vec<(i32, i64, i64)>,
     pub bcs_requests: usize,
     pub finam_requests: usize,
+    /// T-Bank reads that the imitation refused for good: the engine writes the instruments to the report.
+    pub fatal: VenueReport,
+    /// T-Bank reads that failed twice on the network and then passed: the engine waited and went on.
+    pub transient: VenueReport,
 }
 
 /// The whole engine on the imitations. `dir` holds the data files and the log.
@@ -307,12 +348,13 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
     };
     let mut tbank_ids = Vec::new();
     for t in ["SBER", "GAZP"] {
-        let found = tbank_md
-            .find(InstrumentQuery::ByTicker {
+        let found = waiting(|| {
+            tbank_md.find(InstrumentQuery::ByTicker {
                 ticker: t.into(),
                 exchange: Some("TQBR".into()),
             })
-            .await?;
+        })
+        .await?;
         tbank_ids.push((
             t.to_string(),
             found.into_iter().next().ok_or("not in the directory")?.id,
@@ -363,10 +405,36 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
     // A second run finds every file complete and asks the brokers for nothing.
     let again = download(&venues[0], Timeframe::H1, year, dir).await?;
 
+    // What the brokers saw for the main download (the scenarios below add requests of their own).
+    let tbank_requests = tbank_opts.candle_requests.lock().unwrap().clone();
+    let bcs_requests = bcs_opts.candle_requests.lock().unwrap().len();
+    let finam_requests = finam_server
+        .state
+        .options
+        .bars_requests
+        .lock()
+        .unwrap()
+        .len();
+
+    // A read the broker refuses for good (`Rejected`) ends in the report, the engine goes on with the next instrument.
+    tbank_opts.candle_fail.store(1, Ordering::SeqCst);
+    let fatal = download(&venues[1], Timeframe::H1, year, &dir.join("fatal")).await?;
+    // A read that fails on the network: the engine waits and continues from the file. The imitation heals after a moment.
+    tbank_opts.candle_fail.store(2, Ordering::SeqCst);
+    let heal = {
+        let opts = tbank_opts.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1200)).await;
+            opts.candle_fail.store(0, Ordering::SeqCst);
+        })
+    };
+    let transient = download(&venues[1], Timeframe::H1, year, &dir.join("transient")).await?;
+    heal.await?;
+
     // ---- 2. The deals of the tape: the latest ones, to a file of their own.
     for v in &venues {
         let (ticker, id) = &v.instruments[0];
-        let trades = v.md.last_trades(id, 50).await?;
+        let trades = waiting(|| v.md.last_trades(id, 50)).await?;
         let mut out = String::new();
         for t in &trades {
             out.push_str(&format!(
@@ -383,8 +451,7 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
     // ---- 3. Record the live stream while an analysis reads the same events.
     for v in &venues {
         let (_, id) = &v.instruments[0];
-        v.md.subscribe_order_book(id, SubscribeOpts::conflate())
-            .await?;
+        waiting(|| v.md.subscribe_order_book(id, SubscribeOpts::conflate())).await?;
     }
     let (tee_tx, tee_rx) = mpsc::channel::<Envelope>(4096);
     let analysis = tokio::spawn(analyze(tee_rx));
@@ -398,15 +465,6 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
     let replayed = play(&log, play_tx).await?;
     let replay_stats = analysis.await?;
 
-    let tbank_requests = tbank_opts.candle_requests.lock().unwrap().clone();
-    let bcs_requests = bcs_opts.candle_requests.lock().unwrap().len();
-    let finam_requests = finam_server
-        .state
-        .options
-        .bars_requests
-        .lock()
-        .unwrap()
-        .len();
     // Stop the connectors (the borrows of `venues` end here).
     drop(venues);
     let stop = brokapi::core::ShutdownMode::Immediate;
@@ -423,6 +481,8 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
         tbank_requests,
         bcs_requests,
         finam_requests,
+        fatal,
+        transient,
     })
 }
 
