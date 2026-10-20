@@ -7,25 +7,25 @@
 
 ## Что получится
 
-На схеме: коннекторы, общий канал, два счетчика лимитов (у каждого брокера свой), журнал. Т-Банк делит один счетчик между
+На схеме: коннекторы, общий канал, три счетчика лимитов (у каждого брокера свой), журнал. Т-Банк делит один счетчик между
 рынком и обоими счетами, потому что считает лимит на пользователя.
 
 ```mermaid
 flowchart TB
-  subgraph B[БКС, счетчик 1]
-    BM[MD bcs-md]
-    BU[UD bcs]
+  subgraph B[БКС: счетчик 1]
+    direction LR
+    BM[MD bcs-md] ~~~ BU[UD bcs]
   end
-  subgraph T[Т-Банк, счетчик 2]
-    TM[MD tbank-md]
-    TA[UD tbank-a]
-    TB[UD tbank-b]
+  subgraph T[Т-Банк: счетчик 2 на всех]
+    direction LR
+    TM[MD tbank-md] ~~~ TA[UD tbank-a] ~~~ TB2[UD tbank-b]
   end
-  subgraph F[Финам, счетчик 3]
-    FM[MD finam-md]
-    FU[UD finam]
+  subgraph F[Финам: счетчик 3]
+    direction LR
+    FM[MD finam-md] ~~~ FU[UD finam]
   end
-  BM & BU & TM & TA & TB & FM & FU --> Q[(Один канал событий)]
+  B ~~~ T ~~~ F
+  F -- события всех коннекторов --> Q[(Один канал событий)]
   Q --> R[route: по env.source<br>в нужный счет]
   R --> J[(Журнал в файле)]
   J --> S[start: reconcile каждого счета<br>со своей частью журнала]

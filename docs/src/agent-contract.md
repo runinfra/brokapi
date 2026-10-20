@@ -15,12 +15,12 @@
 
 ```mermaid
 flowchart TB
-  A[1. Один BrokerLimiter на область квоты<br>один канал событий] --> B[2. start: MD на брокера,<br>UD на счет]
-  B --> C[3. subscribe_order_state<br>и subscribe_executions]
-  C --> D[4. reconcile со списком cid из журнала]
-  D --> E[5. Разобрать confirmed, closed_offline, foreign]
-  E --> F[6. Работа: события в одной задаче,<br>команды из другой]
-  F --> G[7. Остановка: свои заявки снять<br>если так решил бот, потом shutdown]
+  A[Шаг 1: один BrokerLimiter на область квоты,<br>один канал событий] --> B[Шаг 2: start, MD на брокера,<br>UD на счет]
+  B --> C[Шаг 3: subscribe_order_state<br>и subscribe_executions]
+  C --> D[Шаг 4: reconcile со списком cid из журнала]
+  D --> E[Шаг 5: разобрать confirmed, closed_offline, foreign]
+  E --> F[Шаг 6: работа, события в одной задаче,<br>команды из другой]
+  F --> G[Шаг 7: остановка, свои заявки снять,<br>если так решил бот, потом shutdown]
 ```
 
 На схеме: шаги, которые делает любая программа на brokapi, в обязательном порядке. Пункты 3 и 4 нельзя менять местами,
