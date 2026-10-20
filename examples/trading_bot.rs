@@ -138,6 +138,8 @@ pub struct TradingBot<'a, M, U> {
     book_sub: Option<SubscriptionId>,
     /// How many more orders the bot may place. The stand-in strategy buys once.
     pub budget: u32,
+    /// The order that `stop` could not take off. A real bot alerts a person.
+    pub left_working: Option<ClientOrderId>,
     /// The price of the last order that was accepted.
     pub placed_price: Option<Price>,
 }
@@ -207,6 +209,7 @@ where
             md_label: Arc::from(md_label),
             book_sub: Some(book_sub),
             budget: 1,
+            left_working: None,
             placed_price: None,
         })
     }
@@ -441,7 +444,13 @@ where
                     Err(Error::RateLimited { retry_after }) => {
                         tokio::time::sleep(retry_after).await
                     }
-                    Err(Error::NotReconciled | Error::Degraded) => self.reconcile_now().await?,
+                    Err(Error::NotReconciled | Error::Degraded) => {
+                        // Drain first: what did arrive is the history up to the hole.
+                        while let Ok(env) = events.try_recv() {
+                            self.on_event(env).await?;
+                        }
+                        self.reconcile_now().await?
+                    }
                     // Maybe cancelled, maybe not: ask, and cancel again only if it still works.
                     Err(Error::Unknown | Error::Transport(_)) => {
                         if let Ok(order) = self.ud.order_state(cid).await {
@@ -469,6 +478,8 @@ where
                 let order = self.ud.order_state(cid).await?;
                 self.on_order(&order);
             }
+            // Still working after all this: the order stays on the exchange. Say so, do not hide it.
+            self.left_working = self.working;
         }
         Ok(())
     }
