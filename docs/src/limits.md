@@ -72,7 +72,7 @@ supports_multiplex = false
 Читают его `brokapi::bcs::limits::limits_from_toml_str` (и `limits_from_toml_path`; у Т-Банка `brokapi::tbank::limits`, у Финама
 `brokapi::finam::limits::parse_limits`), либо общая `BrokerLimits::from_toml_str` из `brokapi::runtime`, которая берет единственный
 раздел файла. Дальше `BrokerLimiter::new(&limits)`: он возвращает `Arc<BrokerLimiter>`, делится он через `Arc` (`.clone()` у `Arc`), а не копией.
-Полный разбираемый файл, который дает «первая заявка прошла, вторая получила `RateLimited`». `dedicated_command_conns` необязателен.
+Полный разбираемый файл, который дает «первая заявка прошла, вторая получила `RateLimited`». Лишние ключи разбор пропускает: старый файл с `dedicated_command_conns` читается, ключ ничего не делает (его убрали, потому что ни один коннектор его не читал).
 `retry_after` показывает, сколько ведру нужно до одного токена (при `per = "2s"` порядка 1,8 секунды сразу после траты):
 
 ```toml

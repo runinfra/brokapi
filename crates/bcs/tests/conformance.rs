@@ -57,6 +57,7 @@ async fn market_data() {
     conf::order_book_snapshot(&md, &sber(), 20).await;
     let sub = conf::order_book_stream(&md, &mut rx, "bcs-md", &sber()).await;
     conf::unsubscribe(&md, sub).await;
+    conf::unsubscribe_unknown(&md).await;
     md.shutdown(ShutdownMode::Immediate).await;
 }
 
@@ -78,6 +79,7 @@ async fn orders() {
     let (ud, _rx) = ud(&server).await;
     conf::reconcile(&ud).await;
     conf::place_and_cancel(&ud, &sber(), Price::new(dec!(1.0))).await;
+    conf::order_state_unknown_cid(&ud).await;
     conf::rejected_order_does_not_block_the_instrument(&ud, &sber(), Price::new(dec!(1.0))).await;
     ud.shutdown(ShutdownMode::Immediate).await;
 }

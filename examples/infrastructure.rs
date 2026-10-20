@@ -483,11 +483,10 @@ fn state_word(state: &OrderState) -> &'static str {
     }
 }
 
-/// "The broker does not know this order". The brokers say it in different ways.
+/// "The broker does not know this order". All brokers say it as `Rejected`, T-Bank in capital letters.
 fn is_not_found(e: &Error) -> bool {
     match e {
         Error::Rejected { code, .. } => code.eq_ignore_ascii_case("not_found"),
-        Error::Transport(t) => t.to_string().to_lowercase().contains("not found"),
         _ => false,
     }
 }

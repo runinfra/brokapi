@@ -452,11 +452,16 @@ impl OrderBookSource for MarketDataConnector {
     }
 
     async fn unsubscribe(&self, sub: SubscriptionId) -> Result<(), Error> {
-        let record = self.inner.subs.write().await.remove(&sub).ok_or_else(|| {
-            Error::Transport(brokapi_core::TransportError::Message(
-                "unknown subscription".into(),
-            ))
-        })?;
+        let record = self
+            .inner
+            .subs
+            .write()
+            .await
+            .remove(&sub)
+            .ok_or_else(|| Error::Rejected {
+                code: "unknown_subscription".into(),
+                message: format!("subscription {} is not active", sub.value()),
+            })?;
         self.set_core_sub(sub, None).await;
         self.inner.emitter.unregister(sub);
         self.inner.ws.unsubscribe(record.ws).await.map_err(map_err)

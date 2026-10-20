@@ -321,13 +321,12 @@ pub enum SubscribeType {
     Unsubscribe = 1,
 }
 
-/// Candle time frame.
+/// Candle time frame, in the names of the broker.
 ///
-/// The names are serialized as written (`M1`, `H4`, `MN`). **Not every variant is a valid name for the
-/// broker.** The broker docs list `M1 M5 M15 M30 H1 H4 D W MN`. This enum also has `M10`, `D1` and
-/// `W1`, which are not in that list (the day is `D`, the week is `W`) and which the broker would refuse
-/// as far as the docs go (not verified against the live API). The request models of this crate take
-/// the time frame as a string. Send `D` and `W`, and do not send `M10`.
+/// The names are serialized as written (`M1`, `H4`, `D`, `MN`) and are exactly the list of the broker
+/// docs: `M1 M5 M15 M30 H1 H4 D W MN`. There is no ten-minute frame at BCS. The request models of this
+/// crate take the time frame as a string, so this enum is a convenience: `TimeFrame::D.name()` is the
+/// string to send.
 ///
 /// # Examples
 ///
@@ -335,6 +334,9 @@ pub enum SubscribeType {
 /// use brokapi_bcs_protocol::models::enums::TimeFrame;
 ///
 /// assert_eq!(serde_json::to_string(&TimeFrame::H1)?, "\"H1\"");
+/// assert_eq!(TimeFrame::D.name(), "D");
+/// // Names the broker does not know are refused when reading.
+/// assert!(serde_json::from_str::<TimeFrame>("\"D1\"").is_err());
 /// # Ok::<(), serde_json::Error>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -343,8 +345,6 @@ pub enum TimeFrame {
     M1,
     /// Five minutes.
     M5,
-    /// Ten minutes. Not in the broker's list.
-    M10,
     /// Fifteen minutes.
     M15,
     /// Thirty minutes.
@@ -353,12 +353,30 @@ pub enum TimeFrame {
     H1,
     /// Four hours.
     H4,
-    /// One day. The broker's name is `D`, not `D1`.
-    D1,
-    /// One week. The broker's name is `W`, not `W1`.
-    W1,
+    /// One day (`D`).
+    D,
+    /// One week (`W`).
+    W,
     /// One month.
     MN,
+}
+
+impl TimeFrame {
+    /// The name the broker uses, the one to put into a request.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::M1 => "M1",
+            Self::M5 => "M5",
+            Self::M15 => "M15",
+            Self::M30 => "M30",
+            Self::H1 => "H1",
+            Self::H4 => "H4",
+            Self::D => "D",
+            Self::W => "W",
+            Self::MN => "MN",
+        }
+    }
 }
 
 /// Side of a trade on the anonymous trades tape (WebSocket `side` as text).

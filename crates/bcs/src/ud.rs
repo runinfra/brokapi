@@ -36,7 +36,9 @@ use tokio_util::sync::CancellationToken;
 use crate::cid::foreign_cid;
 use crate::config::UserDataConfig;
 use crate::core::UdCore;
-use crate::error::{map_command_err, map_config_err, map_err, map_order_cmd_err};
+use crate::error::{
+    map_command_err, map_config_err, map_err, map_order_cmd_err, map_order_read_err,
+};
 use crate::map::execution::map_trade_record;
 use crate::map::order::{
     LIST_STATUS_ACTIVE, PLAIN_LIST_TYPES, STOP_LIST_TYPES, map_order_ack, map_order_record,
@@ -819,7 +821,7 @@ impl OrderExecutor for UserDataConnector {
             .http
             .get_order("1", &cid.hyphenated().to_string())
             .await
-            .map_err(map_err)?;
+            .map_err(map_order_read_err)?;
         let snap = map_state_list(Some(cid), &resp, brokapi_runtime::now()).ok_or_else(|| {
             Error::Transport(brokapi_core::TransportError::Message(
                 "order status answer has no report".into(),

@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 use tonic::Request;
 use tracing::warn;
 
-use crate::config::MarketDataConfig;
+use crate::config::{MD_MAX_PING, MarketDataConfig, effective_ping, silence_limit};
 use crate::core::md::{MdCore, MdFrame};
 use crate::emit::Emitter;
 use crate::error::{config, transport};
@@ -294,18 +294,19 @@ impl MarketDataConnector {
         out: mpsc::Sender<Envelope>,
     ) -> Result<Self, Error> {
         let client = TbankClient::new(&cfg.tbank).map_err(|e| config(e.to_string()))?;
+        let ping = effective_ping(cfg.ping_interval, MD_MAX_PING);
         let inner = Arc::new(Shared {
             client,
             limiter,
             emitter: Emitter::new(cfg.source, out),
-            core: Mutex::new(MdCore::new(cfg.ping_interval)),
+            core: Mutex::new(MdCore::new(ping)),
             waiters: Mutex::new(HashMap::new()),
             subs: Mutex::new(Vec::new()),
             sub_ids: SubIdGen::new(0),
             notify: Notify::new(),
             last_error: Arc::new(LastError::default()),
             request_timeout: cfg.tbank.request_timeout,
-            stale_after: cfg.ping_interval * 3,
+            stale_after: silence_limit(ping),
             closing: AtomicBool::new(false),
             cancel: CancellationToken::new(),
         });

@@ -418,3 +418,42 @@ async fn a_long_non_ascii_reply_that_does_not_parse_is_an_error_not_a_panic() {
     let err = client.get::<serde_json::Value>("/page").await.unwrap_err();
     assert!(matches!(err, BcsApiError::ParseError(_)), "got {err:?}");
 }
+
+// ─── TimeFrame ───────────────────────────────────────────────────────────────
+
+/// The time frames in the list of the broker docs (candles REST and last-candle WebSocket).
+const BROKER_TIME_FRAMES: [&str; 9] = ["M1", "M5", "M15", "M30", "H1", "H4", "D", "W", "MN"];
+
+#[test]
+fn time_frame_is_the_list_of_the_broker() {
+    use brokapi_bcs_protocol::models::enums::TimeFrame;
+    let all = [
+        TimeFrame::M1,
+        TimeFrame::M5,
+        TimeFrame::M15,
+        TimeFrame::M30,
+        TimeFrame::H1,
+        TimeFrame::H4,
+        TimeFrame::D,
+        TimeFrame::W,
+        TimeFrame::MN,
+    ];
+    let names: Vec<&str> = all.iter().map(|t| t.name()).collect();
+    assert_eq!(names, BROKER_TIME_FRAMES);
+    for (tf, name) in all.iter().zip(BROKER_TIME_FRAMES) {
+        assert_eq!(serde_json::to_string(tf).unwrap(), format!("\"{name}\""));
+        let back: TimeFrame = serde_json::from_str(&format!("\"{name}\"")).unwrap();
+        assert_eq!(back, *tf);
+    }
+}
+
+#[test]
+fn time_frame_refuses_the_names_the_broker_does_not_have() {
+    use brokapi_bcs_protocol::models::enums::TimeFrame;
+    for not_a_name in ["M10", "D1", "W1", "m1"] {
+        assert!(
+            serde_json::from_str::<TimeFrame>(&format!("\"{not_a_name}\"")).is_err(),
+            "{not_a_name}"
+        );
+    }
+}

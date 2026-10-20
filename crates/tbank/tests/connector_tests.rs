@@ -1055,3 +1055,100 @@ async fn rate_limited_place_leaves_the_cid_usable() {
         Err(Error::Rejected { ref code, .. }) if code == "duplicate_place"
     ));
 }
+
+// ---------- history that does not fit the page limit ----------
+
+#[tokio::test]
+async fn a_history_over_the_page_limit_is_an_error_not_a_cut_off_list() {
+    let range = TimeRange::new(
+        UnixNanos::from_nanos(0),
+        UnixNanos::from_nanos(i64::MAX / 2),
+    );
+    let opts: Arc<MockOptions> = Arc::default();
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    // The quota for operations is small (a page costs one request): a roomy one for 41 pages.
+    let roomy = r#"
+        [tbank.buckets.big]
+        rate = 10000
+        per = "1s"
+        burst = 10000
+        [tbank.route]
+        "*" = ["big"]
+        [tbank.conns]
+        max_conns = 4
+        max_subs_per_conn = 50
+        supports_multiplex = true
+    "#;
+    let (tx, _rx) = mpsc::channel(64);
+    let ud = UserDataConnector::start(
+        UserDataConfig::new(tb(&server).with_account(ACCOUNT_A), "tbank-ud"),
+        BrokerLimiter::new(&limits_from_toml_str(roomy).unwrap()),
+        tx,
+    )
+    .await
+    .unwrap();
+
+    // Exactly 20 pages fit: all of them come back.
+    opts.operations_pages.store(20, Ordering::SeqCst);
+    assert_eq!(ud.executions(range).await.unwrap().len(), 20);
+
+    // A 21st page exists: the call says so, it does not return the first 20 as if they were all.
+    opts.operations_pages.store(21, Ordering::SeqCst);
+    match ud.executions(range).await {
+        Err(Error::Rejected { code, .. }) => assert_eq!(code, "range_too_long"),
+        other => panic!("expected range_too_long, got {other:?}"),
+    }
+}
+
+// ---------- ping period of the streams ----------
+
+#[tokio::test]
+async fn a_short_ping_period_does_not_make_a_healthy_stream_look_dead() {
+    let server = MockServer::start(Arc::default()).await;
+    server.opts.book_burst.store(1, Ordering::SeqCst); // one snapshot, then the stream is quiet
+    let mut cfg = MarketDataConfig::new(tb(&server), "tbank-md");
+    // The broker accepts 5 s at the least, so 1 s is asked as 5 s and the silence limit is 15 s.
+    cfg.ping_interval = Duration::from_secs(1);
+    let (tx, mut rx) = mpsc::channel(512);
+    let md = MarketDataConnector::start(cfg, limiter(), tx)
+        .await
+        .unwrap();
+    md.subscribe_order_book(&sber(), SubscribeOpts::conflate())
+        .await
+        .unwrap();
+    next_event(&mut rx, |e| matches!(e, Event::OrderBook(_))).await;
+    assert_eq!(server.opts.md_connections.load(Ordering::SeqCst), 1);
+
+    // 10 s of silence is more than the 3 s that the unclamped period would allow, and less than 15 s.
+    brokapi_mocks::time::jump(Duration::from_secs(10)).await;
+    // A new subscription needs a live stream. If the stream had been dropped, it would be confirmed only
+    // after a reopening, and the mock would have counted a second connection by then.
+    md.subscribe_market_trades(&sber(), SubscribeOpts::lossless(64))
+        .await
+        .unwrap();
+    assert_eq!(
+        server.opts.md_connections.load(Ordering::SeqCst),
+        1,
+        "the stream was taken for dead too early"
+    );
+
+    // And a stream that stays silent for more than the limit is reopened: the check is alive.
+    brokapi_mocks::time::jump(Duration::from_secs(20)).await;
+    brokapi_mocks::time::wait_until("the silent stream is reopened", || {
+        server.opts.md_connections.load(Ordering::SeqCst) >= 2
+    })
+    .await;
+}
+
+async fn next_event(rx: &mut mpsc::Receiver<Envelope>, pred: impl Fn(&Event) -> bool) -> Envelope {
+    timeout(Duration::from_secs(5), async {
+        while let Some(env) = rx.recv().await {
+            if pred(&env.payload) {
+                return env;
+            }
+        }
+        panic!("channel closed");
+    })
+    .await
+    .expect("no matching event")
+}

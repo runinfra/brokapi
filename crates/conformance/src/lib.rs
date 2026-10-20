@@ -413,15 +413,16 @@ pub async fn order_book_stream<M: OrderBookSource + ?Sized>(
     sub
 }
 
-/// Unsubscribing an active subscription succeeds. Doing it a second time must not panic.
+/// Unsubscribing an active subscription succeeds, and doing it again is refused the same way at every broker.
 ///
-/// The first call must return `Ok`. The result of the second call is ignored: a connector may answer
-/// `Ok` or an error for an id it has already closed, but it must not crash or hang. `sub` is the id of
-/// a live subscription, for example the one [`order_book_stream`] returned.
+/// The first call must return `Ok`. The second call, for an id that is already closed, must return
+/// [`Error::Rejected`] with code `unknown_subscription`: not `Ok`, not a transport error, not a panic.
+/// `sub` is the id of a live subscription, for example the one [`order_book_stream`] returned.
 ///
 /// # Panics
 ///
-/// With `[conformance:unsubscribe] unsubscribe failed: ...` when the first call returns an error.
+/// With `[conformance:unsubscribe] ...` when the first call returns an error, or the second one is
+/// not the refusal described above.
 ///
 /// # Examples
 ///
@@ -448,7 +449,51 @@ pub async fn unsubscribe<M: OrderBookSource + ?Sized>(md: &M, sub: SubscriptionI
     md.unsubscribe(sub)
         .await
         .unwrap_or_else(|e| fail(S, format!("unsubscribe failed: {e:?}")));
-    let _ = md.unsubscribe(sub).await;
+    expect_unknown_subscription(S, md.unsubscribe(sub).await);
+}
+
+/// Unsubscribing an id the connector never gave out is refused: [`Error::Rejected`] with code
+/// `unknown_subscription`. The same answer at every broker, so a bot needs one branch for it.
+///
+/// # Panics
+///
+/// With `[conformance:unsubscribe_unknown] ...` when the answer is anything else.
+///
+/// # Examples
+///
+/// ```
+/// # use brokapi_bcs::limits::default_limits;
+/// # use brokapi_bcs::{MarketDataConfig, MarketDataConnector};
+/// # use brokapi_core::ShutdownMode;
+/// # use brokapi_runtime::BrokerLimiter;
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # let server = brokapi_mocks::bcs::MockServer::start(Default::default()).await;
+/// # let cfg = brokapi_bcs_protocol::config::BcsConfig::for_mock("mock-refresh-token", &server.http_base);
+/// # let (tx, _rx) = tokio::sync::mpsc::channel(256);
+/// # let md = MarketDataConnector::start(MarketDataConfig::new(cfg, "bcs-md"), BrokerLimiter::new(&default_limits()), tx).await?;
+/// brokapi_conformance::unsubscribe_unknown(&md).await;
+/// # md.shutdown(ShutdownMode::Immediate).await;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn unsubscribe_unknown<M: OrderBookSource + ?Sized>(md: &M) {
+    expect_unknown_subscription(
+        "unsubscribe_unknown",
+        md.unsubscribe(SubscriptionId::new(u64::MAX - 1)).await,
+    );
+}
+
+fn expect_unknown_subscription(scenario: &str, outcome: Result<(), Error>) {
+    match outcome {
+        Err(Error::Rejected { code, .. }) if code == "unknown_subscription" => {}
+        other => fail(
+            scenario,
+            format!(
+                "unsubscribe of an unknown id must be Rejected(unknown_subscription), got {other:?}"
+            ),
+        ),
+    }
 }
 
 /// Instrument directory: a search finds the instrument, and its trading parameters are usable for order sizing.
@@ -588,6 +633,45 @@ pub async fn place_and_cancel<U: OrderExecutor + ?Sized>(ud: &U, id: &Instrument
     ud.cancel(cid)
         .await
         .unwrap_or_else(|e| fail(S, format!("cancel failed: {e:?}")));
+}
+
+/// `order_state` of a `cid` the broker has never seen is a refusal: [`Error::Rejected`] with code
+/// `not_found` (T-Bank spells it `NOT_FOUND`, the case does not matter).
+///
+/// The same answer at every broker, so a bot that recovers from [`Error::Unknown`] with `order_state`
+/// needs one branch for "the broker does not know the order (yet)". Not `Transport`, not `Ok`.
+///
+/// # Panics
+///
+/// With `[conformance:order_state_unknown_cid] ...` when the answer is anything else.
+///
+/// # Examples
+///
+/// ```
+/// # use brokapi_bcs::limits::default_limits;
+/// # use brokapi_bcs::{UserDataConfig, UserDataConnector};
+/// # use brokapi_core::ShutdownMode;
+/// # use brokapi_runtime::BrokerLimiter;
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # let server = brokapi_mocks::bcs::MockServer::start(Default::default()).await;
+/// # let cfg = brokapi_bcs_protocol::config::BcsConfig::for_mock("mock-refresh-token", &server.http_base).with_write(true);
+/// # let (tx, _rx) = tokio::sync::mpsc::channel(256);
+/// # let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), BrokerLimiter::new(&default_limits()), tx).await?;
+/// brokapi_conformance::order_state_unknown_cid(&ud).await;
+/// # ud.shutdown(ShutdownMode::Immediate).await;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn order_state_unknown_cid<U: OrderExecutor + ?Sized>(ud: &U) {
+    const S: &str = "order_state_unknown_cid";
+    match ud.order_state(ClientOrderId::new_v4()).await {
+        Err(Error::Rejected { code, .. }) if code.eq_ignore_ascii_case("not_found") => {}
+        other => fail(
+            S,
+            format!("order_state of an unknown cid must be Rejected(not_found), got {other:?}"),
+        ),
+    }
 }
 
 fn limit_buy(id: &InstrumentId, price: Price) -> PlaceOrderRequest {

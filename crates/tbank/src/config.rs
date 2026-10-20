@@ -28,6 +28,55 @@ use std::time::Duration;
 use brokapi_runtime::PriceGrid;
 use brokapi_tbank_protocol::TbankConfig;
 
+/// The shortest ping period T-Bank accepts on its streams.
+pub(crate) const MIN_PING: Duration = Duration::from_secs(5);
+/// The longest ping period on the market data stream.
+pub(crate) const MD_MAX_PING: Duration = Duration::from_secs(180);
+/// The longest ping period on the user data streams. The order state stream accepts up to 120 s, and
+/// the connector asks all its streams for the same period.
+pub(crate) const UD_MAX_PING: Duration = Duration::from_secs(120);
+
+/// The ping period the connector asks the server for, and the one its silence limit is built on:
+/// `configured` brought into `5 s..=longest`. The request and the limit use this one value, so a
+/// stream that pings as often as it was asked to is never taken for dead.
+pub(crate) fn effective_ping(configured: Duration, longest: Duration) -> Duration {
+    configured.clamp(MIN_PING, longest)
+}
+
+/// How long a stream may stay silent before it is closed and reopened: three ping periods.
+pub(crate) fn silence_limit(ping: Duration) -> Duration {
+    ping * 3
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_ping_period_is_brought_into_the_range_of_the_broker() {
+        let secs = Duration::from_secs;
+        assert_eq!(effective_ping(secs(1), MD_MAX_PING), secs(5), "too short");
+        assert_eq!(effective_ping(secs(30), MD_MAX_PING), secs(30), "in range");
+        assert_eq!(
+            effective_ping(secs(600), MD_MAX_PING),
+            secs(180),
+            "too long"
+        );
+        assert_eq!(effective_ping(secs(150), UD_MAX_PING), secs(120));
+        assert_eq!(effective_ping(Duration::ZERO, UD_MAX_PING), secs(5));
+    }
+
+    #[test]
+    fn the_silence_limit_follows_the_period_that_was_asked_for() {
+        // A period of 1 s is asked from the broker as 5 s: the limit is 15 s, not 3 s.
+        let ping = effective_ping(Duration::from_secs(1), MD_MAX_PING);
+        assert_eq!(silence_limit(ping), Duration::from_secs(15));
+        // A period of 10 minutes is asked as 3 minutes: the limit is 9 minutes, not 30.
+        let ping = effective_ping(Duration::from_secs(600), MD_MAX_PING);
+        assert_eq!(silence_limit(ping), Duration::from_secs(540));
+    }
+}
+
 /// Market data connector config. Not tied to an account: one per broker (token) is enough.
 ///
 /// Build it with [`MarketDataConfig::new`] and change the public fields if needed.
@@ -48,10 +97,9 @@ pub struct MarketDataConfig {
     pub tbank: TbankConfig,
     /// Envelope source label, e.g. `"tbank-md"`.
     pub source: Arc<str>,
-    /// Server ping period on the stream (T-Bank accepts 5000..180000 ms, the connector clamps the
-    /// value it requests to that range). A stream silent for three periods is treated as dead and
-    /// reconnected. Keep it at 5 s or more: the silence limit is three times this value as given,
-    /// so a shorter period would drop a healthy stream. Default 30 s.
+    /// Server ping period on the stream. T-Bank accepts 5 s to 180 s: a value outside that range is
+    /// brought into it, both for the request and for the silence limit. A stream silent for three
+    /// periods is treated as dead and reconnected. Default 30 s.
     pub ping_interval: Duration,
 }
 
@@ -108,9 +156,9 @@ pub struct UserDataConfig {
     /// fills up, an overflow event is sent and the trading gate closes until the next successful
     /// reconcile. Default 1024.
     pub order_state_buffer: usize,
-    /// Server ping period on the user data streams. The connector requests it clamped to
-    /// 5000..120000 ms, and treats a stream silent for three periods (of the value as given) as
-    /// dead. Keep it at 5 s or more. Default 30 s.
+    /// Server ping period on the user data streams. A value outside 5 s to 120 s is brought into
+    /// that range, both for the request and for the silence limit. A stream silent for three periods
+    /// is treated as dead and reconnected. Default 30 s.
     pub ping_interval: Duration,
     /// Price steps the connector checks order prices against (default: empty, nothing is checked).
     /// Fill it with [`PriceGrid::learn`] from the trading parameters of the instruments you trade. A

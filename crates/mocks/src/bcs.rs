@@ -76,6 +76,8 @@ pub struct MockOptions {
     pub ws_connections: AtomicU32,
     /// Market-data book frames pushed over WS.
     pub ws_data_frames: AtomicU32,
+    /// Every text command (subscribe or unsubscribe) the market data socket received, in the order of arrival.
+    pub ws_commands: std::sync::Mutex<Vec<String>>,
     /// `POST /quotes` calls served (a method no connector wraps, used to test `raw()`).
     pub quotes_calls: AtomicU32,
     /// Authorization header of every `POST /quotes`.
@@ -1130,6 +1132,12 @@ async fn handle_ws(socket: WebSocket, path: String, owner: String, state: MockSt
         };
         match msg {
             Ok(Message::Text(text)) if channel == BcsWsChannel::MarketData => {
+                state
+                    .options
+                    .ws_commands
+                    .lock()
+                    .unwrap()
+                    .push(text.to_string());
                 let req: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
                 // Unsubscribe (subscribeType 1) gets no answer.
                 if req["subscribeType"].as_i64() == Some(1) {

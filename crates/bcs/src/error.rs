@@ -130,6 +130,36 @@ pub fn map_command_err(err: BcsApiError) -> Error {
     }
 }
 
+/// [`map_err`] for a read of one order: "not found" is an answer (`Rejected`, code `not_found`), as
+/// at T-Bank and Finam, not a transport problem.
+///
+/// Used by `order_state`. The mapping is the one of [`map_err`] except `NotFound`, which is
+/// [`Error::Rejected`] with code `not_found`. The way out of an `Unknown` is to ask again until the
+/// order is found or the answer stays `not_found` long enough ([`Error::Unknown`]).
+///
+/// # Examples
+///
+/// ```
+/// use brokapi_bcs_protocol::error::BcsApiError;
+/// use brokapi_bcs::error::map_order_read_err;
+/// use brokapi_core::Error;
+///
+/// match map_order_read_err(BcsApiError::NotFound { trace_id: None }) {
+///     Error::Rejected { code, .. } => assert_eq!(code, "not_found"),
+///     other => panic!("{other:?}"),
+/// }
+/// assert!(matches!(map_order_read_err(BcsApiError::RateLimitExceeded), Error::RateLimited { .. }));
+/// ```
+pub fn map_order_read_err(err: BcsApiError) -> Error {
+    match err {
+        BcsApiError::NotFound { .. } => Error::Rejected {
+            code: "not_found".into(),
+            message: "the broker does not know this order".into(),
+        },
+        other => map_err(other),
+    }
+}
+
 /// [`map_command_err`] for commands on an existing order: "not found" is a definite refusal
 /// (`Rejected`, code `not_found`), not a transport problem.
 ///

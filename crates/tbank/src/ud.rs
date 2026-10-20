@@ -27,7 +27,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::config::UserDataConfig;
+use crate::config::{UD_MAX_PING, UserDataConfig, effective_ping, silence_limit};
 use crate::core::ud::{StreamKind, UdCore, UdFrame, UdSubKind};
 use crate::emit::Emitter;
 use crate::error::{config, is_not_found, map_status, transport};
@@ -197,8 +197,8 @@ impl Shared {
             Arc::clone(&self.last_error),
         );
         let accounts = vec![self.account.clone()];
-        let ms = self.ping.as_millis().clamp(5_000, 120_000) as i32;
-        let stale = self.ping * 3;
+        let ms = self.ping.as_millis() as i32;
+        let stale = silence_limit(self.ping);
         let t = token.clone();
         let handle = match kind {
             StreamKind::OrderState => {
@@ -506,7 +506,7 @@ impl UserDataConnector {
             frames,
             last_error: Arc::new(LastError::default()),
             request_timeout: cfg.tbank.request_timeout,
-            ping: cfg.ping_interval,
+            ping: effective_ping(cfg.ping_interval, UD_MAX_PING),
             order_state_buffer: cfg.order_state_buffer,
             sandbox: cfg.tbank.sandbox,
             cancel,
@@ -1601,13 +1601,16 @@ impl ExecutionSource for UserDataConnector {
     /// Quantities here are in PIECES (the operation history is not in lots), unlike the live stream.
     /// `cid` is `None`: the history has no order id. The commission of an operation is spread over its
     /// trades in proportion to quantity. At most 20 pages of 1000 operations are read per call. A
-    /// longer history is cut silently at that point, so ask for shorter ranges.
+    /// range that holds more is an error, never a cut-off list: ask for shorter ranges.
     ///
     /// # Errors
     ///
-    /// [`Error::RateLimited`] (the operations quota is small), [`Error::Transport`], [`Error::Config`]
-    /// and [`Error::Rejected`], as for [`order_state`](OrderExecutor::order_state). A read, so repeat
-    /// it later.
+    /// - [`Error::Rejected`] with code `range_too_long` when the range holds more than 20 pages of
+    ///   1000 operations. Nothing is returned, so a short list never passes for the whole history.
+    ///   Split the range and read the parts.
+    /// - [`Error::RateLimited`] (the operations quota is small), [`Error::Transport`], [`Error::Config`]
+    ///   and [`Error::Rejected`], as for [`order_state`](OrderExecutor::order_state). A read, so repeat
+    ///   it later.
     ///
     /// # Examples
     ///
@@ -1666,7 +1669,13 @@ impl ExecutionSource for UserDataConnector {
             }
             cursor = Some(r.next_cursor);
         }
-        Ok(out)
+        Err(Error::Rejected {
+            code: "range_too_long".into(),
+            message: format!(
+                "the range holds more than {} operations; read it in shorter ranges",
+                MAX_HISTORY_PAGES * 1000
+            ),
+        })
     }
 
     /// Own trades as they happen (`TradesStream`), Lossless.

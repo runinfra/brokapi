@@ -39,6 +39,9 @@ RUSTDOCFLAGS="${RUSTDOCFLAGS:--D warnings --default-theme=dark --extend-css $(pw
 rm -rf "$NEW/api"
 mkdir -p "$NEW/api"
 cp -r "$TARGET/doc/." "$NEW/api/"
+# rustdoc preloads its own fonts (Fira Sans, Source Serif, Source Code Pro), but the reference sets its own:
+# take the preload out, so the browser does not download fonts nobody uses.
+python3 docs/rustdoc_nofonts.py "$NEW/api"
 # Fonts for the reference under stable names (docs/rustdoc-runinfra.css points at /api/fonts/).
 mkdir -p "$NEW/api/fonts"
 cp docs/theme/fonts/*.woff2 "$NEW/api/fonts/"

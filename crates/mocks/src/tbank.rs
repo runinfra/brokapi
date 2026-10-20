@@ -63,6 +63,9 @@ pub struct MockOptions {
     /// With `synthetic_candles`: the next this many `GetCandles` calls answer `UNAVAILABLE`, then the reads pass
     /// again. A network error that heals by itself, without a timer in the test.
     pub candle_network_failures: std::sync::atomic::AtomicU32,
+    /// `GetOperationsByCursor` answers this many pages (0 or 1: one page), each with one operation, linked by
+    /// `next_cursor`. For the history of a long range.
+    pub operations_pages: std::sync::atomic::AtomicU32,
     /// Every `GetCandles` request seen: (interval, from seconds, to seconds).
     pub candle_requests: Mutex<Vec<(i32, i64, i64)>>,
     /// Delay before `PostOrder` answers (to provoke a client timeout).
@@ -932,10 +935,18 @@ impl OperationsService for Mock {
         &self,
         request: Request<pb::GetOperationsByCursorRequest>,
     ) -> Result<Response<pb::GetOperationsByCursorResponse>, Status> {
-        let account = request.into_inner().account_id;
+        let request = request.into_inner();
+        let account = request.account_id;
+        let pages = self.0.opts.operations_pages.load(Ordering::SeqCst).max(1);
+        let page: u32 = request
+            .cursor
+            .as_deref()
+            .and_then(|c| c.parse().ok())
+            .unwrap_or(0);
+        let has_next = page + 1 < pages;
         let qty = if account == ACCOUNT_A { 10 } else { 3 };
         let op = pb::OperationItem {
-            id: format!("op-{account}"),
+            id: format!("op-{account}-{page}"),
             r#type: pb::OperationType::Buy as i32,
             ticker: "SBER".into(),
             class_code: "TQBR".into(),
@@ -953,8 +964,12 @@ impl OperationsService for Mock {
             ..Default::default()
         };
         Ok(Response::new(pb::GetOperationsByCursorResponse {
-            has_next: false,
-            next_cursor: String::new(),
+            has_next,
+            next_cursor: if has_next {
+                (page + 1).to_string()
+            } else {
+                String::new()
+            },
             items: vec![op],
         }))
     }

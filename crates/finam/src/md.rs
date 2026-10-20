@@ -666,13 +666,16 @@ impl OrderBookSource for MarketDataConnector {
     ///
     /// # Errors
     ///
-    /// [`Error::Transport`] with the text `unknown subscription` when `sub` is not a live subscription
-    /// of this connector (a second `unsubscribe` of the same id ends here).
+    /// [`Error::Rejected`] with code `unknown_subscription` when `sub` is not a live subscription of
+    /// this connector (a second `unsubscribe` of the same id ends here).
     async fn unsubscribe(&self, sub: SubscriptionId) -> Result<(), Error> {
         if self.drop_sub(sub).await {
             Ok(())
         } else {
-            Err(transport("unknown subscription"))
+            Err(Error::Rejected {
+                code: "unknown_subscription".into(),
+                message: format!("subscription {} is not active", sub.value()),
+            })
         }
     }
 }

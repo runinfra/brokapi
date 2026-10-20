@@ -48,7 +48,6 @@ burst = 10000
 max_conns = 8
 max_subs_per_conn = 50
 supports_multiplex = false
-dedicated_command_conns = 0
 "#;
     BrokerLimiter::new(&BrokerLimits::from_toml_str(raw).unwrap())
 }
@@ -653,7 +652,6 @@ PlaceStopOrder = ["one_order"]
 max_conns = 8
 max_subs_per_conn = 50
 supports_multiplex = false
-dedicated_command_conns = 0
 "#;
     BrokerLimiter::new(&BrokerLimits::from_toml_str(raw).unwrap())
 }

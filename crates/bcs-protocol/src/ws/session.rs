@@ -10,6 +10,7 @@ use crate::ws::models::WsOutgoing;
 use crate::ws::parser::parse_incoming;
 use futures_util::{SinkExt, StreamExt};
 use kanal::{AsyncReceiver, AsyncSender};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
@@ -36,6 +37,16 @@ const WS_HEALTHY_AFTER: Duration = Duration::from_secs(10);
 const WS_PONG_TIMEOUT: Duration = Duration::from_secs(60);
 /// The most subscribe commands one session keeps.
 const WS_MAX_SUBSCRIPTIONS: usize = 100;
+
+/// A command on its way from the caller to the session task.
+///
+/// `seq` is set for a subscribe command: it is the number the command has in the restore list. When the
+/// session connects, it sends the whole list, and a queued subscribe whose number it has just sent is
+/// dropped, so the broker gets every subscribe once.
+struct Queued {
+    seq: Option<u64>,
+    outgoing: WsOutgoing,
+}
 
 /// Options of a WebSocket session.
 ///
@@ -93,9 +104,8 @@ impl Default for WsOptions {
 ///   the session never waits for a slow reader. Size the channel for bursts and read it quickly.
 /// * It stops when your channel is closed (the receiver dropped) or when the session value is dropped.
 ///
-/// There is **no explicit close method**. Dropping the `WsSession` closes its command channel, and the
-/// background task ends as soon as it sees that. It looks at the command channel only while it is
-/// connected. A session that cannot connect keeps retrying after you drop it, until the runtime ends.
+/// There is **no explicit close method**. Dropping the `WsSession` stops its background task at once,
+/// also when the session is waiting for the next reconnect or has never been able to connect.
 ///
 /// The session never reports a lost link as an error value. Use [`WsSession::is_connected`] and, for
 /// an ordered signal, [`WsOptions::announce_connects`].
@@ -134,15 +144,24 @@ pub struct WsSession {
     /// The channel of this session.
     channel: BcsWsChannel,
     /// Queue of outgoing commands.
-    user_tx: AsyncSender<WsOutgoing>,
-    /// Subscriptions of this session, sent again after each reconnect.
-    subscriptions: Arc<RwLock<Vec<WsOutgoing>>>,
+    user_tx: AsyncSender<Queued>,
+    /// Subscriptions of this session with their numbers, sent again after each reconnect.
+    subscriptions: Arc<RwLock<Vec<(u64, WsOutgoing)>>>,
+    /// The number of the next subscribe command.
+    next_seq: AtomicU64,
     /// Set while the link is up.
     is_connected: Arc<AtomicBool>,
     /// Frames dropped because the downstream channel was full.
     dropped_events: Arc<AtomicU64>,
     /// Handle of the background task.
     _handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for WsSession {
+    /// Stops the background task, wherever it is: connected, waiting for a reconnect or never connected.
+    fn drop(&mut self) {
+        self._handle.abort();
+    }
 }
 
 impl WsSession {
@@ -194,9 +213,9 @@ impl WsSession {
         event_tx: AsyncSender<IncomingMessage>,
         options: WsOptions,
     ) -> Self {
-        let (user_tx, user_rx) = kanal::bounded_async::<WsOutgoing>(128);
+        let (user_tx, user_rx) = kanal::bounded_async::<Queued>(128);
         let user_rx = Arc::new(user_rx);
-        let subscriptions: Arc<RwLock<Vec<WsOutgoing>>> = Arc::new(RwLock::new(Vec::new()));
+        let subscriptions: Arc<RwLock<Vec<(u64, WsOutgoing)>>> = Arc::new(RwLock::new(Vec::new()));
 
         let is_connected = Arc::new(AtomicBool::new(false));
         let dropped_events = Arc::new(AtomicU64::new(0));
@@ -216,6 +235,7 @@ impl WsSession {
             channel,
             user_tx,
             subscriptions,
+            next_seq: AtomicU64::new(0),
             is_connected,
             dropped_events,
             _handle,
@@ -287,15 +307,14 @@ impl WsSession {
 
     /// Subscribes on the market data channel. The command is kept and sent again after each reconnect.
     ///
-    /// The command is put in the restore list first and then queued for sending. Two things to know:
+    /// The command is put in the restore list first and then queued for sending. Something to know:
     ///
     /// * The session counts **commands**: at most 100 per session. The broker's limit (broker docs) is
     ///   100 **instruments** per connection, so a command with many instruments can pass the local
     ///   check and still be refused by the broker (as an error frame, not as a return value).
-    /// * If you subscribe before the first connect, the command is both queued and in the restore list,
-    ///   so it can be sent twice. How the broker answers a repeated subscribe is not verified against
-    ///   the live API. Wait for [`WsSession::is_connected`] or the
-    ///   [`IncomingMessage::Reconnected`] marker first if that matters.
+    /// * If you subscribe before the first connect, the command waits in the restore list and goes out
+    ///   once, when the session connects. The same holds for a command given while the session is
+    ///   connecting.
     ///
     /// The answer of the broker (subscription confirmation, data, or an error frame) arrives in your
     /// event channel, not as the return value.
@@ -353,11 +372,15 @@ impl WsSession {
             });
         }
 
-        subs.push(WsOutgoing::Subscribe(sub.clone()));
+        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+        subs.push((seq, WsOutgoing::Subscribe(sub.clone())));
         drop(subs);
 
         self.user_tx
-            .send(WsOutgoing::Subscribe(sub))
+            .send(Queued {
+                seq: Some(seq),
+                outgoing: WsOutgoing::Subscribe(sub),
+            })
             .await
             .map_err(|e| BcsApiError::SubscriptionError {
                 message: format!("Failed to send subscription: {}", e),
@@ -414,11 +437,14 @@ impl WsSession {
 
         {
             let mut subs = self.subscriptions.write().await;
-            subs.retain(|s| s != &WsOutgoing::Subscribe(sub.clone()));
+            subs.retain(|(_, s)| s != &WsOutgoing::Subscribe(sub.clone()));
         }
 
         self.user_tx
-            .send(WsOutgoing::Unsubscribe(sub.into_unsubscribe()))
+            .send(Queued {
+                seq: None,
+                outgoing: WsOutgoing::Unsubscribe(sub.into_unsubscribe()),
+            })
             .await
             .map_err(|e| BcsApiError::SubscriptionError {
                 message: format!("Failed to send unsubscription: {}", e),
@@ -432,8 +458,8 @@ impl WsSession {
         http_client: BcsHttpClient,
         event_tx: AsyncSender<IncomingMessage>,
         options: WsOptions,
-        subscriptions: Arc<RwLock<Vec<WsOutgoing>>>,
-        user_rx: Arc<AsyncReceiver<WsOutgoing>>,
+        subscriptions: Arc<RwLock<Vec<(u64, WsOutgoing)>>>,
+        user_rx: Arc<AsyncReceiver<Queued>>,
         is_connected: Arc<AtomicBool>,
         dropped_events: Arc<AtomicU64>,
     ) {
@@ -489,16 +515,19 @@ impl WsSession {
                 break 'session;
             }
 
-            // 4. Восстановить подписки
+            // 4. Восстановить подписки. Номера отправленных запоминаем: такая же команда из очереди уже
+            // ушла, второй раз ее не шлем.
+            let mut restored: HashSet<u64> = HashSet::new();
             {
                 let subs = subscriptions.read().await;
-                for outgoing in subs.iter() {
+                for (seq, outgoing) in subs.iter() {
                     match serde_json::to_string(outgoing) {
                         Ok(json) => {
                             if write.send(Message::Text(json.into())).await.is_err() {
                                 error!("Failed to restore subscription for {:?}", channel);
                                 continue 'session;
                             }
+                            restored.insert(*seq);
                         }
                         Err(e) => {
                             error!("Failed to serialize subscription for {:?}: {}", channel, e);
@@ -591,10 +620,14 @@ impl WsSession {
                     // Исходящие сообщения от юзера (подписки и т.д.)
                     msg = user_rx.recv() => {
                         match msg {
-                            Ok(outgoing) => {
+                            Ok(Queued { seq, outgoing }) => {
                                 // Фильтрация: Subscribe/Unsubscribe только для MarketData
                                 if channel != BcsWsChannel::MarketData {
                                     warn!("WS {:?} ignoring subscribe message for non-MarketData channel", channel);
+                                    continue 'inner_session;
+                                }
+                                // Эта подписка уже ушла вместе со списком при подключении.
+                                if seq.is_some_and(|n| restored.remove(&n)) {
                                     continue 'inner_session;
                                 }
                                 match serde_json::to_string(&outgoing) {

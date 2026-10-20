@@ -44,7 +44,6 @@ burst = 10000
 max_conns = 8
 max_subs_per_conn = 50
 supports_multiplex = false
-dedicated_command_conns = 0
 "#;
     let limiter = BrokerLimiter::new(&BrokerLimits::from_toml_str(raw).unwrap());
     let (tx, rx) = mpsc::channel(256);

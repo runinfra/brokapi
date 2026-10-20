@@ -200,10 +200,9 @@ pub trait OrderBookSource: Send + Sync {
     ///
     /// # Errors
     ///
-    /// - [`Error::Transport`] when the broker could not be told, or (BCS, Finam) when `sub` is not an
-    ///   active subscription of this connector.
-    /// - [`Error::Rejected`] with code `unknown_subscription` for the same case on the T-Bank
-    ///   connector.
+    /// - [`Error::Rejected`] with code `unknown_subscription` when `sub` is not an active subscription
+    ///   of this connector: it was never given out, or it is already stopped. The same at all brokers.
+    /// - [`Error::Transport`] when the broker could not be told.
     ///
     /// # Examples
     ///
@@ -1071,9 +1070,10 @@ pub trait OrderExecutor: Send + Sync {
     /// # Errors
     ///
     /// - [`Error::RateLimited`], [`Error::Transport`]: wait or repeat later.
-    /// - A cid the broker does not know is reported by the BCS connector as [`Error::Transport`]
-    ///   (message `not found`), not as `Rejected`. After an [`Error::Unknown`] this can mean that the
-    ///   order never reached the broker. There is no separate variant for it.
+    /// - [`Error::Rejected`] with code `not_found` (T-Bank: `NOT_FOUND`, compare without regard to
+    ///   case) when the broker does not know the cid. The same at all brokers. After an
+    ///   [`Error::Unknown`] this can mean that the order never reached the broker, or has not reached
+    ///   it yet. There is no separate variant for it.
     ///
     /// # Examples
     ///

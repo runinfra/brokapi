@@ -77,21 +77,15 @@ pub struct ConnQuota {
     pub max_subs_per_conn: usize,
     /// Whether one connection can carry several subscriptions at once.
     pub supports_multiplex: bool,
-    /// Connections kept for trading commands only, so a flood of market data cannot delay an order.
-    /// Optional in a limits file, `0` when absent. Not read by the runtime.
-    #[serde(default)]
-    pub dedicated_command_conns: usize,
 }
 
 impl Default for ConnQuota {
-    /// Cautious values: 2 connections, 50 subscriptions per connection, no multiplexing, no
-    /// dedicated command connections.
+    /// Cautious values: 2 connections, 50 subscriptions per connection, no multiplexing.
     fn default() -> Self {
         Self {
             max_conns: 2,
             max_subs_per_conn: 50,
             supports_multiplex: false,
-            dedicated_command_conns: 0,
         }
     }
 }
@@ -152,8 +146,8 @@ impl BrokerLimits {
     /// below it: `[bcs.buckets.global]`, `[bcs.route]`, `[bcs.conns]`. A `per` value is an integer
     /// followed by `ms`, `s` or `m` (`"250ms"`, `"1s"`, `"1m"`). Fractions (`"1.5s"`), other
     /// units (`"1h"`) and spaces inside (`"1 s"`) are refused. `buckets` and `route` must be
-    /// present. `dedicated_command_conns` may be left out. Keys the parser does not know are
-    /// ignored, so a misspelled optional key is silently lost.
+    /// present. Keys the parser does not know are ignored (an older file with
+    /// `dedicated_command_conns` still reads), so a misspelled optional key is silently lost.
     ///
     /// Use [`from_toml_section`](Self::from_toml_section) for a file that holds several brokers.
     ///
@@ -182,7 +176,6 @@ impl BrokerLimits {
     /// "#;
     /// let limits = BrokerLimits::from_toml_str(raw)?;
     /// assert_eq!(limits.conns.max_conns, 4);
-    /// assert_eq!(limits.conns.dedicated_command_conns, 0);
     ///
     /// // An unsupported duration unit is a configuration error, not a silent default.
     /// let bad = raw.replace("\"1s\"", "\"1h\"");
@@ -693,6 +686,26 @@ mod tests {
         let limits = BrokerLimits::from_toml_str(raw).expect("parse");
         assert!(limits.buckets.contains_key("global"));
         assert!(limits.route.contains_key("PlaceOrder"));
+    }
+
+    #[test]
+    fn a_file_with_the_removed_key_still_reads() {
+        // `dedicated_command_conns` was in the files of older versions and was never read.
+        let raw = r#"
+[demo.buckets.global]
+rate = 100
+per = "1s"
+burst = 20
+[demo.route]
+"*" = ["global"]
+[demo.conns]
+max_conns = 4
+max_subs_per_conn = 50
+supports_multiplex = false
+dedicated_command_conns = 2
+"#;
+        let limits = BrokerLimits::from_toml_str(raw).expect("an old file reads");
+        assert_eq!(limits.conns.max_conns, 4);
     }
 
     #[test]
