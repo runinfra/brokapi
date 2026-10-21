@@ -152,8 +152,9 @@ where
 
 ## Т-Банк
 
-Количество у Т-Банка в **лотах**, цена за одну бумагу. Инструмент ищем через справочник: он отдает `uid`,
-которым пользуется брокер.
+Количество в **штуках**, как у любого брокера в библиотеке: у Т-Банка API считает лотами, но коннектор переводит сам, лот должен
+укладываться в заявку целое число раз (лот `SBER` 10, поэтому ниже заявка на одну бумагу была бы отказана `invalid_qty`).
+Цена за одну бумагу. Инструмент ищем через справочник: он отдает `uid`, которым пользуется брокер.
 
 ```rust
 use brokapi::core::{InstrumentQuery, InstrumentSource, ShutdownMode};
@@ -189,7 +190,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("SBER не найден")?
         .id;
 
-    trade_once(&md, &ud, sber, Qty::from(1), price, &mut events).await?;
+    // один лот SBER: 10 штук
+    trade_once(&md, &ud, sber, Qty::from(10), price, &mut events).await?;
 
     let stop = ShutdownMode::Graceful { deadline: Duration::from_secs(5) };
     ud.shutdown(stop).await;
@@ -245,7 +247,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Единицы количества у БКС (штуки или лоты) пока не подтверждены вживую: [страница БКС](../brokers/bcs.md).
+У БКС заявка идет в штуках (так в документации брокера, живьем не проверено): [страница БКС](../brokers/bcs.md). Лот инструмента передайте
+коннектору (`ud.price_grid().learn(&params)`), тогда некратное количество будет отказано до отправки.
 
 ## Финам
 

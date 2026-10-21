@@ -24,12 +24,15 @@ use chrono::{DateTime, Utc};
 
 /// The order quantity as the whole number of pieces the BCS order API takes.
 ///
-/// BCS counts an order in pieces. A fraction is rounded to the nearest whole piece (halves away from
-/// zero), as this connector always did.
+/// BCS counts an order in pieces (`orderQuantity`, "Количество в заявке (шт.)", an integer of at
+/// least 1), and so does [`Qty`](brokapi_core::Qty) everywhere in this library: the number is passed
+/// on as it is. A quantity that is not a whole number of pieces is refused, never rounded: a rounded
+/// order would buy something the caller did not ask for.
 ///
 /// # Errors
 ///
-/// [`brokapi_core::Error::Rejected`] with code `invalid_qty` for a quantity that does not fit in an `i64`.
+/// [`brokapi_core::Error::Rejected`] with code `invalid_qty` for a fraction, zero, a negative number or
+/// a number that does not fit in an `i64`.
 ///
 /// # Examples
 ///
@@ -38,17 +41,21 @@ use chrono::{DateTime, Utc};
 /// use brokapi_core::Qty;
 ///
 /// assert_eq!(whole_pieces(Qty::from(10))?, 10);
-/// assert_eq!(whole_pieces("2.5".parse()?)?, 3);
+/// assert_eq!(whole_pieces("10.0".parse()?)?, 10);
+/// // 2.5 is not rounded to 3: it is refused.
+/// assert!(whole_pieces("2.5".parse()?).is_err());
+/// assert!(whole_pieces("0.4".parse()?).is_err());
+/// assert!(whole_pieces(Qty::ZERO).is_err());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn whole_pieces(qty: brokapi_core::Qty) -> Result<i64, brokapi_core::Error> {
-    qty.round_to_step(brokapi_core::Qty::from(1), brokapi_core::RoundMode::Nearest)
-        .ok()
-        .and_then(brokapi_core::Qty::to_whole)
-        .ok_or_else(|| brokapi_core::Error::Rejected {
+    match qty.to_whole() {
+        Some(n) if n >= 1 => Ok(n),
+        _ => Err(brokapi_core::Error::Rejected {
             code: "invalid_qty".into(),
-            message: format!("quantity {qty} is not a number of pieces"),
-        })
+            message: format!("quantity {qty} is not a positive whole number of pieces"),
+        }),
+    }
 }
 
 /// Builds an [`InstrumentId`] from a BCS instrument key. The native id is

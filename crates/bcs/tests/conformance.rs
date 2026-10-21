@@ -143,7 +143,7 @@ async fn own_orders_events_active_replace_and_executions() {
         |cid| {
             let fill = server.fill(
                 &cid.hyphenated().to_string(),
-                brokapi_core::Qty::from(2),
+                brokapi_core::Qty::from(20),
                 Price::from(100),
             );
             async move {
@@ -152,5 +152,242 @@ async fn own_orders_events_active_replace_and_executions() {
         },
     )
     .await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+// ─── guarantees of the command path ───────────────────────────────────────────
+
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+
+/// A connector whose lot is known to the grid, on a mock with the given options.
+async fn ud_with(
+    opts: &Arc<MockOptions>,
+    request_timeout: Option<Duration>,
+) -> (MockServer, UserDataConnector, mpsc::Receiver<Envelope>) {
+    let server = MockServer::start(Arc::clone(opts)).await;
+    let (tx, rx) = mpsc::channel(256);
+    let mut cfg = BcsConfig::for_mock("mock-refresh-token", &server.http_base).with_write(true);
+    if let Some(t) = request_timeout {
+        cfg.request_timeout = t;
+    }
+    let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), limiter(), tx)
+        .await
+        .expect("ud start");
+    ud.price_grid()
+        .set_lot(sber().key, brokapi_core::Qty::from(conf::LOT));
+    (server, ud, rx)
+}
+
+#[tokio::test]
+async fn a_cid_is_placed_once() {
+    let (_server, ud, _rx) = ud_with(&Arc::default(), None).await;
+    conf::reconcile(&ud).await;
+    conf::duplicate_place(&ud, &sber(), Price::new(dec!(100.0))).await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn a_quantity_the_broker_cannot_take_is_refused_not_rounded() {
+    let opts = Arc::new(MockOptions::default());
+    let (_server, ud, _rx) = ud_with(&opts, None).await;
+    conf::reconcile(&ud).await;
+    conf::invalid_qty(&ud, &sber(), Price::new(dec!(100.0))).await;
+    // Only the one good order reached the broker (its place and its cancel): the four refusals sent nothing.
+    assert_eq!(opts.order_commands.load(Ordering::SeqCst), 2);
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn a_fraction_is_refused_even_when_the_lot_is_not_known() {
+    let (_server, ud, _rx) = ud_with(&Arc::default(), None).await;
+    ud.price_grid().set_lot(sber().key, brokapi_core::Qty::ZERO);
+    conf::reconcile(&ud).await;
+    let mut req = brokapi_core::PlaceOrderRequest {
+        cid: brokapi_core::ClientOrderId::new_v4(),
+        instrument: sber(),
+        side: brokapi_core::Side::Buy,
+        order_type: brokapi_core::OrderType::Limit,
+        qty: "0.4".parse().unwrap(),
+        price: Some(Price::new(dec!(100.0))),
+    };
+    use brokapi_core::OrderExecutor;
+    // 0.4 and 2.5 used to be rounded to 0 and 3 and sent. Now they are refused.
+    for q in ["0.4", "2.5"] {
+        req.qty = q.parse().unwrap();
+        assert!(
+            matches!(ud.place(req.clone()).await, Err(brokapi_core::Error::Rejected { ref code, .. }) if code == "invalid_qty"),
+            "{q}"
+        );
+    }
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn an_id_of_another_broker_is_a_config_error() {
+    let (_server, ud, _rx) = ud_with(&Arc::default(), None).await;
+    conf::reconcile(&ud).await;
+    let foreign = InstrumentId::new(
+        InstrumentKey::new("SBER", "MISX"),
+        NativeId::SymbolMic {
+            symbol: "SBER".into(),
+            mic: "MISX".into(),
+        },
+    );
+    conf::foreign_instrument_id(&ud, &foreign, Price::new(dec!(100.0))).await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn an_unknown_instrument_is_not_found() {
+    let server = MockServer::start(Arc::new(MockOptions::default())).await;
+    let (md, _rx) = md(&server).await;
+    let nope = InstrumentId::new(
+        InstrumentKey::new(brokapi_mocks::bcs::UNKNOWN_TICKER, "TQBR"),
+        NativeId::TickerClass {
+            ticker: brokapi_mocks::bcs::UNKNOWN_TICKER.into(),
+            class_code: "TQBR".into(),
+        },
+    );
+    conf::unknown_instrument(&md, &nope).await;
+    md.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn a_place_without_an_answer_is_unknown() {
+    let opts = Arc::new(MockOptions::default());
+    let (_server, ud, _rx) = ud_with(&opts, Some(Duration::from_millis(150))).await;
+    conf::reconcile(&ud).await;
+    opts.order_delay_ms.store(600, Ordering::SeqCst);
+    conf::place_without_answer_is_unknown(
+        &ud,
+        &sber(),
+        Price::new(dec!(100.0)),
+        |call| {
+            brokapi_mocks::time::elapse_when(
+                "the order reached the mock",
+                || opts.order_commands.load(Ordering::SeqCst) == 1,
+                Duration::from_millis(200),
+                call,
+            )
+        },
+        || async {
+            // The delay of the mock ends: it took the order after all.
+            brokapi_mocks::time::jump(Duration::from_millis(500)).await;
+            opts.order_delay_ms.store(0, Ordering::SeqCst);
+        },
+    )
+    .await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn a_cut_of_the_order_events_degrades_until_reconcile() {
+    let opts = Arc::new(MockOptions::default());
+    let (server, ud, mut rx) = ud_with(&opts, None).await;
+    conf::reconcile(&ud).await;
+    brokapi_mocks::time::wait_until("order events socket connected", || opts.event_sockets() > 0)
+        .await;
+    let before = opts.ws_connections();
+    conf::stream_cut_degrades_until_reconcile(
+        &ud,
+        &mut rx,
+        &sber(),
+        Price::new(dec!(100.0)),
+        || async {
+            server.cut_event_sockets();
+            // The connector pauses before it reopens the socket: move the clock until it has.
+            brokapi_mocks::time::jump_until("the socket is back", Duration::from_secs(1), || {
+                opts.ws_connections() > before
+            })
+            .await;
+        },
+    )
+    .await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn the_gate_is_checked_again_after_the_queue() {
+    let opts = Arc::new(MockOptions::default());
+    let (server, ud, mut rx) = ud_with(&opts, Some(Duration::from_secs(120))).await;
+    conf::reconcile(&ud).await;
+    brokapi_mocks::time::wait_until("order events socket connected", || opts.event_sockets() > 0)
+        .await;
+    // The first order is held for 20 s of the test clock: longer than the jumps that reopen the socket.
+    opts.order_delay_ms.store(20_000, Ordering::SeqCst);
+    let before = opts.ws_connections();
+    conf::gate_checked_after_the_queue(
+        &ud,
+        &mut rx,
+        &sber(),
+        Price::new(dec!(100.0)),
+        || async {
+            brokapi_mocks::time::wait_until("the first order is at the mock", || {
+                opts.order_commands.load(Ordering::SeqCst) == 1
+            })
+            .await;
+        },
+        || async {
+            server.cut_event_sockets();
+            brokapi_mocks::time::jump_until(
+                "the socket is back",
+                Duration::from_millis(600),
+                || opts.ws_connections() > before,
+            )
+            .await;
+        },
+        || async {
+            opts.order_delay_ms.store(0, Ordering::SeqCst);
+            brokapi_mocks::time::jump(Duration::from_secs(21)).await;
+        },
+    )
+    .await;
+    // Only the first order reached the mock: its place and its cancel. The queued one never went out.
+    assert_eq!(opts.order_commands.load(Ordering::SeqCst), 2);
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn the_order_book_is_resynced_after_a_cut() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (md, mut rx) = md(&server).await;
+    conf::order_book_resync(&md, &mut rx, &sber(), || {
+        opts.disconnect_after_data_frames.store(1, Ordering::SeqCst);
+    })
+    .await;
+    md.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn the_history_of_trades_is_read_to_the_last_page() {
+    let opts = Arc::new(MockOptions::default());
+    let (server, ud, _rx) = ud_with(&opts, None).await;
+    server.add_history_trades(250, Price::new(dec!(100.0)), brokapi_core::Qty::from(10));
+    conf::executions_history_is_complete(&ud, 250).await;
+    // Pages of 100, three of them, each against the quota.
+    let asked = opts.trades_asked.lock().unwrap().clone();
+    assert_eq!(
+        asked,
+        vec![
+            (Some(0), Some(100)),
+            (Some(1), Some(100)),
+            (Some(2), Some(100))
+        ]
+    );
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn a_history_that_reaches_the_cap_of_the_list_is_an_error_not_a_silent_cut() {
+    let (server, ud, _rx) = ud_with(&Arc::default(), None).await;
+    server.add_history_trades(1200, Price::new(dec!(100.0)), brokapi_core::Qty::from(10));
+    use brokapi_core::ExecutionSource;
+    let range = TimeRange::new(UnixNanos::ZERO, UnixNanos::from_nanos(i64::MAX / 2));
+    match ud.executions(range).await {
+        Err(brokapi_core::Error::Rejected { code, .. }) => assert_eq!(code, "range_too_long"),
+        other => panic!("{other:?}"),
+    }
     ud.shutdown(ShutdownMode::Immediate).await;
 }

@@ -122,11 +122,22 @@ impl MarketDataConfig {
 }
 
 impl UserDataConfig {
+    /// Options of the order events session: it announces every connect, so the core sees a lost
+    /// connection ([`brokapi_core::Event::Reconnected`]). The portfolio session does not (every message of
+    /// it is a whole state).
     pub(crate) fn ws_options(&self) -> WsOptions {
         WsOptions {
-            announce_connects: false,
+            announce_connects: true,
             reconnect_min: self.reconnect_min,
             reconnect_max: self.reconnect_max,
+        }
+    }
+
+    /// Options of the portfolio session: no announcements.
+    pub(crate) fn portfolio_ws_options(&self) -> WsOptions {
+        WsOptions {
+            announce_connects: false,
+            ..self.ws_options()
         }
     }
 }

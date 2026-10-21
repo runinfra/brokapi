@@ -21,7 +21,7 @@ use brokapi_core::{
     Error, InstrumentId, InstrumentKey, Money, NativeId, Price, Qty, Timestamps, UnixNanos,
 };
 use brokapi_tbank_protocol::money::{decimal_to_quotation, money_to_decimal, quotation_to_decimal};
-use brokapi_tbank_protocol::v1::{MoneyValue, Quotation};
+use brokapi_tbank_protocol::v1::{self as pb, MoneyValue, Quotation};
 use prost_types::Timestamp;
 
 /// Value for the `instrument_id` request fields: `figi`, `instrument_uid` or `ticker_classcode`.
@@ -255,34 +255,60 @@ pub fn price_to_quotation(price: Price) -> Result<Quotation, Error> {
     })
 }
 
-/// Checks that a quantity is a whole number of lots, at least 1, and returns it as `i64`.
-///
-/// T-Bank orders are sized in lots, never in pieces or fractions. The check runs before any quota
-/// is spent and before anything is sent.
+/// Refuses an [`InstrumentId`] whose [`NativeId`] is of another broker's kind (`SymbolMic` is the Finam
+/// form), before anything is sent.
 ///
 /// # Errors
 ///
-/// [`Error::Rejected`] with code `invalid_qty` when the value is below 1 or has a fractional part.
+/// [`Error::Config`]: T-Bank takes a uid, a figi, or a ticker with a class code.
 ///
 /// # Examples
 ///
 /// ```
-/// use brokapi_core::{Error, Qty};
-/// use brokapi_tbank::ids::require_whole_lots;
+/// use brokapi_core::{Error, InstrumentId, InstrumentKey, NativeId};
+/// use brokapi_tbank::ids::require_native;
 ///
-/// assert_eq!(require_whole_lots(Qty::from(3)).unwrap(), 3);
-/// assert!(matches!(require_whole_lots("1.5".parse()?), Err(Error::Rejected { .. })));
-/// assert!(require_whole_lots(Qty::ZERO).is_err());
-/// # Ok::<(), brokapi_core::NumberError>(())
+/// let finam = InstrumentId::new(
+///     InstrumentKey::new("SBER", "MISX"),
+///     NativeId::SymbolMic { symbol: "SBER".into(), mic: "MISX".into() },
+/// );
+/// assert!(matches!(require_native(&finam), Err(Error::Config(_))));
 /// ```
-/// # use brokapi_core::{Qty};
-pub fn require_whole_lots(qty: Qty) -> Result<i64, Error> {
-    match qty.to_whole() {
-        Some(n) if n >= 1 => Ok(n),
-        _ => Err(Error::Rejected {
-            code: "invalid_qty".into(),
-            message: format!("quantity must be a whole number of lots >= 1, got {qty}"),
-        }),
+pub fn require_native(id: &InstrumentId) -> Result<(), Error> {
+    match id.native {
+        NativeId::SymbolMic { .. } => {
+            Err(Error::Config(brokapi_core::ConfigError::Message(format!(
+                "instrument {} has an id of another broker (symbol and mic): T-Bank takes a uid, a figi, or a ticker with a class code",
+                id.key.display()
+            ))))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The directory request for an [`InstrumentId`]: by uid, figi, or ticker with class code.
+pub fn instrument_request(id: &InstrumentId) -> pb::InstrumentRequest {
+    match &id.native {
+        NativeId::Uid(u) => pb::InstrumentRequest {
+            id_type: pb::InstrumentIdType::Uid as i32,
+            id: u.clone(),
+            class_code: None,
+        },
+        NativeId::Figi(f) => pb::InstrumentRequest {
+            id_type: pb::InstrumentIdType::Figi as i32,
+            id: f.clone(),
+            class_code: None,
+        },
+        NativeId::TickerClass { ticker, class_code } => pb::InstrumentRequest {
+            id_type: pb::InstrumentIdType::Ticker as i32,
+            id: ticker.clone(),
+            class_code: Some(class_code.clone()),
+        },
+        NativeId::SymbolMic { symbol, mic } => pb::InstrumentRequest {
+            id_type: pb::InstrumentIdType::Ticker as i32,
+            id: symbol.clone(),
+            class_code: Some(mic.clone()),
+        },
     }
 }
 
@@ -324,10 +350,52 @@ mod tests {
     }
 
     #[test]
-    fn whole_lots_only() {
-        assert_eq!(require_whole_lots(Qty::from(3)).unwrap(), 3);
-        assert!(require_whole_lots(Qty::ZERO).is_err());
-        assert!(require_whole_lots(Qty::from_scaled(15, 1)).is_err());
+    fn an_id_of_another_broker_is_a_config_error_before_the_network() {
+        assert!(require_native(&sber_uid()).is_ok());
+        let finam = InstrumentId::new(
+            InstrumentKey::new("SBER", "MISX"),
+            NativeId::SymbolMic {
+                symbol: "SBER".into(),
+                mic: "MISX".into(),
+            },
+        );
+        assert!(matches!(require_native(&finam), Err(Error::Config(_))));
+    }
+
+    #[test]
+    fn instrument_requests_per_native_form() {
+        assert_eq!(
+            instrument_request(&sber_uid()).id_type,
+            pb::InstrumentIdType::Uid as i32
+        );
+        let f = InstrumentId::new(InstrumentKey::new("S", "T"), NativeId::Figi("F".into()));
+        assert_eq!(
+            instrument_request(&f).id_type,
+            pb::InstrumentIdType::Figi as i32
+        );
+        let tc = InstrumentId::new(
+            InstrumentKey::new("SBER", "TQBR"),
+            NativeId::TickerClass {
+                ticker: "SBER".into(),
+                class_code: "TQBR".into(),
+            },
+        );
+        let r = instrument_request(&tc);
+        assert_eq!(
+            (r.id.as_str(), r.class_code.as_deref()),
+            ("SBER", Some("TQBR"))
+        );
+        let sm = InstrumentId::new(
+            InstrumentKey::new("SBER", "TQBR"),
+            NativeId::SymbolMic {
+                symbol: "SBER".into(),
+                mic: "TQBR".into(),
+            },
+        );
+        assert_eq!(
+            instrument_request(&sm).id_type,
+            pb::InstrumentIdType::Ticker as i32
+        );
     }
 
     #[test]

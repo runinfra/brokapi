@@ -198,9 +198,10 @@ pub struct Instrument {
 pub struct TradingParams {
     /// The instrument the numbers are for.
     pub instrument: InstrumentId,
-    /// Units of the instrument in one lot.
+    /// Units of the instrument in one lot (shares in a lot of shares, contracts in a lot of futures,
+    /// which is 1). An order quantity is a multiple of it, see [`Qty`].
     pub lot_size: Qty,
-    /// Smallest order quantity. The BCS connector sets it equal to `lot_size`.
+    /// Smallest order quantity, in units. Every connector sets it to one lot, so it equals `lot_size`.
     pub min_qty: Qty,
     /// Smallest price move. A price must be a multiple of it.
     pub price_step: Price,

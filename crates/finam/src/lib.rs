@@ -20,7 +20,7 @@
 //!   `Error::Unknown`, because a repeat could create a second order. Ask the order state or call
 //!   `reconcile` to learn what happened.
 //! - **A rejected order is a final answer.** `Error::Rejected` means the broker did not take the order.
-//! - **Quantity is in pieces**, as everywhere in the Finam API, not in lots.
+//! - **Quantity is in pieces** (units of the instrument), as everywhere in the Finam API and in this library, not in lots.
 //! - **Instruments are `SYMBOL@MIC`** (for example `SBER@MISX`), carried as `NativeId::SymbolMic`.
 //!
 //! Finam has no sandbox. The examples in this documentation run against an in-process imitation of the

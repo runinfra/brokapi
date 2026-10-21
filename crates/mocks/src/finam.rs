@@ -89,6 +89,8 @@ pub struct MockOptions {
     pub trade_lot_size: std::sync::atomic::AtomicI64,
     /// `GetAssetParams` fails with this code.
     pub params_error: Mutex<Option<Code>>,
+    /// `Trades` answers the newest trades first (the order is not documented, so both are possible).
+    pub trades_newest_first: std::sync::atomic::AtomicBool,
     /// Every `Bars`, `Trades` and `Transactions` request seen: (method, interval start seconds, interval end
     /// seconds), `None` for a missing bound. For checking that the end of the period is always sent.
     pub intervals: Mutex<Vec<SeenInterval>>,
@@ -142,6 +144,8 @@ pub struct MockState {
     pub book_opens: AtomicU32,
     pub auth_calls: AtomicU32,
     pub order_stream_opens: AtomicU32,
+    /// Counts the cuts of the user streams (orders and trades): every such stream task ends when it changes.
+    cut: tokio::sync::watch::Sender<u64>,
     /// Stream request metadata seen (token used per call).
     tokens_seen: Mutex<Vec<String>>,
 }
@@ -196,8 +200,15 @@ impl MockState {
             book_opens: AtomicU32::new(0),
             auth_calls: AtomicU32::new(0),
             order_stream_opens: AtomicU32::new(0),
+            cut: tokio::sync::watch::channel(0).0,
             tokens_seen: Mutex::default(),
         })
+    }
+
+    /// Ends every open orders and trades stream from the broker side: the link breaks. The connector sees
+    /// the end of the stream and opens it again (`order_stream_opens` grows).
+    pub fn cut_user_streams(&self) {
+        self.cut.send_modify(|n| *n += 1);
     }
 
     /// Method names called so far, e.g. `PlaceOrder:ACC1`.
@@ -452,9 +463,41 @@ impl AccountsService for Mock {
         self.0.check_auth(&req)?;
         let r = req.into_inner();
         self.0.note_interval("Trades", r.interval.as_ref());
-        let id = r.account_id;
+        let id = r.account_id.clone();
         self.0.record(format!("Trades:{id}"));
-        let trades = self.0.account(&id, |a| a.trades.clone())?;
+        let mut trades = self.0.account(&id, |a| a.trades.clone())?;
+        // Like the broker: only the trades of the period asked, oldest first, at most `limit` of them.
+        let secs = |t: &prost_types::Timestamp| {
+            i128::from(t.seconds) * 1_000_000_000 + i128::from(t.nanos)
+        };
+        if let Some(iv) = &r.interval {
+            let (from, to) = (
+                iv.start_time.as_ref().map(secs),
+                iv.end_time.as_ref().map(secs),
+            );
+            // A trade the test pushed without a time is always in the period.
+            trades.retain(|t| {
+                t.timestamp
+                    .as_ref()
+                    .map(secs)
+                    .is_none_or(|at| from.is_none_or(|f| at >= f) && to.is_none_or(|e| at < e))
+            });
+        }
+        trades.sort_by(|a, b| {
+            let key = |t: &v1::AccountTrade| t.timestamp.as_ref().map(|t| (t.seconds, t.nanos));
+            key(a).cmp(&key(b))
+        });
+        if self
+            .0
+            .options
+            .trades_newest_first
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            trades.reverse();
+        }
+        if r.limit > 0 {
+            trades.truncate(r.limit as usize);
+        }
         Ok(Response::new(pa::TradesResponse { trades }))
     }
 
@@ -632,9 +675,17 @@ impl OrdersService for Mock {
         self.0.record(format!("SubscribeOrders:{id}"));
         self.0.order_stream_opens.fetch_add(1, Ordering::SeqCst);
         let mut rx = self.0.account(&id, |a| a.orders_tx.subscribe())?;
+        let mut cut = self.0.cut.subscribe();
         let (tx, out) = mpsc::channel(16);
         tokio::spawn(async move {
-            while let Ok(os) = rx.recv().await {
+            loop {
+                let os = tokio::select! {
+                    os = rx.recv() => match os {
+                        Ok(os) => os,
+                        Err(_) => return,
+                    },
+                    _ = cut.changed() => return,
+                };
                 if tx
                     .send(Ok(po::SubscribeOrdersResponse { orders: vec![os] }))
                     .await
@@ -657,9 +708,17 @@ impl OrdersService for Mock {
         let id = req.into_inner().account_id;
         self.0.record(format!("SubscribeTrades:{id}"));
         let mut rx = self.0.account(&id, |a| a.trades_tx.subscribe())?;
+        let mut cut = self.0.cut.subscribe();
         let (tx, out) = mpsc::channel(16);
         tokio::spawn(async move {
-            while let Ok(t) = rx.recv().await {
+            loop {
+                let t = tokio::select! {
+                    t = rx.recv() => match t {
+                        Ok(t) => t,
+                        Err(_) => return,
+                    },
+                    _ = cut.changed() => return,
+                };
                 if tx
                     .send(Ok(po::SubscribeTradesResponse { trades: vec![t] }))
                     .await
@@ -878,6 +937,10 @@ impl MarketDataService for Mock {
         let s = req.into_inner().symbol;
         self.0.record(format!("OrderBook:{s}"));
         self.0.denied(&s)?;
+        // A symbol no mock knows is "not found", as the broker answers.
+        if s.starts_with("NOPE@") {
+            return Err(Status::not_found("unknown instrument"));
+        }
         Ok(Response::new(pm::OrderBookResponse {
             symbol: s,
             orderbook: Some(rest_book()),

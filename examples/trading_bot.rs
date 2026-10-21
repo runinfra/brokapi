@@ -369,7 +369,7 @@ where
                     return Ok(());
                 }
                 // "Not found" right after a cut is not final: the request may still be on its way.
-                Err(Error::Rejected { code, .. }) if code.eq_ignore_ascii_case("not_found") => {}
+                Err(e) if e.is_not_found() => {}
                 Err(Error::RateLimited { .. } | Error::Transport(_)) => {}
                 Err(other) => return Err(other),
             }

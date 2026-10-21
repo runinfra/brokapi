@@ -46,6 +46,7 @@ __all__ = [
     "OrderStateKind",
     "OrderType",
     "Overflow",
+    "Reconnected",
     "PlaceIdempotency",
     "Portfolio",
     "Position",
@@ -573,12 +574,28 @@ class Overflow:
 
 
 @dataclass(frozen=True, slots=True)
+class Reconnected:
+    """The stream of your orders or of your fills was cut and opened again: events of the gap never reached you.
+
+    ``sub`` is the subscription whose stream was cut (one event for the order state subscription and one for the
+    executions subscription). ``gap_from`` is when the connector noticed the cut: the hole starts at or before it.
+
+    Trading is closed (:class:`~brokapi.Degraded`) until you read the stream to the end, read the state from the broker
+    (``active_orders``, ``order_state``, ``executions`` from a little before ``gap_from``) and call ``reconcile``.
+    """
+
+    sub: int
+    gap_from: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class UnknownEvent:
     """An event of a kind this version of the Python package does not know (the core is newer than the package).
 
     The stream does not break on it: ``kind`` is the name the core gave it and ``data`` its content as it came
-    (JSON values, money as text). Update the package to get a typed class. An event about the reconnect of an order
-    stream, when the core has one, means: call ``reconcile`` before trading further.
+    (JSON values, money as text). Update the package to get a typed class. An event of a kind you do not know may be
+    about the loss of data (the way :class:`Overflow` and :class:`Reconnected` are): when in doubt, ``reconcile`` before
+    trading further.
     """
 
     kind: str
@@ -598,6 +615,7 @@ Event = Union[
     BalancesUpdate,
     Resync,
     Overflow,
+    Reconnected,
     UnknownEvent,
 ]
 """What an :class:`Envelope` carries."""
@@ -620,6 +638,7 @@ def _decode_event(value: dict[str, Any]) -> Event:
         "Portfolio": Portfolio,
         "Resync": Resync,
         "Overflow": Overflow,
+        "Reconnected": Reconnected,
     }
     if variant not in known:
         return UnknownEvent(variant, body)

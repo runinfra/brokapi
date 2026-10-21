@@ -36,7 +36,7 @@ pub async fn resolve_unknown<U: OrderExecutor>(
         match ud.order_state(cid).await {
             Ok(order) => return Ok(Some(order)),
             // "Not found" right after a cut is not final: the request may still be on its way.
-            Err(Error::Rejected { code, .. }) if code.eq_ignore_ascii_case("not_found") => {}
+            Err(e) if e.is_not_found() => {}
             // A limit or a network error says nothing about the order: wait and ask again.
             Err(Error::RateLimited { .. } | Error::Transport(_)) => {}
             Err(other) => return Err(other),
@@ -106,7 +106,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         instrument: sber,
         side: Side::Buy,
         order_type: OrderType::Limit,
-        qty: Qty::from(1),
+        qty: Qty::from(10),
         price: Some(Price::from(250)),
     };
     match ud.place(request).await {

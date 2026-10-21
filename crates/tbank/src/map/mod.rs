@@ -1,9 +1,11 @@
 //! T-Bank protocol messages -> `brokapi-core` domain types.
 //!
 //! Units. T-Bank counts orders, order book levels, trades and candle volumes in LOTS and prices per
-//! one instrument (not per lot), so `Qty` of those types is lots. Portfolio positions are reported
-//! in pieces (`Quotation`), and `Position::qty` keeps that. `Timeframe::MN` is 30 days when a candle
-//! close time has to be derived.
+//! one instrument (not per lot). The library counts in units of the instrument, so the functions here
+//! that read a quantity in lots take the lot size and return units (`OrderParts::with_lot`, the `lot`
+//! argument of `stop::snapshot`), and the connectors scale the market data (`crate::lots`). Own trades
+//! (`OrderTrade.quantity`, the history) and portfolio positions (`Quotation`) are in pieces already,
+//! and are kept as they are. `Timeframe::MN` is 30 days when a candle close time has to be derived.
 //!
 //! Every function here is pure: it takes broker messages and returns domain types, with no network
 //! and no state. That makes them cheap to test and safe to call from anywhere. The connectors use

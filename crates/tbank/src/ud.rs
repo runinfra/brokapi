@@ -10,16 +10,16 @@ use std::time::Duration;
 use async_trait::async_trait;
 use brokapi_core::{
     Backpressure, Balance, BrokerOrderId, ClientOrderId, Envelope, Error, Execution,
-    ExecutionSource, OrderAck, OrderExecutor, OrderSnapshot, OrderType, PlaceIdempotency,
-    PlaceOrderRequest, PlaceStopOrderRequest, Portfolio, PortfolioSource, Position, Qty,
-    ReconcileReport, ReplaceOrderRequest, RoundMode, ShutdownMode, ShutdownReport,
+    ExecutionSource, InstrumentId, OrderAck, OrderExecutor, OrderSnapshot, OrderType,
+    PlaceIdempotency, PlaceOrderRequest, PlaceStopOrderRequest, Portfolio, PortfolioSource,
+    Position, ReconcileReport, ReplaceOrderRequest, ShutdownMode, ShutdownReport,
     StopOrderExecutor, StopOrderRef, StopOrderSnapshot, SubscribeOpts, SubscriptionId, TimeRange,
     UserDataCaps,
 };
 use brokapi_runtime::{
     BrokerLimiter, CommandGate, InstrumentLocks, PriceGrid, ShutdownController, reconcile_ledger,
 };
-use brokapi_sansio::{BrokerCore, EventSink};
+use brokapi_sansio::{BrokerCore, CoreEvent, EventSink};
 use brokapi_tbank_protocol::TbankClient;
 use brokapi_tbank_protocol::v1 as pb;
 use tokio::sync::{mpsc, oneshot};
@@ -31,7 +31,11 @@ use crate::config::{UD_MAX_PING, UserDataConfig, effective_ping, silence_limit};
 use crate::core::ud::{StreamKind, UdCore, UdFrame, UdSubKind};
 use crate::emit::Emitter;
 use crate::error::{STOP_ORDERS_RESPONSE_LIMIT, config, is_not_found, map_status, transport};
-use crate::ids::{instrument_ref, nanos_to_proto, price_to_quotation, require_whole_lots, stamps};
+use crate::ids::{
+    id_from_parts, instrument_ref, instrument_request, nanos_to_proto, price_to_quotation,
+    require_native, stamps,
+};
+use crate::lots::{LotBook, pieces_to_lots};
 use crate::map::{execution, order as map_order, portfolio as map_portfolio, stop as map_stop};
 use crate::raw::TbankRaw;
 use crate::stream::{LastError, supervise};
@@ -102,6 +106,8 @@ struct Shared {
     emitter: Arc<Emitter>,
     account: String,
     core: Mutex<UdCore>,
+    /// Lot sizes: the same book the core reads (the messages count in lots, the events in units).
+    lots: Arc<LotBook>,
     /// Commands on one instrument go one at a time, in arrival order.
     locks: InstrumentLocks,
     price_grid: PriceGrid,
@@ -185,6 +191,89 @@ impl Shared {
         });
     }
 
+    /// The lot size of an instrument: from the book, else one `GetInstrumentBy`, remembered.
+    async fn lot_of(&self, id: &InstrumentId) -> Result<i64, Error> {
+        require_native(id)?;
+        if let Some(lot) = self.lots.get(id) {
+            return Ok(lot);
+        }
+        self.limiter
+            .acquire("GetInstrumentBy", brokapi_runtime::now())?;
+        let mut c = self.client.instruments();
+        let r = query(
+            self.request_timeout,
+            c.get_instrument_by(instrument_request(id)),
+        )
+        .await?;
+        let i = r.instrument.ok_or_else(|| {
+            Error::not_found(format!("instrument {} not found", id.key.display()))
+        })?;
+        self.lots.put_instrument(id, &i);
+        Ok(i64::from(i.lot).max(1))
+    }
+
+    /// Learns the lot size of the instruments a frame is about, before the sans-io core reads it.
+    async fn prefetch_lots(&self, frame: &UdFrame) -> Result<(), Error> {
+        use pb::order_state_stream_response::Payload;
+        let mut wanted: Vec<InstrumentId> = Vec::new();
+        match frame {
+            UdFrame::OrderState(r) => {
+                if let Some(Payload::OrderState(o)) = &r.payload
+                    && o.lot_size <= 0
+                {
+                    wanted.push(id_from_parts(
+                        &o.instrument_uid,
+                        "",
+                        &o.ticker,
+                        &o.class_code,
+                    ));
+                }
+            }
+            UdFrame::ActiveOrders(r) => {
+                for o in &r.orders {
+                    wanted.push(id_from_parts(
+                        &o.instrument_uid,
+                        &o.figi,
+                        &o.ticker,
+                        &o.class_code,
+                    ));
+                }
+            }
+            _ => {}
+        }
+        for id in wanted {
+            let known = match &id.native {
+                brokapi_core::NativeId::Uid(u) => {
+                    self.lots.get_parts(u, "", &id.key.symbol, &id.key.mic)
+                }
+                _ => self.lots.get(&id),
+            };
+            if known.is_none() {
+                self.lot_of(&id).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A frame could not be processed (its lot size is unknown): the order events in it are lost.
+    /// Say so as an overflow does: the gate closes until `reconcile`.
+    fn frame_lost(&self, frame: &UdFrame) {
+        let kind = match frame {
+            UdFrame::OrderState(_) | UdFrame::ActiveOrders(_) => UdSubKind::OrderState,
+            _ => return,
+        };
+        self.emitter.mark_degraded();
+        if let Some(sub) = self.core.lock().expect("ud core poisoned").sub(kind) {
+            self.emitter.emit(vec![CoreEvent {
+                sub: Some(sub),
+                payload: brokapi_core::Event::Overflow {
+                    sub,
+                    lost_from: crate::ids::wall_nanos(),
+                },
+            }]);
+        }
+    }
+
     async fn pump(self: Arc<Self>, mut rx: mpsc::Receiver<UdFrame>) {
         loop {
             let backlog = self.emitter.has_backlog();
@@ -192,6 +281,11 @@ impl Shared {
                 _ = self.cancel.cancelled() => return,
                 frame = rx.recv() => {
                     let Some(frame) = frame else { return };
+                    if let Err(e) = self.prefetch_lots(&frame).await {
+                        warn!(error = %e, "lot size of an instrument is not known: order events lost");
+                        self.frame_lost(&frame);
+                        continue;
+                    }
                     self.with_core(|c, s| c.on_frame(frame, brokapi_runtime::now(), s));
                 }
                 _ = tokio::time::sleep(Duration::from_millis(20)), if backlog => {
@@ -334,7 +428,9 @@ impl Shared {
 ///   [`order_state`](OrderExecutor::order_state), and use a NEW `cid` for a new attempt.
 /// - **One account.** Messages for another account are dropped. For several accounts of one token
 ///   start one connector per account and share ONE rate limiter between them.
-/// - **Lots.** Order quantities are whole lots. T-Bank prices are per one instrument.
+/// - **Units, not lots.** Quantities are in units of the instrument (shares, bonds), as at every broker. T-Bank counts
+///   in lots: the connector converts both ways with the lot size of the instrument (read once, from the directory). An
+///   order that is not a whole number of lots is refused with `invalid_qty` before it is sent. Prices are per one instrument.
 ///
 /// # Examples
 ///
@@ -368,7 +464,7 @@ impl Shared {
 ///     instrument: sber.clone(),
 ///     side: Side::Buy,
 ///     order_type: OrderType::Limit,
-///     qty: Qty::from(1), // one lot
+///     qty: Qty::from(10), // one lot of SBER: 10 shares
 ///     price: Some(price),
 /// };
 ///
@@ -506,11 +602,14 @@ impl UserDataConnector {
         let (frames, rx) = mpsc::channel(1024);
         let ctl = ShutdownController::new(CommandGate::new());
         let cancel = ctl.child_token();
+        let core = UdCore::new(account.clone());
+        let lots = Arc::clone(core.lots());
         let inner = Arc::new(Shared {
             client,
             limiter,
             emitter: Emitter::new(cfg.source, out),
-            core: Mutex::new(UdCore::new(account.clone())),
+            core: Mutex::new(core),
+            lots,
             locks: InstrumentLocks::new(),
             price_grid: cfg.price_grid.clone(),
             stops: Mutex::new(StopBook::default()),
@@ -887,6 +986,42 @@ impl UserDataConnector {
         self.inner.with_core(f)
     }
 
+    async fn lot_of(&self, id: &InstrumentId) -> Result<i64, Error> {
+        self.inner.lot_of(id).await
+    }
+
+    /// The lot size of an instrument named by the fields of a message.
+    async fn lot_of_parts(
+        &self,
+        uid: &str,
+        figi: &str,
+        ticker: &str,
+        class_code: &str,
+    ) -> Result<i64, Error> {
+        match self.inner.lots.get_parts(uid, figi, ticker, class_code) {
+            Some(lot) => Ok(lot),
+            None => {
+                self.lot_of(&id_from_parts(uid, figi, ticker, class_code))
+                    .await
+            }
+        }
+    }
+
+    /// Parts of an order message with the lot size of its instrument (one directory read the first time).
+    async fn parts_of(&self, o: &pb::OrderState) -> Result<map_order::OrderParts, Error> {
+        let id = id_from_parts(&o.instrument_uid, &o.figi, &o.ticker, &o.class_code);
+        let lot =
+            match self
+                .inner
+                .lots
+                .get_parts(&o.instrument_uid, &o.figi, &o.ticker, &o.class_code)
+            {
+                Some(lot) => lot,
+                None => self.lot_of(&id).await?,
+            };
+        Ok(map_order::parts_from_state(o).with_lot(lot))
+    }
+
     async fn get_state(&self, order_id: String, by_request: bool) -> Result<pb::OrderState, Error> {
         self.acquire("GetOrderState")?;
         let req = pb::GetOrderStateRequest {
@@ -902,10 +1037,9 @@ impl UserDataConnector {
         let mut c = self.inner.client.orders();
         match tokio::time::timeout(self.inner.request_timeout, c.get_order_state(req)).await {
             Ok(Ok(r)) => Ok(r.into_inner()),
-            Ok(Err(s)) if is_not_found(&s) => Err(Error::Rejected {
-                code: "NOT_FOUND".into(),
-                message: "the broker does not know this order".into(),
-            }),
+            Ok(Err(s)) if is_not_found(&s) => {
+                Err(Error::not_found("the broker does not know this order"))
+            }
             Ok(Err(s)) => Err(map_status(&s)),
             Err(_) => Err(transport("request timed out")),
         }
@@ -920,13 +1054,16 @@ impl UserDataConnector {
         let mut c = self.inner.client.orders();
         let r = query(self.inner.request_timeout, c.get_orders(req)).await?;
         let now = brokapi_runtime::now();
+        let mut all = Vec::with_capacity(r.orders.len());
+        for o in &r.orders {
+            all.push(self.parts_of(o).await?);
+        }
         let mut core = self.inner.core.lock().expect("ud core poisoned");
-        Ok(r.orders
+        Ok(all
             .iter()
-            .map(|o| {
-                let parts = map_order::parts_from_state(o);
-                core.note_order(&parts);
-                map_order::snapshot(&parts, now)
+            .map(|parts| {
+                core.note_order(parts);
+                map_order::snapshot(parts, now)
             })
             .collect())
     }
@@ -971,7 +1108,7 @@ impl OrderExecutor for UserDataConnector {
     /// - [`Error::NotReconciled`] before the first successful [`reconcile`](Self::reconcile),
     ///   [`Error::Degraded`] after an event buffer overflow, [`Error::ShuttingDown`] during
     ///   shutdown. Nothing was sent.
-    /// - [`Error::Rejected`] with code `invalid_qty` (not a whole number of lots), `missing_price`
+    /// - [`Error::Rejected`] with code `invalid_qty` (zero, a fraction, or not a whole number of lots), `missing_price`
     ///   (limit order without a positive price) or `duplicate_place` (this `cid` was placed before).
     ///   Nothing was sent.
     /// - [`Error::Rejected`] when the broker refuses. The code is the gRPC status name (for example
@@ -1019,11 +1156,11 @@ impl OrderExecutor for UserDataConnector {
     ///
     /// // The normal path.
     /// let cid = ClientOrderId::new_v4();
-    /// let ack = ud.place(order(cid, Qty::from(1), Price::from(250))).await?;
+    /// let ack = ud.place(order(cid, Qty::from(10), Price::from(250))).await?;
     /// assert_eq!(ack.cid, cid);
     ///
     /// // The same cid again is refused locally, nothing is sent.
-    /// match ud.place(order(cid, Qty::from(1), Price::from(250))).await {
+    /// match ud.place(order(cid, Qty::from(10), Price::from(250))).await {
     ///     Err(Error::Rejected { code, .. }) => assert_eq!(code, "duplicate_place"),
     ///     other => panic!("expected duplicate_place, got {other:?}"),
     /// }
@@ -1033,7 +1170,7 @@ impl OrderExecutor for UserDataConnector {
     /// assert!(matches!(half, Err(Error::Rejected { .. })));
     ///
     /// // The broker refuses a price (in the mock: 13.37). That is `Rejected`: it did nothing.
-    /// let refused = ud.place(order(ClientOrderId::new_v4(), Qty::from(1), refused_price)).await;
+    /// let refused = ud.place(order(ClientOrderId::new_v4(), Qty::from(10), refused_price)).await;
     /// assert!(matches!(refused, Err(Error::Rejected { .. })));
     /// # ud.shutdown(ShutdownMode::Immediate).await;
     /// # Ok(())
@@ -1078,7 +1215,7 @@ impl OrderExecutor for UserDataConnector {
     ///     instrument: sber,
     ///     side: Side::Buy,
     ///     order_type: OrderType::Limit,
-    ///     qty: Qty::from(1),
+    ///     qty: Qty::from(10),
     ///     price: Some(Price::from(250)),
     /// };
     /// assert!(matches!(ud.place(req.clone()).await, Err(Error::Unknown)));
@@ -1100,7 +1237,10 @@ impl OrderExecutor for UserDataConnector {
     /// ```
     async fn place(&self, req: PlaceOrderRequest) -> Result<OrderAck, Error> {
         self.check_command()?;
-        let lots = require_whole_lots(req.qty)?;
+        // Units to lots. A quantity that is not a whole number of lots is refused here, before the
+        // quota and the cid are spent. The first order on an instrument reads its lot size.
+        let lot = self.lot_of(&req.instrument).await?;
+        let lots = pieces_to_lots(req.qty, lot)?;
         let price = match (req.order_type, req.price) {
             (OrderType::Limit, Some(p)) if p.is_positive() => {
                 // Before a quota is spent or the cid is marked.
@@ -1118,9 +1258,12 @@ impl OrderExecutor for UserDataConnector {
         self.acquire("PostOrder")?;
         // Waits for earlier commands on this instrument, released on every exit path.
         let _instrument = self.inner.locks.lock(&req.instrument).await;
+        // The gate may have closed while this command stood in the queue (degraded, shutdown): ask again
+        // before the cid is marked and anything is sent.
+        self.check_command()?;
 
         let now = brokapi_runtime::now();
-        self.core(|c, _| c.begin_place(&req, lots, now))?;
+        self.core(|c, _| c.begin_place(&req, now))?;
 
         let wire = pb::PostOrderRequest {
             quantity: lots,
@@ -1174,7 +1317,7 @@ impl OrderExecutor for UserDataConnector {
     ///
     /// - [`Error::NotReconciled`], [`Error::Degraded`], [`Error::ShuttingDown`]: the gate is
     ///   closed, nothing was sent.
-    /// - [`Error::Rejected`] when the broker refuses. The usual reason is code `NotFound`: the broker
+    /// - [`Error::Rejected`] when the broker refuses. The usual reason is code `not_found`: the broker
     ///   has no such order (never placed, or already done).
     /// - [`Error::RateLimited`] when a quota is used up.
     /// - [`Error::Unknown`] on a timeout or a broken connection: the order may be cancelled or still
@@ -1204,7 +1347,7 @@ impl OrderExecutor for UserDataConnector {
     ///     instrument: sber.clone(),
     ///     side: Side::Buy,
     ///     order_type: OrderType::Limit,
-    ///     qty: Qty::from(1),
+    ///     qty: Qty::from(10),
     ///     price: Some(price),
     /// };
     ///
@@ -1227,6 +1370,8 @@ impl OrderExecutor for UserDataConnector {
             Some(i) => Some(self.inner.locks.lock(i).await),
             None => None,
         };
+        // The gate may have closed while this command stood in the queue.
+        self.check_command()?;
         let wire = pb::CancelOrderRequest {
             account_id: self.account(),
             order_id: cid.hyphenated().to_string(),
@@ -1248,8 +1393,8 @@ impl OrderExecutor for UserDataConnector {
     /// already knows about the original, else from one `GetOrderState`. `req.cid` is the new
     /// idempotency key, it replaces the old one.
     ///
-    /// `req.qty` of `None` keeps the original lots and `req.price` of `None` keeps the original
-    /// price. A new quantity is a whole number of lots. The old order is replaced by a new one,
+    /// `req.qty` of `None` keeps the original quantity and `req.price` of `None` keeps the original
+    /// price. A new quantity is a whole number of lots (in units, like in `place`). The old order is replaced by a new one,
     /// which gets `req.cid` and a new exchange id. Like `place`, the call is never repeated: a lost
     /// answer is [`Error::Unknown`], and `req.cid` is used up. Look at both orders before you try
     /// again.
@@ -1258,7 +1403,7 @@ impl OrderExecutor for UserDataConnector {
     ///
     /// - [`Error::NotReconciled`], [`Error::Degraded`], [`Error::ShuttingDown`]: nothing was sent.
     /// - [`Error::Rejected`] with code `invalid_qty` or `duplicate_place` (the new `cid` was used
-    ///   before), both before the replace is sent. [`Error::Rejected`] with code `NotFound` when the
+    ///   before), both before the replace is sent. [`Error::Rejected`] with code `not_found` when the
     ///   broker does not know the original order. Any other refusal of the broker, with the gRPC
     ///   status name as code.
     /// - [`Error::RateLimited`], [`Error::Transport`] and [`Error::Config`] while the connector
@@ -1290,14 +1435,14 @@ impl OrderExecutor for UserDataConnector {
     ///     instrument: sber.clone(),
     ///     side: Side::Buy,
     ///     order_type: OrderType::Limit,
-    ///     qty: Qty::from(1),
+    ///     qty: Qty::from(10),
     ///     price: Some(price),
     /// };
     ///
     /// let first = ClientOrderId::new_v4();
     /// ud.place(buy(first, Price::from(250))).await?;
     ///
-    /// // Same lots, new price. The new order has a new cid.
+    /// // Same quantity, new price. The new order has a new cid.
     /// let second = ClientOrderId::new_v4();
     /// let ack = ud
     ///     .replace(ReplaceOrderRequest { cid: second, original_cid: first, qty: None, price: Some(Price::from(251)) })
@@ -1314,8 +1459,6 @@ impl OrderExecutor for UserDataConnector {
     async fn replace(&self, req: ReplaceOrderRequest) -> Result<OrderAck, Error> {
         self.check_command()?;
         let original = req.original_cid;
-        // Input is checked before anything is sent or any quota is spent.
-        let requested_lots = req.qty.map(require_whole_lots).transpose()?;
         // The request has no instrument: it is the original order's. Not in the registry - one
         // GetOrderState teaches it (before the lock: the exchange id is read only under the lock,
         // a replace queued before this one changes it).
@@ -1324,17 +1467,22 @@ impl OrderExecutor for UserDataConnector {
             let st = self
                 .get_state(original.hyphenated().to_string(), true)
                 .await?;
-            self.core(|c, _| c.note_order(&map_order::parts_from_state(&st)));
+            let parts = self.parts_of(&st).await?;
+            self.core(|c, _| c.note_order(&parts));
             instrument = self.core(|c, _| c.instrument_of(original));
         }
-        if let (Some(i), Some(p)) = (&instrument, req.price) {
-            self.inner.price_grid.check(&i.key, p)?;
+        let instrument =
+            instrument.ok_or_else(|| Error::not_found("the original order is not known"))?;
+        // Input is checked before anything is sent or any quota is spent: units to lots.
+        let lot = self.lot_of(&instrument).await?;
+        let requested_lots = req.qty.map(|q| pieces_to_lots(q, lot)).transpose()?;
+        if let Some(p) = req.price {
+            self.inner.price_grid.check(&instrument.key, p)?;
         }
         self.acquire("ReplaceOrder")?;
-        let _instrument = match &instrument {
-            Some(i) => Some(self.inner.locks.lock(i).await),
-            None => None,
-        };
+        let _instrument = Some(self.inner.locks.lock(&instrument).await);
+        // The gate may have closed while this command stood in the queue.
+        self.check_command()?;
         let known_id = self.core(|c, _| c.exchange_id(original).map(str::to_string));
         let known_basis = self.core(|c, _| c.order_basis(original));
         let (exchange_id, base_qty, base_price) = match (known_id, known_basis) {
@@ -1343,18 +1491,15 @@ impl OrderExecutor for UserDataConnector {
                 let st = self
                     .get_state(original.hyphenated().to_string(), true)
                     .await?;
-                let parts = map_order::parts_from_state(&st);
+                let parts = self.parts_of(&st).await?;
                 self.core(|c, _| c.note_order(&parts));
-                (st.order_id, Qty::from(st.lots_requested), parts.unit_price)
+                (st.order_id, parts.qty_requested(), parts.unit_price)
             }
         };
-        let lots = requested_lots.unwrap_or_else(|| {
-            base_qty
-                .round_to_step(Qty::from(1), RoundMode::Nearest)
-                .ok()
-                .and_then(Qty::to_whole)
-                .unwrap_or(0)
-        });
+        let lots = match requested_lots {
+            Some(lots) => lots,
+            None => pieces_to_lots(base_qty, lot)?,
+        };
         let price = req
             .price
             .or(base_price)
@@ -1398,12 +1543,12 @@ impl OrderExecutor for UserDataConnector {
     /// The current state of one order by its `cid` (`GetOrderState` by request id).
     ///
     /// It also works for an order that is already filled or cancelled, so it is the way to learn the
-    /// final state. `qty` and `filled` are in lots. The gate is not required: you may call it before
+    /// final state. `qty` and `filled` are in units of the instrument. The gate is not required: you may call it before
     /// the first reconcile.
     ///
     /// # Errors
     ///
-    /// - [`Error::Rejected`] with code `NOT_FOUND` when the broker does not know the order.
+    /// - [`Error::Rejected`] with code `not_found` when the broker does not know the order.
     /// - [`Error::RateLimited`] when a quota is used up. Repeat after `retry_after`.
     /// - [`Error::Transport`] on a timeout or a network failure. A read, so repeat it later.
     /// - [`Error::Config`] when the broker does not accept the token.
@@ -1433,7 +1578,7 @@ impl OrderExecutor for UserDataConnector {
     ///     instrument: sber.clone(),
     ///     side: Side::Buy,
     ///     order_type: OrderType::Limit,
-    ///     qty: Qty::from(1),
+    ///     qty: Qty::from(10),
     ///     price: Some(price),
     /// };
     ///
@@ -1450,7 +1595,7 @@ impl OrderExecutor for UserDataConnector {
     /// ```
     async fn order_state(&self, cid: ClientOrderId) -> Result<OrderSnapshot, Error> {
         let st = self.get_state(cid.hyphenated().to_string(), true).await?;
-        let parts = map_order::parts_from_state(&st);
+        let parts = self.parts_of(&st).await?;
         self.core(|c, _| c.note_order(&parts));
         Ok(map_order::snapshot(&parts, brokapi_runtime::now()))
     }
@@ -1459,7 +1604,7 @@ impl OrderExecutor for UserDataConnector {
     ///
     /// Orders that ended (filled, cancelled, rejected) are not listed. An order placed elsewhere
     /// (phone, another program) is listed too, with a stand-in `cid` made from its exchange id.
-    /// `qty` and `filled` are in lots.
+    /// `qty` and `filled` are in units of the instrument.
     ///
     /// # Errors
     ///
@@ -1490,7 +1635,7 @@ impl OrderExecutor for UserDataConnector {
     ///     instrument: sber.clone(),
     ///     side: Side::Buy,
     ///     order_type: OrderType::Limit,
-    ///     qty: Qty::from(1),
+    ///     qty: Qty::from(10),
     ///     price: Some(price),
     /// };
     ///
@@ -1547,7 +1692,7 @@ impl OrderExecutor for UserDataConnector {
     ///     instrument: sber.clone(),
     ///     side: Side::Buy,
     ///     order_type: OrderType::Limit,
-    ///     qty: Qty::from(1),
+    ///     qty: Qty::from(10),
     ///     price: Some(price),
     /// };
     ///
@@ -1619,7 +1764,7 @@ impl OrderExecutor for UserDataConnector {
     ///     instrument: sber.clone(),
     ///     side: Side::Buy,
     ///     order_type: OrderType::Limit,
-    ///     qty: Qty::from(1),
+    ///     qty: Qty::from(10),
     ///     price: Some(price),
     /// };
     ///
@@ -1664,7 +1809,7 @@ impl ExecutionSource for UserDataConnector {
     /// History from `GetOperationsByCursor` (executed BUY/SELL operations, one `Execution` per trade).
     /// Differences from the live stream are in `map::execution::from_operation`.
     ///
-    /// Quantities here are in PIECES (the operation history is not in lots), unlike the live stream.
+    /// Quantities here are in units of the instrument, like everywhere (the broker reports the history and the stream of own trades in pieces, not in lots).
     /// `cid` is `None`: the history has no order id. The commission of an operation is spread over its
     /// trades in proportion to quantity. At most 20 pages of 1000 operations are read per call. A
     /// range that holds more is an error, never a cut-off list: ask for shorter ranges.
@@ -1747,7 +1892,7 @@ impl ExecutionSource for UserDataConnector {
     /// Own trades as they happen (`TradesStream`), Lossless.
     ///
     /// Same buffer and overflow rules as [`subscribe_order_state`](OrderExecutor::subscribe_order_state).
-    /// Quantities are in lots and the stream carries no commission (0.0). Calling it again returns the
+    /// Quantities are in units of the instrument (the broker reports own trades in pieces) and the stream carries no commission (0.0). Calling it again returns the
     /// same id.
     ///
     /// # Errors
@@ -1866,7 +2011,7 @@ impl PortfolioSource for UserDataConnector {
         Ok(map_portfolio::portfolio(&portfolio, cash, now))
     }
 
-    /// Quantity in pieces (not lots), prices in the settlement currency.
+    /// Quantity in units of the instrument, prices in the settlement currency.
     ///
     /// One `GetPortfolio` call. Currency holdings are left out (see
     /// [`balances`](PortfolioSource::balances)).
@@ -2061,7 +2206,7 @@ impl StopOrderExecutor for UserDataConnector {
     ///     instrument: sber.clone(),
     ///     side: Side::Sell,
     ///     kind: StopOrderKind::StopLoss,
-    ///     qty: Qty::from(1),
+    ///     qty: Qty::from(10),
     ///     stop_price: Price::from(200),
     ///     limit_price: None, // market order at the trigger
     ///     expiry: StopExpiry::GoodTillCancel,
@@ -2075,7 +2220,7 @@ impl StopOrderExecutor for UserDataConnector {
     ///     instrument: sber,
     ///     side: Side::Sell,
     ///     kind: StopOrderKind::StopLimit,
-    ///     qty: Qty::from(1),
+    ///     qty: Qty::from(10),
     ///     stop_price: Price::from(200),
     ///     limit_price: None,
     ///     expiry: StopExpiry::GoodTillCancel,
@@ -2090,7 +2235,9 @@ impl StopOrderExecutor for UserDataConnector {
     /// ```
     async fn place_stop(&self, req: PlaceStopOrderRequest) -> Result<OrderAck, Error> {
         self.check_command()?;
-        let wire = map_stop::build_post(&self.account(), &req)?;
+        let lot = self.lot_of(&req.instrument).await?;
+        let lots = pieces_to_lots(req.qty, lot)?;
+        let wire = map_stop::build_post(&self.account(), &req, lots)?;
         self.inner
             .price_grid
             .check(&req.instrument.key, req.stop_price)?;
@@ -2099,6 +2246,8 @@ impl StopOrderExecutor for UserDataConnector {
         }
         self.acquire("PostStopOrder")?;
         let _instrument = self.inner.locks.lock(&req.instrument).await;
+        // The gate may have closed while this command stood in the queue.
+        self.check_command()?;
         if !self
             .inner
             .stops
@@ -2150,7 +2299,7 @@ impl StopOrderExecutor for UserDataConnector {
     ///
     /// - [`Error::NotReconciled`], [`Error::Degraded`], [`Error::ShuttingDown`]: nothing was sent.
     /// - [`Error::Rejected`] with code `unknown_stop_order` when the `cid` is not known to this
-    ///   connector. The broker's `NotFound` and other refusals come with the gRPC status name as code.
+    ///   connector. The broker's `NotFound` is `not_found`, other refusals come with the gRPC status name as code.
     /// - [`Error::RateLimited`] when a quota is used up.
     /// - [`Error::Unknown`] on a timeout or a broken connection: the stop order may or may not be
     ///   cancelled. Check [`active_stop_orders`](Self::active_stop_orders).
@@ -2264,10 +2413,18 @@ impl StopOrderExecutor for UserDataConnector {
     async fn active_stop_orders(&self) -> Result<Vec<StopOrderSnapshot>, Error> {
         let raw = self.read_active_stops().await?;
         let now = brokapi_runtime::now();
+        let mut lots = Vec::with_capacity(raw.len());
+        for o in &raw {
+            lots.push(
+                self.lot_of_parts(&o.instrument_uid, &o.figi, &o.ticker, &o.class_code)
+                    .await?,
+            );
+        }
         let stops = self.inner.stops.lock().expect("stops poisoned");
         Ok(raw
             .iter()
-            .map(|o| map_stop::snapshot(o, stops.cid_of(&o.stop_order_id), now))
+            .zip(lots)
+            .map(|(o, lot)| map_stop::snapshot(o, stops.cid_of(&o.stop_order_id), now, lot))
             .collect())
     }
 

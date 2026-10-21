@@ -160,7 +160,7 @@ impl MarketDataConnector {
     /// # Errors
     ///
     /// - [`Error::Config`]: empty secret, or an invalid endpoint URL.
-    /// - [`Error::Rejected`]: the broker refused the secret (code `unauthenticated`).
+    /// - [`Error::Config`] also: the broker refused the secret (a wrong token is a configuration problem at every broker).
     /// - [`Error::RateLimited`]: the broker answered `RESOURCE_EXHAUSTED` to the login.
     /// - [`Error::Transport`]: the broker could not be reached.
     ///
@@ -186,7 +186,7 @@ impl MarketDataConnector {
     /// // A wrong secret is refused at start.
     /// let wrong = FinamApiConfig { secret: "wrong".into(), ..cfg };
     /// let err = MarketDataConnector::start(MarketDataConfig::new(wrong, "finam-md"), limiter, events).await.err().unwrap();
-    /// assert!(matches!(err, Error::Rejected { .. }));
+    /// assert!(matches!(err, Error::Config(_)));
     /// # Ok(())
     /// # }
     /// ```

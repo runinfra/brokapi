@@ -196,9 +196,18 @@ impl Emitter {
         st.conflating.remove(&sub);
     }
 
-    /// Whether a `Lossless` subscription overflowed and no reconcile has cleared it yet.
+    /// Whether the connector lost events and no reconcile has cleared it yet: a `Lossless` subscription
+    /// overflowed, or a stream of orders or fills was cut and reopened ([`Event::Reconnected`]).
     pub fn is_degraded(&self) -> bool {
         self.degraded.load(Ordering::Acquire)
+    }
+
+    /// Enters the degraded state by hand: the owner knows that events were lost for a reason the emitter
+    /// cannot see (a message that could not be processed). The trading gate closes until the next
+    /// successful reconcile, like after an overflow. Send an [`Event::Overflow`] for the subscription
+    /// to tell the consumer.
+    pub fn mark_degraded(&self) {
+        self.degraded.store(true, Ordering::Release);
     }
 
     /// Leaves the degraded state. Call it from a successful reconcile.
@@ -250,6 +259,11 @@ impl Emitter {
         }
         let mut st = self.state.lock().expect("emitter poisoned");
         for CoreEvent { sub, payload } in events {
+            // Events were lost while a stream of orders or fills was down: close the trading gate before
+            // the notice can reach the consumer.
+            if matches!(payload, Event::Reconnected { .. }) {
+                self.degraded.store(true, Ordering::Release);
+            }
             match sub {
                 None => {
                     let env = self.envelope(None, payload);
@@ -399,6 +413,46 @@ mod tests {
         assert!(overflow, "Event::Overflow must be delivered");
         // what was accepted before the overflow arrives in order, nothing after the hole
         assert_eq!(seen, [1, 2, 3, 4].map(Money::from).to_vec());
+        e.clear_degraded();
+        assert!(!e.is_degraded());
+    }
+
+    #[test]
+    fn a_reconnected_notice_degrades_and_comes_in_order_with_the_events() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let e = Emitter::new("src".into(), tx);
+        let sub = SubscriptionId::new(1);
+        e.register(sub, None, Backpressure::Lossless { cap: 4 });
+        assert!(!e.is_degraded());
+        e.emit(vec![
+            ev(1),
+            CoreEvent {
+                sub: Some(sub),
+                payload: Event::Reconnected {
+                    sub,
+                    gap_from: wall_nanos(),
+                },
+            },
+            ev(2),
+        ]);
+        // The gate is shut before the consumer can read the notice, and nothing was lost or reordered.
+        assert!(e.is_degraded());
+        assert_eq!(avail(&rx.try_recv().unwrap()), Money::from(1));
+        assert!(matches!(
+            rx.try_recv().unwrap().payload,
+            Event::Reconnected { sub: s, .. } if s == sub
+        ));
+        assert_eq!(avail(&rx.try_recv().unwrap()), Money::from(2));
+        e.clear_degraded();
+        assert!(!e.is_degraded());
+    }
+
+    #[test]
+    fn the_owner_can_mark_the_emitter_degraded() {
+        let (tx, _rx) = mpsc::channel(1);
+        let e = Emitter::new("src".into(), tx);
+        e.mark_degraded();
+        assert!(e.is_degraded());
         e.clear_degraded();
         assert!(!e.is_degraded());
     }

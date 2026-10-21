@@ -222,8 +222,8 @@ impl TbankRaw {
     /// - [`Error::RateLimited`] when the limiter has no quota for `method`. The request is not sent.
     ///   Wait `retry_after` and call again.
     /// - [`Error::Transport`] on a timeout or a network status. A read may be repeated.
-    /// - [`Error::Rejected`] when the broker refuses the request (`InvalidArgument`, `NotFound`,
-    ///   `PermissionDenied`, ...).
+    /// - [`Error::Rejected`] when the broker refuses the request (`InvalidArgument`,
+    ///   `NotFound`, which is the code `not_found`, `PermissionDenied`, ...).
     /// - [`Error::Config`] when the token is not accepted (`Unauthenticated`).
     ///
     /// # Examples
@@ -329,7 +329,7 @@ impl TbankRaw {
     ///     })
     ///     .await;
     /// match outcome {
-    ///     Err(Error::Rejected { code, .. }) => assert_eq!(code, "NotFound"),
+    ///     Err(Error::Rejected { code, .. }) => assert_eq!(code, "not_found"),
     ///     other => panic!("expected a refusal, got {other:?}"),
     /// }
     /// # ud.shutdown(ShutdownMode::Immediate).await;

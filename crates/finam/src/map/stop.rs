@@ -58,7 +58,7 @@ pub enum StopWire {
 pub fn build(account_id: &str, req: &PlaceStopOrderRequest) -> Result<StopWire, Error> {
     let symbol = symbol_of(&req.instrument)?;
     if !req.qty.is_positive() {
-        return Err(rejected("invalid_order", "quantity must be > 0"));
+        return Err(rejected("invalid_qty", "quantity must be > 0"));
     }
     positive("stop_price", req.stop_price)?;
     if let Some(p) = req.limit_price {

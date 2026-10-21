@@ -179,7 +179,7 @@ async fn read_renews_the_jwt_once_a_command_does_not_retry() {
     .unwrap();
     assert!(server.state.issued_tokens() > issued, "the JWT was renewed");
 
-    // Same situation for a command: no retry, and the answer is a definite refusal (it never ran).
+    // Same situation for a command: no retry, and the answer is a definite refusal of the token (`Config`, it never ran).
     server
         .state
         .options
@@ -192,6 +192,6 @@ async fn read_renews_the_jwt_once_a_command_does_not_retry() {
         })
         .await
         .unwrap_err();
-    assert!(matches!(err, Error::Rejected { .. }), "{err:?}");
+    assert!(matches!(err, Error::Config(_)), "{err:?}");
     assert_eq!(server.state.count_calls("LastQuote"), before);
 }

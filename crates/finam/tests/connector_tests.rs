@@ -84,10 +84,7 @@ async fn bad_secret_fails_at_start() {
         .await
         .err()
         .expect("must fail");
-    assert!(
-        matches!(err, Error::Rejected { ref code, .. } if code == "unauthenticated"),
-        "{err:?}"
-    );
+    assert!(matches!(err, Error::Config(_)), "{err:?}");
 }
 
 #[tokio::test]
@@ -234,10 +231,7 @@ async fn commands_are_never_retried_after_unauthenticated() {
         .unauth_next
         .store(1, std::sync::atomic::Ordering::SeqCst);
     let err = ud.place(limit_buy(dec!(1.0))).await.unwrap_err();
-    assert!(
-        matches!(err, Error::Rejected { ref code, .. } if code == "unauthenticated"),
-        "{err:?}"
-    );
+    assert!(matches!(err, Error::Config(_)), "{err:?}");
     assert_eq!(server.state.count_calls("PlaceOrder"), 0);
     assert!(
         server.state.orders_of("ACC1").is_empty(),

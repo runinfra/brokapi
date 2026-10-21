@@ -1,10 +1,10 @@
 //! User-data core: order state, own trades, account (portfolio) updates.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use brokapi_core::{Event, OrderState, SubscriptionId};
+use brokapi_core::{Event, OrderState, SubscriptionId, UnixNanos};
 use brokapi_finam_protocol::pb::grpc::tradeapi::v1::accounts::GetAccountResponse;
 use brokapi_finam_protocol::pb::grpc::tradeapi::v1::orders as pb;
 use brokapi_runtime::OrderRuntime;
@@ -94,6 +94,10 @@ pub enum UdSubKind {
 pub struct UdCore {
     subs: HashMap<SubscriptionId, UdSubKind>,
     status: HashMap<SubscriptionId, SubStatus>,
+    /// Streams of orders and fills that were open at least once.
+    seen_open: HashSet<SubscriptionId>,
+    /// When a stream of orders or fills went down, until it is open again.
+    down_since: HashMap<SubscriptionId, UnixNanos>,
     orders: OrderRuntime,
     index: Arc<OrderIndex>,
 }
@@ -104,6 +108,8 @@ impl UdCore {
         Self {
             subs: HashMap::new(),
             status: HashMap::new(),
+            seen_open: HashSet::new(),
+            down_since: HashMap::new(),
             orders: OrderRuntime::new(),
             index,
         }
@@ -130,6 +136,8 @@ impl UdCore {
     pub fn unregister(&mut self, sub: SubscriptionId) {
         self.subs.remove(&sub);
         self.status.remove(&sub);
+        self.seen_open.remove(&sub);
+        self.down_since.remove(&sub);
     }
 
     /// Stream status of subscription `sub`. `None` for an id the core does not know.
@@ -184,9 +192,29 @@ impl BrokerCore for UdCore {
         match event {
             UdEvent::Connected => {
                 self.status.insert(sub, SubStatus::Active);
+                // A stream of orders or fills that was open, went down and is open again: what happened
+                // to the orders in between never reached us. Tell the consumer (the connector also
+                // closes its trading gate on this event).
+                if matches!(kind, UdSubKind::Orders | UdSubKind::Executions) {
+                    let reopened = !self.seen_open.insert(sub);
+                    if let (true, Some(gap_from)) = (reopened, self.down_since.remove(&sub)) {
+                        out.push(CoreEvent {
+                            sub: Some(sub),
+                            payload: Event::Reconnected { sub, gap_from },
+                        });
+                    }
+                }
             }
             UdEvent::Disconnected(r) => {
                 self.status.insert(sub, SubStatus::Reconnecting(r));
+                if matches!(kind, UdSubKind::Orders | UdSubKind::Executions)
+                    && self.seen_open.contains(&sub)
+                {
+                    // Keep the first moment of the gap if the stream goes down again before it opens.
+                    self.down_since
+                        .entry(sub)
+                        .or_insert_with(crate::util::now_nanos);
+                }
             }
             UdEvent::Failed(r) => {
                 self.status.insert(sub, SubStatus::Failed(r));

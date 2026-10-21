@@ -81,12 +81,18 @@ struct UdShared {
 ///   locally with `Error::Rejected` and code `duplicate_place`.
 /// - **A refusal is final.** `Error::Rejected` means the broker took nothing. Use a NEW cid for the
 ///   next try.
+/// - **The gate is checked twice.** Once at the start, and again when the command's turn in the queue of its
+///   instrument comes: a gate that closed while it waited (`Degraded`, shutdown) stops it, and nothing is sent.
+/// - **A cut of the order or trade stream is told.** `Event::Reconnected` on the subscription, the gate closes
+///   until `reconcile`.
 /// - **The cid travels in the order `comment`** (`bc1:` and 32 hex digits), so it survives a restart.
 ///   See [`FinamCidCodec`]. That the broker echoes the comment unchanged is not verified against the
 ///   live API.
 /// - **No replace.** Finam has no amend call. `replace` returns `Error::Unsupported`. Cancel plus a new
 ///   order is not offered, because it is not atomic.
-/// - **Quantity is in pieces**, price in the instrument currency.
+/// - **Quantity is in pieces** (units of the instrument, like at every broker), price in the instrument currency. A quantity
+///   that is not a whole number of lots is refused with `invalid_qty` before anything is sent, when the lot is known
+///   (`price_grid().set_lot(..)` or `.learn(&params)`).
 /// - **Finam has no sandbox.** Test against the mock, then with a tiny order far from the market.
 ///
 /// # Examples
@@ -255,7 +261,7 @@ impl UserDataConnector {
     ///
     /// - [`Error::Config`]: empty account id, empty secret, invalid endpoint URL, the cid codec does
     ///   not fit the broker limits, or the account is not available to this secret.
-    /// - [`Error::Rejected`]: the broker refused the secret (code `unauthenticated`).
+    /// - [`Error::Config`] also: the broker refused the secret (a wrong token is a configuration problem at every broker).
     /// - [`Error::RateLimited`]: the broker answered `RESOURCE_EXHAUSTED` to the login.
     /// - [`Error::Transport`]: the broker could not be reached.
     ///
@@ -316,12 +322,27 @@ impl UserDataConnector {
 
         let handler = {
             let core = Arc::clone(&core);
+            let shutdown = Arc::clone(&shutdown);
             move |frame: UdFrame, now: Instant| -> Vec<CoreEvent> {
                 let mut sink = EventSink::new();
                 core.lock()
                     .expect("core poisoned")
                     .on_frame(frame, now, &mut sink);
-                sink.drain()
+                let events = sink.drain();
+                // A stream of orders or fills was cut and reopened: events were lost in the gap. Close
+                // the trading gate before the notice reaches the consumer, so a command that follows the
+                // notice is already refused.
+                if events
+                    .iter()
+                    .any(|e| matches!(e.payload, brokapi_core::Event::Reconnected { .. }))
+                {
+                    shutdown
+                        .lock()
+                        .expect("shutdown poisoned")
+                        .gate_mut()
+                        .mark_degraded();
+                }
+                events
             }
         };
         // Spec 6: a Lossless overflow degrades the connector: trading commands are refused until
@@ -638,10 +659,7 @@ impl UserDataConnector {
         self.inner
             .index
             .order_id(cid)
-            .ok_or_else(|| Error::Rejected {
-                code: "not_found".into(),
-                message: format!("order {cid} not found at the broker"),
-            })
+            .ok_or_else(|| Error::not_found(format!("order {cid} not found at the broker")))
     }
 
     async fn register_sub<M: Send + 'static>(
@@ -770,12 +788,13 @@ impl OrderExecutor for UserDataConnector {
     /// # Errors
     ///
     /// - [`Error::NotReconciled`], [`Error::Degraded`], [`Error::ShuttingDown`]: the command gate is
-    ///   closed. Nothing was sent. Call `reconcile`.
-    /// - [`Error::Rejected`]: a local check failed (code `invalid_order`, `missing_price`), the same cid was
+    ///   closed, at the start or when the command's turn in the queue came. Nothing was sent. Call `reconcile`.
+    /// - [`Error::Rejected`]: a local check failed (code `invalid_order`, `missing_price`, `invalid_qty`), the same cid was
     ///   sent before (code `duplicate_place`), or the broker refused (a gRPC status such as
     ///   `invalid_argument`, or an order status such as `rejected`). The broker holds no order.
     /// - [`Error::RateLimited`]: the local quota is spent or the broker said `RESOURCE_EXHAUSTED`.
     ///   Nothing was sent. The cid is still unused: send the same request later.
+    /// - [`Error::Config`]: the broker refused the token (`UNAUTHENTICATED`). Nothing was done, fix the secret.
     /// - [`Error::Unknown`]: timeout, broken connection or server fault, or the answer carried no
     ///   order id. The order MAY exist. It is never repeated by the library. Look it up with
     ///   `order_state` or `active_orders`.
@@ -785,6 +804,9 @@ impl OrderExecutor for UserDataConnector {
         self.check_command()?;
         let body = build_place_order(&self.inner.account_id, &req)?;
         // Before a quota is spent or the cid is marked.
+        self.inner
+            .price_grid
+            .check_qty(&req.instrument.key, req.qty)?;
         if let Some(p) = req.price {
             self.inner.price_grid.check(&req.instrument.key, p)?;
         }
@@ -792,6 +814,9 @@ impl OrderExecutor for UserDataConnector {
         self.inner.rpc.acquire("PlaceOrder")?;
         // Waits for earlier commands on this instrument, released on every exit path.
         let _instrument = self.inner.locks.lock(&req.instrument).await;
+        // The gate may have closed while this command stood in the queue (degraded, shutdown): ask again
+        // before the cid is marked and anything is sent.
+        self.check_command()?;
         self.inner.locks.bind(req.cid, &req.instrument);
         {
             let mut core = self.inner.core.lock().expect("core poisoned");
@@ -872,6 +897,8 @@ impl OrderExecutor for UserDataConnector {
         self.inner.rpc.acquire("CancelOrder")?;
         // The instrument comes from the orders this process placed; an older order is not serialized.
         let _instrument = self.inner.locks.lock_cid(cid).await;
+        // The gate may have closed while this command stood in the queue.
+        self.check_command()?;
         let order_id = self.order_id_of(cid).await?;
         let account = self.account();
         let sent = self
@@ -1039,7 +1066,31 @@ impl OrderExecutor for UserDataConnector {
     }
 }
 
+/// Pages of `Trades` read at most per `executions` call.
+const MAX_TRADE_PAGES: usize = 100;
+
+fn too_long(limit: i32) -> Error {
+    Error::Rejected {
+        code: "range_too_long".into(),
+        message: format!(
+            "the range holds more trades than one answer of {limit} can page through: read it in shorter ranges"
+        ),
+    }
+}
+
 impl UserDataConnector {
+    fn map_trades(
+        &self,
+        trades: Vec<brokapi_finam_protocol::pb::grpc::tradeapi::v1::AccountTrade>,
+    ) -> Vec<Execution> {
+        let now = brokapi_runtime::now();
+        let index = &self.inner.index;
+        trades
+            .iter()
+            .map(|t| map_trade(t, index.lookup(&t.order_id, &t.comment), now))
+            .collect()
+    }
+
     /// Folds a failed command into the public error and the local order lifecycle.
     fn command_failed(&self, cid: ClientOrderId, e: &FinamError) -> Error {
         let err = map_command_err(e);
@@ -1061,39 +1112,85 @@ impl UserDataConnector {
 
 #[async_trait]
 impl ExecutionSource for UserDataConnector {
-    /// Own trades in `range` (`Trades`), at most `executions_limit` of them.
+    /// Own trades in `range` (`Trades`), read page by page until the period is complete.
+    ///
+    /// One `Trades` request returns at most `executions_limit` trades (1000 by default). When an answer
+    /// is full, the connector asks again for the part of the period that is still open (from the time of
+    /// the last trade it got, in the direction the answer is sorted) and keeps each trade once by its
+    /// trade id. Every page spends quota of `Trades`. When the period still does not fit (more than
+    /// `executions_limit` trades with the same timestamp, or more than 100 pages) the answer is
+    /// [`Error::Rejected`] with the code `range_too_long`, never a silently cut list: read a shorter
+    /// range. That Finam sorts the answer by time and cuts it at the limit is not verified against the
+    /// live API, the paging works for both directions of sort.
     ///
     /// The commission is in the account currency, its currency code is not part of `Execution`. Only
     /// historical trades carry a commission.
     ///
     /// # Errors
     ///
-    /// [`Error::RateLimited`], [`Error::Rejected`] or [`Error::Transport`], as for any read.
+    /// [`Error::RateLimited`], [`Error::Rejected`] (including `range_too_long`) or [`Error::Transport`],
+    /// as for any read.
     async fn executions(&self, range: TimeRange) -> Result<Vec<Execution>, Error> {
         let account = self.account();
-        let limit = self.inner.executions_limit;
-        let resp = self
-            .inner
-            .rpc
-            .read("Trades", |api| {
-                let req = pa::TradesRequest {
-                    account_id: account.clone(),
-                    limit,
-                    interval: Some(Interval {
-                        start_time: Some(to_timestamp(range.from)),
-                        end_time: Some(to_timestamp(range.to)),
-                    }),
-                };
-                async move { api.accounts().trades(req).await }
-            })
-            .await?;
-        let now = brokapi_runtime::now();
-        let index = &self.inner.index;
-        Ok(resp
-            .trades
-            .iter()
-            .map(|t| map_trade(t, index.lookup(&t.order_id, &t.comment), now))
-            .collect())
+        let limit = self.inner.executions_limit.max(1);
+        let (mut from, mut to) = (range.from, range.to);
+        let mut seen = std::collections::HashSet::new();
+        let mut trades = Vec::new();
+        for _ in 0..MAX_TRADE_PAGES {
+            let resp = self
+                .inner
+                .rpc
+                .read("Trades", |api| {
+                    let req = pa::TradesRequest {
+                        account_id: account.clone(),
+                        limit,
+                        interval: Some(Interval {
+                            start_time: Some(to_timestamp(from)),
+                            end_time: Some(to_timestamp(to)),
+                        }),
+                    };
+                    async move { api.accounts().trades(req).await }
+                })
+                .await?;
+            let full = resp.trades.len() >= limit as usize;
+            let times: Vec<i64> = resp
+                .trades
+                .iter()
+                .filter_map(|t| t.timestamp.as_ref())
+                .map(|t| {
+                    t.seconds
+                        .saturating_mul(1_000_000_000)
+                        .saturating_add(i64::from(t.nanos))
+                })
+                .collect();
+            let mut fresh = 0usize;
+            for t in resp.trades {
+                if seen.insert(t.trade_id.clone()) {
+                    fresh += 1;
+                    trades.push(t);
+                }
+            }
+            if !full {
+                return Ok(self.map_trades(trades));
+            }
+            // A full answer: the period may hold more. Narrow it to what was not read yet.
+            let (Some(&first), Some(&last)) = (times.first(), times.last()) else {
+                return Err(too_long(limit));
+            };
+            if fresh == 0 || times.len() < limit as usize {
+                return Err(too_long(limit));
+            }
+            let (min, max) = (
+                times.iter().copied().min().unwrap_or(first),
+                times.iter().copied().max().unwrap_or(last),
+            );
+            if first <= last {
+                from = brokapi_core::UnixNanos::from_nanos(max);
+            } else {
+                to = brokapi_core::UnixNanos::from_nanos(min.saturating_add(1));
+            }
+        }
+        Err(too_long(limit))
     }
 
     /// Opens a `SubscribeTrades` stream for the account. Envelopes carry `Event::Execution`, with the cid
@@ -1211,6 +1308,9 @@ impl StopOrderExecutor for UserDataConnector {
         let wire = map_stop::build(&self.inner.account_id, &req)?;
         self.inner
             .price_grid
+            .check_qty(&req.instrument.key, req.qty)?;
+        self.inner
+            .price_grid
             .check(&req.instrument.key, req.stop_price)?;
         if let Some(p) = req.limit_price {
             self.inner.price_grid.check(&req.instrument.key, p)?;
@@ -1220,6 +1320,8 @@ impl StopOrderExecutor for UserDataConnector {
             StopWire::TakeProfit(_) => "PlaceSLTPOrder",
         })?;
         let _instrument = self.inner.locks.lock(&req.instrument).await;
+        // The gate may have closed while this command stood in the queue.
+        self.check_command()?;
         self.inner.locks.bind(req.cid, &req.instrument);
         if !self
             .inner

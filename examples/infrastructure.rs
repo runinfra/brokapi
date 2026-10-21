@@ -483,12 +483,9 @@ fn state_word(state: &OrderState) -> &'static str {
     }
 }
 
-/// "The broker does not know this order". All brokers say it as `Rejected`, T-Bank in capital letters.
+/// "The broker does not know this order". All brokers say it as `Rejected` with the code `not_found`.
 fn is_not_found(e: &Error) -> bool {
-    match e {
-        Error::Rejected { code, .. } => code.eq_ignore_ascii_case("not_found"),
-        _ => false,
-    }
+    e.is_not_found()
 }
 // ANCHOR_END: helpers
 
@@ -529,7 +526,7 @@ fn buy(instrument: InstrumentId, cid: ClientOrderId) -> PlaceOrderRequest {
         instrument,
         side: Side::Buy,
         order_type: OrderType::Limit,
-        qty: Qty::from(1),
+        qty: Qty::from(10),
         price: Some(Price::from(200)),
     }
 }

@@ -342,17 +342,22 @@ macro_rules! stepped {
 /// An exact decimal number in a newtype, so a quantity cannot be passed where a price is expected.
 /// Why decimal and not `f64`: see [`Price`].
 ///
-/// The unit is the one of the field that carries it, and it is NOT converted by the library:
-/// - An order quantity ([`PlaceOrderRequest::qty`](crate::PlaceOrderRequest::qty)) is what the
-///   broker's order API counts. The T-Bank connector requires a whole number of lots (a fraction or
-///   zero is refused with [`Error::Rejected`](crate::Error::Rejected)). The BCS connector rounds
-///   to a whole number before sending. Lot size is in
-///   [`TradingParams::lot_size`](crate::TradingParams::lot_size).
-/// - A position or a trade quantity is as the broker reports it (lots or pieces, see the docs of
-///   the connector).
+/// **The unit is the same everywhere: units of the instrument, never lots.** A share is one share, a
+/// bond is one bond (its price is a percent of the face value, see the book page on money and
+/// quantities), a currency is one unit of it, a futures contract is one contract. The same unit in an
+/// order, an order book level, a deal, a fill, a position and the volume of a candle, at every broker.
+/// That is the rule of NautilusTrader and of the exchange. A broker that counts in lots (T-Bank) is
+/// converted by its connector in both directions, so your code never sees a lot count.
 ///
-/// The library does not check the value against lot size, minimal size or the account. That is the
-/// job of the caller, see [`InstrumentSource::trading_params`](crate::InstrumentSource::trading_params).
+/// - An order quantity ([`PlaceOrderRequest::qty`](crate::PlaceOrderRequest::qty)) is positive and a
+///   whole number of lots. The size of a lot is
+///   [`TradingParams::lot_size`](crate::TradingParams::lot_size), in units. A quantity that the broker
+///   cannot take (a fraction where it takes whole units, a count that is not a multiple of the lot,
+///   zero) is refused before anything is sent with [`Error::Rejected`](crate::Error::Rejected), code
+///   `invalid_qty`, and the cid is not used. The library never rounds a quantity for you.
+/// - A position, a deal, a fill and a volume are as the broker reports them, in units.
+///
+/// The library does not check the value against the account or the minimal size of an exchange board.
 ///
 /// # Examples
 ///

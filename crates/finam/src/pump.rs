@@ -55,7 +55,7 @@ fn event_ts(ev: &Event) -> Timestamps {
         Event::Portfolio(p) => Some(p.ts),
         Event::Positions(v) => v.first().map(|p| p.ts),
         Event::Balances(v) => v.first().map(|b| b.ts),
-        Event::Resync { .. } | Event::Overflow { .. } => None,
+        Event::Resync { .. } | Event::Overflow { .. } | Event::Reconnected { .. } => None,
     };
     ts.unwrap_or_else(|| Timestamps::new(now_nanos(), brokapi_runtime::now()))
 }

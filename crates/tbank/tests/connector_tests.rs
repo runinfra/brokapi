@@ -73,7 +73,7 @@ fn limit_order(cid: ClientOrderId) -> PlaceOrderRequest {
         instrument: sber(),
         side: Side::Buy,
         order_type: OrderType::Limit,
-        qty: Qty::from(2),
+        qty: Qty::from(20),
         price: Some(Price::from(250)),
     }
 }
@@ -271,7 +271,7 @@ async fn order_input_is_checked_before_the_network() {
         ud.place(req.clone()).await,
         Err(Error::Rejected { .. })
     ));
-    req.qty = Qty::from(1);
+    req.qty = Qty::from(10);
     req.price = None;
     assert!(
         matches!(ud.place(req).await, Err(Error::Rejected { code, .. }) if code == "missing_price")
@@ -334,7 +334,7 @@ async fn order_state_events_follow_place_cancel_and_fill() {
     next_order(&mut rx, |s| matches!(s, OrderState::Acked { .. })).await;
     server.fill(ACCOUNT_A, &b.hyphenated().to_string());
     let filled = next_order(&mut rx, |s| matches!(s, OrderState::Filled { .. })).await;
-    assert_eq!((filled.cid, filled.filled.decimal()), (b, dec!(2.0)));
+    assert_eq!((filled.cid, filled.filled.decimal()), (b, dec!(20.0)));
 }
 
 #[tokio::test]
@@ -351,7 +351,7 @@ async fn replace_moves_the_order_to_the_new_cid() {
         .replace(brokapi_core::ReplaceOrderRequest {
             cid: new,
             original_cid: old,
-            qty: Some(Qty::from(5)),
+            qty: Some(Qty::from(50)),
             price: Some(Price::from(251)),
         })
         .await
@@ -365,7 +365,7 @@ async fn replace_moves_the_order_to_the_new_cid() {
             live[0].qty.decimal(),
             live[0].price.unwrap().decimal()
         ),
-        (new, dec!(5.0), dec!(251.0))
+        (new, dec!(50.0), dec!(251.0))
     );
     // the old cid is no longer live
     let st = ud.order_state(old).await.unwrap();
@@ -448,7 +448,7 @@ async fn own_trades_stream_and_history() {
     assert_eq!(exec.cid, Some(cid));
     assert_eq!(
         (exec.side, exec.qty.decimal(), exec.price.decimal()),
-        (Side::Buy, dec!(2.0), dec!(250.0))
+        (Side::Buy, dec!(20.0), dec!(250.0))
     );
     assert_eq!(exec.instrument.key, InstrumentKey::new("SBER", "TQBR"));
 
@@ -579,7 +579,7 @@ async fn reference_and_history_calls() {
             params.price_step.decimal(),
             params.min_qty.decimal()
         ),
-        (dec!(10.0), dec!(0.01), dec!(1.0))
+        (dec!(10.0), dec!(0.01), dec!(10.0))
     );
     let got = md.get(&id).await.unwrap();
     assert_eq!(
@@ -803,7 +803,7 @@ async fn trades_and_candles_stream() {
                 Event::MarketTrade(m) if env.sub == Some(t) => {
                     assert_eq!(
                         (m.qty.decimal(), m.price.decimal()),
-                        (dec!(7.0), dec!(274.0))
+                        (dec!(70.0), dec!(274.0))
                     );
                     tr = true;
                 }

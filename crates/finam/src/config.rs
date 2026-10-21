@@ -120,7 +120,7 @@ impl FinamApiConfig {
     /// # Errors
     ///
     /// - [`Error::Config`]: the secret is empty or the endpoint URL is invalid.
-    /// - [`Error::Rejected`]: the broker refused the secret (code `unauthenticated`).
+    /// - [`Error::Config`] also: the broker refused the secret (a wrong token is a configuration problem at every broker).
     /// - [`Error::RateLimited`]: the broker answered `RESOURCE_EXHAUSTED`.
     /// - [`Error::Transport`]: the broker could not be reached or the call timed out.
     pub async fn shared_tokens(&self) -> Result<Arc<TokenManager>, Error> {

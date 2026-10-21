@@ -4,7 +4,7 @@
 события и что происходит, когда бот отстает: [Круг событий](streams.md). Каждое поле, вариант и метод до последней
 строки - в [Справочнике API](api.md) (крейт `brokapi_core`).
 
-**Python.** Конверт - `brokapi.Envelope`, события - классы `OrderBookSnapshot`, `OrderBookIncrement`, `MarketTrade`, `Quote`, `Candle`, `OrderSnapshot` (событие `Order`), `Execution`, `Portfolio`, `PositionsUpdate`, `BalancesUpdate`, `Resync`, `Overflow`. Вид события, который пакет еще не знает, приходит как `UnknownEvent`, а цикл не падает. Возможности - `await client.caps()`. Справочник: [Справочник API: Python](api-python.md).
+**Python.** Конверт - `brokapi.Envelope`, события - классы `OrderBookSnapshot`, `OrderBookIncrement`, `MarketTrade`, `Quote`, `Candle`, `OrderSnapshot` (событие `Order`), `Execution`, `Portfolio`, `PositionsUpdate`, `BalancesUpdate`, `Resync`, `Overflow`, `Reconnected` (поля `sub` и `gap_from`: время, когда коннектор заметил обрыв потока заявок или исполнений, шлюз закрыт до `reconcile`). Вид события, который пакет еще не знает, приходит как `UnknownEvent`, а цикл не падает. Возможности - `await client.caps()`. Справочник: [Справочник API: Python](api-python.md).
 
 ## Конверт события
 
@@ -37,9 +37,10 @@
 | `Portfolio`, `Positions`, `Balances` | состояние счета |
 | `Resync` | стакан мог потерять данные, прежний выбросить и ждать новый снимок |
 | `Overflow` | буфер подписки переполнился, торговля остановлена до сверки |
+| `Reconnected` | поток своих заявок или исполнений оборвался и открыт снова, за обрыв могли пройти события, которых бот не видел. Торговля остановлена до сверки |
 
-Что делать с `Resync` и `Overflow`: [Ошибки и что с ними делать](errors.md#resync) и
-[Если что-то пошло не так](rust/recovery.md#пришел-overflow-или-ошибка-degraded).
+Что делать с `Resync`, `Overflow` и `Reconnected`: [Ошибки и что с ними делать](errors.md#resync) и
+[Если что-то пошло не так](rust/recovery.md#пришел-overflow-или-ошибка-degraded), [при обрыве потока заявок](rust/recovery.md#поток-заявок-оборвался).
 
 ## Возможности коннектора (`caps()`)
 

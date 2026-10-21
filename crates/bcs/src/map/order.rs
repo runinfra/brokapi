@@ -344,7 +344,13 @@ fn map_bcs_status(data: &OrderExecutionData, cid: ClientOrderId) -> OrderState {
             }
         }
         OrderStatus::Filled => OrderState::Filled { cid },
-        OrderStatus::Cancelled | OrderStatus::PendingCancel => OrderState::Cancelled { cid },
+        OrderStatus::Cancelled => OrderState::Cancelled { cid },
+        // "Cancelling" (6) is not a result: the order is still in the book and may be filled before the
+        // cancel is done. It is reported as `Unknown` (the final state comes with status 4 or a fill).
+        OrderStatus::PendingCancel => OrderState::Unknown {
+            cid,
+            since: brokapi_runtime::now(),
+        },
         OrderStatus::Rejected => OrderState::Rejected {
             cid,
             reason: "rejected".into(),
@@ -358,7 +364,8 @@ fn map_bcs_status(data: &OrderExecutionData, cid: ClientOrderId) -> OrderState {
 
 /// `orderStatus` of a REST report (the same codes as the WebSocket): 0 new, 1 partially filled,
 /// 2 filled, 4 cancelled, 5 replaced, 6 cancelling, 8 rejected, 9 replacing, 10 waiting for the new
-/// order's confirmation. The orders replaced or still being changed are alive for the caller.
+/// order's confirmation. The orders replaced or still being changed are alive for the caller. 6 is
+/// `Unknown`, not `Cancelled`: the order is still alive and may be filled before the cancel is done.
 fn map_rest_status(data: &RestOrderExecutionData, cid: ClientOrderId) -> OrderState {
     let broker_id = BrokerOrderId::new(
         data.order_id
@@ -381,7 +388,11 @@ fn map_rest_status(data: &RestOrderExecutionData, cid: ClientOrderId) -> OrderSt
             }
         }
         Some("2") => OrderState::Filled { cid },
-        Some("4") | Some("6") => OrderState::Cancelled { cid },
+        Some("4") => OrderState::Cancelled { cid },
+        Some("6") => OrderState::Unknown {
+            cid,
+            since: brokapi_runtime::now(),
+        },
         Some("8") => OrderState::Rejected {
             cid,
             reason: data

@@ -8,6 +8,7 @@
 //! sends it on our stream.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::Instant;
 
 use brokapi_core::{
@@ -28,6 +29,7 @@ use brokapi_tbank_protocol::v1::trades_stream_response::Payload as TradesPayload
 
 use crate::core::md::SubUpdate;
 use crate::ids::{id_from_parts, stamps};
+use crate::lots::LotBook;
 use crate::map::order::{self, OrderParts};
 use crate::map::{execution, portfolio};
 
@@ -110,8 +112,8 @@ struct OrderMeta {
 /// };
 ///
 /// // A cid is registered for one placement at most. The second try is refused before any send.
-/// assert!(core.begin_place(&req, 1, Instant::now()).is_ok());
-/// assert!(core.begin_place(&req, 1, Instant::now()).is_err());
+/// assert!(core.begin_place(&req, Instant::now()).is_ok());
+/// assert!(core.begin_place(&req, Instant::now()).is_err());
 /// assert!(core.order_state(req.cid).is_some());
 /// ```
 #[derive(Debug)]
@@ -127,6 +129,7 @@ pub struct UdCore {
     updates: Vec<SubUpdate>,
     connections: HashMap<StreamKind, u32>,
     reconnected: VecDeque<StreamKind>,
+    lots: Arc<LotBook>,
 }
 
 impl UdCore {
@@ -144,6 +147,29 @@ impl UdCore {
             updates: Vec::new(),
             connections: HashMap::new(),
             reconnected: VecDeque::new(),
+            lots: Arc::new(LotBook::new()),
+        }
+    }
+
+    /// The lot sizes this core knows. The connector fills the book before it feeds a message of an
+    /// instrument it has not met (the messages count in lots, the events in units).
+    pub fn lots(&self) -> &Arc<LotBook> {
+        &self.lots
+    }
+
+    /// The lot size of an instrument by the names of a message. 1 when it is not known, which would
+    /// make the quantities lots: the connector fills the book first, so this is the safety net only.
+    fn lot_of(&self, uid: &str, figi: &str, ticker: &str, class_code: &str) -> i64 {
+        match self.lots.get_parts(uid, figi, ticker, class_code) {
+            Some(lot) => lot,
+            None => {
+                tracing::warn!(
+                    uid,
+                    ticker,
+                    "lot size of the instrument is not known, quantities stay in lots"
+                );
+                1
+            }
         }
     }
 
@@ -229,12 +255,7 @@ impl UdCore {
 
     /// Registers a placement before the request is sent. At most one placement per cid, ever
     /// (no automatic retry of `place`).
-    pub fn begin_place(
-        &mut self,
-        req: &PlaceOrderRequest,
-        lots: i64,
-        now: Instant,
-    ) -> Result<(), Error> {
+    pub fn begin_place(&mut self, req: &PlaceOrderRequest, now: Instant) -> Result<(), Error> {
         if !self.orders.try_place_once(req.cid) {
             return Err(Error::Rejected {
                 code: "duplicate_place".into(),
@@ -249,7 +270,7 @@ impl UdCore {
                 instrument: req.instrument.clone(),
                 side: req.side,
                 order_type: req.order_type,
-                qty: Qty::from(lots),
+                qty: req.qty,
                 filled: Qty::ZERO,
                 price: req.price,
                 exchange_id: None,
@@ -266,7 +287,13 @@ impl UdCore {
         now: Instant,
         out: &mut EventSink,
     ) {
-        let parts = order::parts_from_post(resp);
+        let lot = self.lot_of(
+            &resp.instrument_uid,
+            &resp.figi,
+            &resp.ticker,
+            &resp.class_code,
+        );
+        let parts = order::parts_from_post(resp).with_lot(lot);
         self.learn_parts(
             &resp.instrument_uid,
             &resp.figi,
@@ -348,17 +375,24 @@ impl UdCore {
             &resp.ticker,
             &resp.class_code,
         );
+        let lot = self.lot_of(
+            &resp.instrument_uid,
+            &resp.figi,
+            &resp.ticker,
+            &resp.class_code,
+        );
+        let parts = order::parts_from_post(resp).with_lot(lot);
         let meta = self.meta.entry(new_cid).or_insert_with(|| OrderMeta {
             instrument,
             side: order::side(resp.direction()),
             order_type: order::order_type(resp.order_type()),
-            qty: Qty::from(resp.lots_requested),
+            qty: parts.qty_requested(),
             filled: Qty::ZERO,
             price: None,
             exchange_id: None,
         });
-        meta.qty = Qty::from(resp.lots_requested);
-        meta.filled = Qty::from(resp.lots_executed);
+        meta.qty = parts.qty_requested();
+        meta.filled = parts.qty_executed();
         if let Some(p) = resp
             .initial_security_price
             .as_ref()
@@ -427,8 +461,8 @@ impl UdCore {
             instrument: parts.instrument.clone(),
             side: order::side(parts.direction),
             order_type: order::order_type(parts.order_type),
-            qty: Qty::from(parts.lots_requested),
-            filled: Qty::from(parts.lots_executed),
+            qty: parts.qty_requested(),
+            filled: parts.qty_executed(),
             price: parts.unit_price,
             exchange_id: None,
         });
@@ -487,9 +521,9 @@ impl UdCore {
         use pb::OrderExecutionReportStatus as S;
         self.note_order(p);
         if let Some(m) = self.meta.get_mut(&cid) {
-            m.filled = Qty::from(p.lots_executed);
+            m.filled = p.qty_executed();
             if m.qty.is_zero() {
-                m.qty = Qty::from(p.lots_requested);
+                m.qty = p.qty_requested();
             }
             // For orders we placed, the price we sent is the truth (the stream's price field is unspecified).
             if m.price.is_none() {
@@ -507,8 +541,8 @@ impl UdCore {
             S::ExecutionReportStatusPartiallyfill => vec![
                 ack,
                 OrderSignal::PartialFill {
-                    filled: Qty::from(p.lots_executed),
-                    left: Qty::from((p.lots_requested - p.lots_executed).max(0)),
+                    filled: p.qty_executed(),
+                    left: p.qty_left(),
                 },
             ],
             S::ExecutionReportStatusFill => vec![ack, OrderSignal::Filled],
@@ -545,7 +579,16 @@ impl UdCore {
                     return;
                 }
                 self.learn_parts(&o.instrument_uid, "", &o.ticker, &o.class_code);
-                let parts = order::parts_from_stream(&o);
+                // The stream message carries the lot size of the instrument: remember it.
+                self.lots.put(
+                    &o.instrument_uid,
+                    "",
+                    &o.ticker,
+                    &o.class_code,
+                    i64::from(o.lot_size),
+                );
+                let lot = self.lot_of(&o.instrument_uid, "", &o.ticker, &o.class_code);
+                let parts = order::parts_from_stream(&o).with_lot(lot);
                 let cid = parts.cid();
                 self.apply_parts(cid, &parts, now, out);
             }
@@ -705,7 +748,8 @@ impl UdCore {
     fn on_active_orders(&mut self, r: pb::GetOrdersResponse, now: Instant, out: &mut EventSink) {
         for o in &r.orders {
             self.learn_parts(&o.instrument_uid, &o.figi, &o.ticker, &o.class_code);
-            let parts = order::parts_from_state(o);
+            let lot = self.lot_of(&o.instrument_uid, &o.figi, &o.ticker, &o.class_code);
+            let parts = order::parts_from_state(o).with_lot(lot);
             let cid = parts.cid();
             self.apply_parts(cid, &parts, now, out);
         }
@@ -729,6 +773,22 @@ impl BrokerCore for UdCore {
                 *n += 1;
                 if *n > 1 {
                     self.reconnected.push_back(kind);
+                    // The streams of orders and fills carry money: whatever happened in the gap never
+                    // reached us. Tell the consumer (the emitter closes the trading gate on this event).
+                    let owner = match kind {
+                        StreamKind::OrderState => Some(UdSubKind::OrderState),
+                        StreamKind::Trades => Some(UdSubKind::Executions),
+                        _ => None,
+                    };
+                    if let Some(sub) = owner.and_then(|k| self.sub(k)) {
+                        out.push_payload(
+                            Some(sub),
+                            Event::Reconnected {
+                                sub,
+                                gap_from: crate::ids::wall_nanos(),
+                            },
+                        );
+                    }
                 }
                 match kind {
                     StreamKind::Portfolio => self.portfolio_parts.0 = false,

@@ -120,13 +120,26 @@ async def test_trading_bot_handles_a_refusal_and_a_closed_gate() -> None:
         await client.cancel(bot.working)
 
 
+async def test_a_reconnected_order_stream_makes_the_bot_reconcile() -> None:
+    async with await testing.mock_bcs() as mock:
+        client = await mock.connect()
+        bot = trading_bot.TradingBot(client, "SBER", trading_bot.Journal(), Decimal(1))
+        await bot.start()
+        moment = datetime(2026, 10, 21, tzinfo=timezone.utc)
+        envelope = brokapi.Envelope(
+            source="bcs-ud", sub=None, ts=brokapi.Timestamps(rx_ns=0), payload=brokapi.Reconnected(sub=7, gap_from=moment)
+        )
+        await bot.on_event(envelope)
+        assert bot.need_reconcile
+
+
 async def test_an_unknown_event_makes_the_bot_reconcile() -> None:
     async with await testing.mock_bcs() as mock:
         client = await mock.connect()
         bot = trading_bot.TradingBot(client, "SBER", trading_bot.Journal(), Decimal(1))
         await bot.start()
         envelope = brokapi.Envelope(
-            source="bcs-ud", sub=None, ts=brokapi.Timestamps(rx_ns=0), payload=brokapi.UnknownEvent("Reconnected", {})
+            source="bcs-ud", sub=None, ts=brokapi.Timestamps(rx_ns=0), payload=brokapi.UnknownEvent("BrandNew", {})
         )
         await bot.on_event(envelope)
         assert bot.need_reconcile

@@ -14,7 +14,7 @@ use brokapi_sansio::{
     SubscriptionSet,
 };
 
-use crate::map::execution::map_ws_execution;
+use crate::map::execution::{Cumulative, cumulative_of, map_ws_execution};
 use crate::map::order::{map_order_status, map_place_response, map_ws_order_message};
 use crate::map::portfolio::map_ws_portfolio;
 
@@ -114,10 +114,19 @@ pub struct UdCore {
     /// the broker's id, so this is how a listed order gets its cid back. Learned from place answers,
     /// status reads and the order-events stream.
     order_ids: HashMap<String, brokapi_core::ClientOrderId>,
+    /// Running totals of each order from its latest message (the broker order id is the key): the price of
+    /// a fill is the growth of the value over the growth of the quantity.
+    totals: HashMap<String, Cumulative>,
+    totals_order: VecDeque<String>,
+    /// How many times the order events session announced a connect. From the second on, the connection
+    /// was lost once and what happened to the orders in the gap is not known.
+    connects: u32,
 }
 
 /// How many `executionId`s are remembered for de-duplication.
 const SEEN_EXECUTIONS_CAP: usize = 20_000;
+/// How many orders keep their running totals.
+const TOTALS_CAP: usize = 20_000;
 
 impl Default for UdCore {
     fn default() -> Self {
@@ -139,6 +148,9 @@ impl UdCore {
             seen_executions: HashSet::new(),
             seen_order: VecDeque::new(),
             order_ids: HashMap::new(),
+            totals: HashMap::new(),
+            totals_order: VecDeque::new(),
+            connects: 0,
         }
     }
 
@@ -203,6 +215,7 @@ impl UdCore {
                 self.push_execution(&order, now, out);
             }
             IncomingMessage::OrderTransaction(order) => self.push_order(&order, now, out),
+            IncomingMessage::Reconnected => self.on_connect(out),
             IncomingMessage::Portfolio(positions) => {
                 out.push(CoreEvent {
                     sub: self.find_portfolio_sub(),
@@ -213,6 +226,26 @@ impl UdCore {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// The session of the order events channel is (re)connected. From the second time on the connection
+    /// was lost: tell the consumer on both subscriptions that carry orders and fills (the emitter
+    /// closes the trading gate on it).
+    fn on_connect(&mut self, out: &mut EventSink) {
+        self.connects += 1;
+        if self.connects < 2 {
+            return;
+        }
+        let gap_from = crate::map::unix_nanos(chrono::Utc::now());
+        for sub in [self.find_order_state_sub(), self.find_execution_sub()]
+            .into_iter()
+            .flatten()
+        {
+            out.push(CoreEvent {
+                sub: Some(sub),
+                payload: brokapi_core::Event::Reconnected { sub, gap_from },
+            });
         }
     }
 
@@ -232,12 +265,26 @@ impl UdCore {
     }
 
     /// `Event::Execution` for a message with a fill, once per `executionId`. Nothing is emitted
-    /// (and nothing remembered) while nobody is subscribed to executions.
+    /// while nobody is subscribed to executions. The running totals of the order are kept in any case:
+    /// the price of the next fill is computed from them.
     fn push_execution(&mut self, order: &OrderMessage, now: Instant, out: &mut EventSink) {
-        let Some(sub) = self.find_execution_sub() else {
+        let Some(data) = order.data.as_ref() else {
             return;
         };
-        let Some(exec) = map_ws_execution(order, now) else {
+        let order_id = data.order_id.clone().filter(|s| !s.is_empty());
+        let before = order_id
+            .as_ref()
+            .and_then(|id| self.totals.get(id))
+            .copied();
+        let after = cumulative_of(data);
+        let exec = match self.find_execution_sub() {
+            Some(sub) => map_ws_execution(order, now, before).map(|e| (sub, e)),
+            None => None,
+        };
+        if let (Some(id), Some(after)) = (order_id, after) {
+            self.remember_totals(id, after);
+        }
+        let Some((sub, exec)) = exec else {
             return;
         };
         if !self.seen_executions.insert(exec.trade_id.clone()) {
@@ -253,6 +300,17 @@ impl UdCore {
             sub: Some(sub),
             payload: brokapi_core::Event::Execution(exec),
         });
+    }
+
+    fn remember_totals(&mut self, order_id: String, totals: Cumulative) {
+        if self.totals.insert(order_id.clone(), totals).is_none() {
+            self.totals_order.push_back(order_id);
+            if self.totals_order.len() > TOTALS_CAP
+                && let Some(old) = self.totals_order.pop_front()
+            {
+                self.totals.remove(&old);
+            }
+        }
     }
 
     fn find_execution_sub(&self) -> Option<SubscriptionId> {

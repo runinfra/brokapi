@@ -1,19 +1,21 @@
 //! Stop orders: core requests <-> `StopOrdersService` messages.
 //!
-//! Units as for plain orders: quantity in LOTS, prices per one instrument.
+//! Units as for plain orders: the domain request counts in units of the instrument and the wire counts in
+//! lots, so the functions here take or read the lot size. Prices are per one instrument.
 
 use std::time::Instant;
 
 use brokapi_core::{
-    BrokerOrderId, ClientOrderId, Error, PlaceStopOrderRequest, Price, Qty, Side, StopExpiry,
+    BrokerOrderId, ClientOrderId, Error, PlaceStopOrderRequest, Price, Side, StopExpiry,
     StopOrderKind, StopOrderSnapshot, StopOrderState,
 };
 use brokapi_tbank_protocol::v1 as pb;
 
 use crate::ids::{
     id_from_parts, instrument_ref, nanos_to_proto, price_of_money, price_to_quotation,
-    proto_to_nanos, require_whole_lots, stamps,
+    proto_to_nanos, stamps,
 };
+use crate::lots::lots_to_qty;
 
 fn rejected(code: &str, message: impl Into<String>) -> Error {
     Error::Rejected {
@@ -35,7 +37,6 @@ fn positive(what: &str, p: Price) -> Result<(), Error> {
 
 /// Checks that need no network. Run before any quota is spent or anything is registered.
 pub fn validate(req: &PlaceStopOrderRequest) -> Result<(), Error> {
-    require_whole_lots(req.qty)?;
     positive("stop_price", req.stop_price)?;
     match (req.kind, req.limit_price) {
         (StopOrderKind::StopLimit, None) => {
@@ -56,21 +57,22 @@ pub fn validate(req: &PlaceStopOrderRequest) -> Result<(), Error> {
     Ok(())
 }
 
-/// Builds the `PostStopOrder` request for `account` from a domain request.
+/// Builds the `PostStopOrder` request for `account` from a domain request. `lots` is the quantity in
+/// lots (the request is in units, the caller converts with the lot size of the instrument).
 ///
 /// The `cid` goes to `order_id`, the idempotency key. The request is checked with [`validate`]
 /// first, so nothing invalid is built.
 ///
 /// # Errors
 ///
-/// [`Error::Rejected`] with code `invalid_qty`, `invalid_price`, `missing_limit_price` or
+/// [`Error::Rejected`] with code `invalid_price`, `missing_limit_price` or
 /// `unsupported_expiry`, as [`validate`] lists.
 pub fn build_post(
     account: &str,
     req: &PlaceStopOrderRequest,
+    lots: i64,
 ) -> Result<pb::PostStopOrderRequest, Error> {
     validate(req)?;
-    let lots = require_whole_lots(req.qty)?;
     let (expiration_type, expire_date) = match req.expiry {
         StopExpiry::GoodTillCancel => (pb::StopOrderExpirationType::GoodTillCancel, None),
         StopExpiry::GoodTillDate(t) => (
@@ -135,8 +137,14 @@ fn state_of(s: pb::StopOrderStatusOption) -> StopOrderState {
 }
 
 /// Core snapshot of a broker stop order. `cid` comes from what this connector registered at
-/// `place_stop` (the broker's `StopOrder` does not carry the idempotency key).
-pub fn snapshot(o: &pb::StopOrder, cid: Option<ClientOrderId>, now: Instant) -> StopOrderSnapshot {
+/// `place_stop` (the broker's `StopOrder` does not carry the idempotency key). `lot` is the lot size of
+/// the instrument: the quantity of the snapshot is in units.
+pub fn snapshot(
+    o: &pb::StopOrder,
+    cid: Option<ClientOrderId>,
+    now: Instant,
+    lot: i64,
+) -> StopOrderSnapshot {
     let kind = kind_of(o.order_type());
     let limit = o.price.as_ref().map(price_of_money).filter(|p| {
         p.is_positive()
@@ -156,7 +164,7 @@ pub fn snapshot(o: &pb::StopOrder, cid: Option<ClientOrderId>, now: Instant) -> 
             _ => Side::Buy,
         },
         kind,
-        qty: Qty::from(o.lots_requested),
+        qty: lots_to_qty(o.lots_requested, lot),
         stop_price: o
             .stop_price
             .as_ref()
@@ -175,6 +183,7 @@ mod tests {
     use brokapi_core::{InstrumentId, InstrumentKey, NativeId, UnixNanos};
 
     use super::*;
+    use brokapi_core::Qty;
 
     fn req(kind: StopOrderKind, limit: Option<Price>, expiry: StopExpiry) -> PlaceStopOrderRequest {
         PlaceStopOrderRequest {
@@ -197,6 +206,7 @@ mod tests {
         let w = build_post(
             "acc",
             &req(StopOrderKind::StopLoss, None, StopExpiry::GoodTillCancel),
+            3,
         )
         .unwrap();
         assert_eq!(w.quantity, 3);
@@ -228,6 +238,7 @@ mod tests {
                 Some(Price::from(251)),
                 StopExpiry::GoodTillDate(t),
             ),
+            3,
         )
         .unwrap();
         assert_eq!(w.stop_order_type(), pb::StopOrderType::TakeProfit);
@@ -268,9 +279,6 @@ mod tests {
             }
         }
         let mut r = req(StopOrderKind::StopLoss, None, StopExpiry::GoodTillCancel);
-        r.qty = Qty::new(dec!(1.5));
-        assert!(validate(&r).is_err(), "half a lot");
-        r.qty = Qty::from(1);
         r.stop_price = Price::from(0);
         assert!(validate(&r).is_err(), "zero stop price");
     }
@@ -291,12 +299,13 @@ mod tests {
             ..Default::default()
         };
         let cid = ClientOrderId::from_u128(7);
-        let s = snapshot(&o, Some(cid), Instant::now());
+        let s = snapshot(&o, Some(cid), Instant::now(), 10);
         assert_eq!(s.cid, Some(cid));
         assert_eq!(s.broker_id.as_str(), "SO1");
         assert_eq!(s.kind, StopOrderKind::StopLimit);
         assert_eq!(s.side, Side::Sell);
-        assert_eq!(s.qty.decimal(), dec!(2.0));
+        // 2 lots of 10 shares.
+        assert_eq!(s.qty.decimal(), dec!(20));
         assert_eq!(s.stop_price.decimal(), dec!(250.0));
         assert_eq!(s.limit_price.map(Price::decimal), Some(dec!(249.0)));
         assert_eq!(s.state, StopOrderState::Active);
@@ -312,6 +321,6 @@ mod tests {
             stop_price: Some(brokapi_tbank_protocol::money::money("rub", "10.0")),
             ..Default::default()
         };
-        assert!(snapshot(&o, None, Instant::now()).limit_price.is_none());
+        assert!(snapshot(&o, None, Instant::now(), 1).limit_price.is_none());
     }
 }

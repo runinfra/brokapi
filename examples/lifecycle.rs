@@ -55,7 +55,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         instrument: sber,
         side: Side::Buy,
         order_type: OrderType::Limit,
-        qty: Qty::from(1),
+        qty: Qty::from(10),
         price: Some(Price::from(200)),
     })
     .await?;

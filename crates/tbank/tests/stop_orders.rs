@@ -53,7 +53,7 @@ fn stop(kind: StopOrderKind, stop: Decimal, limit: Option<Decimal>) -> PlaceStop
         instrument: sber(),
         side: Side::Sell,
         kind,
-        qty: Qty::from(2),
+        qty: Qty::from(20),
         stop_price: Price::new(stop),
         limit_price: limit.map(Price::new),
         expiry: StopExpiry::GoodTillCancel,
@@ -92,7 +92,7 @@ async fn parameters_reach_the_broker_and_come_back() {
     let s = &active[0];
     assert_eq!(s.cid, Some(cid));
     assert_eq!(s.kind, StopOrderKind::TakeProfit);
-    assert_eq!(s.qty.decimal(), dec!(2.0));
+    assert_eq!(s.qty.decimal(), dec!(20.0));
     assert_eq!(s.stop_price.decimal(), dec!(300.5));
     assert_eq!(s.limit_price.map(Price::decimal), Some(dec!(300.0)));
     assert_eq!(s.expiry, StopExpiry::GoodTillDate(when));
