@@ -1220,3 +1220,87 @@ async fn rate_limited_place_leaves_the_cid_usable() {
         Err(Error::Rejected { ref code, .. }) if code == "duplicate_place"
     ));
 }
+
+// ------------------------------------------------------------- lot for trading, end of a period
+
+#[tokio::test]
+async fn trade_lot_size_replaces_the_lot_of_the_directory_only_when_it_is_above_zero() {
+    let server = MockServer::start().await;
+    let (md, _rx) = md(&server).await;
+    let lots = |p: &brokapi_core::TradingParams| (p.lot_size.decimal(), p.min_qty.decimal());
+
+    // 0 is "no value": the lot of GetAsset (10 in the mock) stays.
+    let p = md.trading_params(&sber()).await.unwrap();
+    assert_eq!(lots(&p), (dec!(10.0), dec!(10.0)));
+    // The call went for the first account of the token.
+    assert_eq!(
+        server.state.count_calls("GetAssetParams:SBER@MISX:ACC1"),
+        1,
+        "{:?}",
+        server.state.calls()
+    );
+
+    // Above 0 it replaces the lot, and the minimum quantity with it.
+    server
+        .state
+        .options
+        .trade_lot_size
+        .store(100, std::sync::atomic::Ordering::SeqCst);
+    let p = md.trading_params(&sber()).await.unwrap();
+    assert_eq!(lots(&p), (dec!(100.0), dec!(100.0)));
+    // The rest of the parameters come from GetAsset as before.
+    assert_eq!(
+        (p.currency.as_str(), p.price_step.to_string()),
+        ("RUB", "0.01".to_string())
+    );
+}
+
+#[tokio::test]
+async fn a_refused_params_call_keeps_the_lot_of_the_directory_and_a_quota_error_is_returned() {
+    let server = MockServer::start().await;
+    let (md, _rx) = md(&server).await;
+    server
+        .state
+        .options
+        .trade_lot_size
+        .store(100, std::sync::atomic::Ordering::SeqCst);
+
+    // The broker refuses the extra call: the answer of GetAsset is still good.
+    *server.state.options.params_error.lock().unwrap() = Some(Code::PermissionDenied);
+    let p = md.trading_params(&sber()).await.unwrap();
+    assert_eq!(p.lot_size.decimal(), dec!(10.0));
+
+    // A limit is not a refusal of this call: the caller must see it and repeat the read.
+    *server.state.options.params_error.lock().unwrap() = Some(Code::ResourceExhausted);
+    let err = md.trading_params(&sber()).await.unwrap_err();
+    assert!(matches!(err, Error::RateLimited { .. }), "{err:?}");
+}
+
+#[tokio::test]
+async fn every_history_request_has_both_ends_of_the_period() {
+    let server = MockServer::start().await;
+    let (md, _rx) = md(&server).await;
+    let (ud, _urx) = ud(&server, "ACC1").await;
+    let range = TimeRange::new(
+        UnixNanos::from_nanos(1_700_000_000 * 1_000_000_000),
+        UnixNanos::from_nanos(1_700_003_600 * 1_000_000_000),
+    );
+    md.candles(&sber(), Timeframe::M5, range).await.unwrap();
+    // M10 is built from M5 and widens the start: the end must still be there.
+    md.candles(&sber(), Timeframe::M10, range).await.unwrap();
+    ud.executions(range).await.unwrap();
+
+    let seen = server.state.options.intervals.lock().unwrap().clone();
+    assert!(seen.iter().any(|(m, ..)| *m == "Bars"));
+    assert!(seen.iter().any(|(m, ..)| *m == "Trades"));
+    for (method, start, end) in seen {
+        assert!(
+            start.is_some() && end.is_some(),
+            "{method} was sent without a bound: {start:?} {end:?}"
+        );
+        assert!(
+            end.unwrap() > start.unwrap(),
+            "{method}: the end follows the start"
+        );
+    }
+}

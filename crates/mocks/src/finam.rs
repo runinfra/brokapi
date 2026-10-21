@@ -59,6 +59,9 @@ fn now_ts() -> prost_types::Timestamp {
     }
 }
 
+/// A history request seen by the mock: method, interval start and end in seconds (`None`: not sent).
+pub type SeenInterval = (&'static str, Option<i64>, Option<i64>);
+
 /// Knobs a test can turn while the server runs.
 #[derive(Default)]
 pub struct MockOptions {
@@ -82,6 +85,13 @@ pub struct MockOptions {
     pub bars_requests: Mutex<Vec<(i32, i64)>>,
     /// Timeframes of `SubscribeBars` streams opened.
     pub bars_streams: Mutex<Vec<i32>>,
+    /// `trade_lot_size` that `GetAssetParams` answers (0: "no value", the default).
+    pub trade_lot_size: std::sync::atomic::AtomicI64,
+    /// `GetAssetParams` fails with this code.
+    pub params_error: Mutex<Option<Code>>,
+    /// Every `Bars`, `Trades` and `Transactions` request seen: (method, interval start seconds, interval end
+    /// seconds), `None` for a missing bound. For checking that the end of the period is always sent.
+    pub intervals: Mutex<Vec<SeenInterval>>,
 }
 
 struct Account {
@@ -259,6 +269,19 @@ impl MockState {
         self.calls.lock().unwrap().push(what.into());
     }
 
+    fn note_interval(
+        &self,
+        method: &'static str,
+        interval: Option<&brokapi_finam_protocol::pb::google::r#type::Interval>,
+    ) {
+        let secs = |t: Option<&prost_types::Timestamp>| t.map(|t| t.seconds);
+        self.options.intervals.lock().unwrap().push((
+            method,
+            secs(interval.and_then(|i| i.start_time.as_ref())),
+            secs(interval.and_then(|i| i.end_time.as_ref())),
+        ));
+    }
+
     /// Gateway behaviour: every call except Auth needs a token we issued.
     fn check_auth<T>(&self, req: &Request<T>) -> Result<(), Status> {
         let n = self.options.unauth_next.load(Ordering::SeqCst);
@@ -427,7 +450,9 @@ impl AccountsService for Mock {
         req: Request<pa::TradesRequest>,
     ) -> Result<Response<pa::TradesResponse>, Status> {
         self.0.check_auth(&req)?;
-        let id = req.into_inner().account_id;
+        let r = req.into_inner();
+        self.0.note_interval("Trades", r.interval.as_ref());
+        let id = r.account_id;
         self.0.record(format!("Trades:{id}"));
         let trades = self.0.account(&id, |a| a.trades.clone())?;
         Ok(Response::new(pa::TradesResponse { trades }))
@@ -435,8 +460,10 @@ impl AccountsService for Mock {
 
     async fn transactions(
         &self,
-        _req: Request<pa::TransactionsRequest>,
+        req: Request<pa::TransactionsRequest>,
     ) -> Result<Response<pa::TransactionsResponse>, Status> {
+        self.0
+            .note_interval("Transactions", req.get_ref().interval.as_ref());
         unimpl("Transactions")
     }
 
@@ -753,6 +780,7 @@ impl MarketDataService for Mock {
     ) -> Result<Response<pm::BarsResponse>, Status> {
         self.0.check_auth(&req)?;
         let r = req.into_inner();
+        self.0.note_interval("Bars", r.interval.as_ref());
         self.0.record("Bars");
         let start = r
             .interval
@@ -1137,9 +1165,28 @@ impl AssetsService for Mock {
 
     async fn get_asset_params(
         &self,
-        _r: Request<ps::GetAssetParamsRequest>,
+        req: Request<ps::GetAssetParamsRequest>,
     ) -> Result<Response<ps::GetAssetParamsResponse>, Status> {
-        unimpl("GetAssetParams")
+        self.0.check_auth(&req)?;
+        let r = req.into_inner();
+        self.0
+            .record(format!("GetAssetParams:{}:{}", r.symbol, r.account_id));
+        if let Some(code) = *self.0.options.params_error.lock().unwrap() {
+            return Err(Status::new(code, "mock failure"));
+        }
+        if r.symbol != SBER && r.symbol != "GAZP@MISX" {
+            return Err(Status::not_found("unknown instrument"));
+        }
+        Ok(Response::new(ps::GetAssetParamsResponse {
+            symbol: r.symbol,
+            account_id: r.account_id,
+            trade_lot_size: self
+                .0
+                .options
+                .trade_lot_size
+                .load(std::sync::atomic::Ordering::Relaxed),
+            ..Default::default()
+        }))
     }
 
     async fn options_chain(

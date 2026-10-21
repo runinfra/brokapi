@@ -30,7 +30,7 @@ use tracing::warn;
 use crate::config::{UD_MAX_PING, UserDataConfig, effective_ping, silence_limit};
 use crate::core::ud::{StreamKind, UdCore, UdFrame, UdSubKind};
 use crate::emit::Emitter;
-use crate::error::{config, is_not_found, map_status, transport};
+use crate::error::{STOP_ORDERS_RESPONSE_LIMIT, config, is_not_found, map_status, transport};
 use crate::ids::{instrument_ref, nanos_to_proto, price_to_quotation, require_whole_lots, stamps};
 use crate::map::{execution, order as map_order, portfolio as map_portfolio, stop as map_stop};
 use crate::raw::TbankRaw;
@@ -39,6 +39,22 @@ use crate::util::{CommandOutcome, SubIdGen, command, query};
 
 /// Pages of operation history read at most per `executions` call (1000 operations each).
 const MAX_HISTORY_PAGES: usize = 20;
+
+/// The widest period T-Bank accepts in `from` and `to` (T-Invest errors 30061 and 30062): 1970-01-01 to 2099-12-31.
+const STOP_READ_FROM: i64 = 0;
+const STOP_READ_TO: i64 = 4_102_444_799;
+/// Requests `active_stop_orders` may spend on one list when the broker keeps answering 30261.
+const STOP_READ_MAX_REQUESTS: usize = 40;
+
+fn stop_list_too_long(requests: usize) -> Error {
+    Error::Rejected {
+        code: STOP_ORDERS_RESPONSE_LIMIT.to_string(),
+        message: format!(
+            "30261: the broker refuses to list the active stop orders, even in pieces ({requests} requests). \
+             Cancel stop orders you do not need, or read them by period with raw()"
+        ),
+    }
+}
 
 /// Stop orders this connector placed: the broker's `StopOrder` does not carry our idempotency key,
 /// so the cid <-> broker id link lives only here (lost on restart, see the T-Bank page of the book).
@@ -755,6 +771,56 @@ impl UserDataConnector {
 
     fn account(&self) -> String {
         self.inner.account.clone()
+    }
+
+    /// Reads the active stop orders. The first request has no period. When the broker answers 30261 (too many
+    /// stop orders for one reply), the period `from`..`to` is halved until every piece fits. The pieces are
+    /// merged, a stop order that falls in two pieces is kept once. At most [`STOP_READ_MAX_REQUESTS`] requests.
+    async fn read_active_stops(&self) -> Result<Vec<pb::StopOrder>, Error> {
+        let mut found: Vec<pb::StopOrder> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        // `None` is the whole list, `Some((from, to))` is a period in seconds.
+        let mut todo: Vec<Option<(i64, i64)>> = vec![None];
+        let mut requests = 0usize;
+        while let Some(period) = todo.pop() {
+            if requests == STOP_READ_MAX_REQUESTS {
+                return Err(stop_list_too_long(requests));
+            }
+            requests += 1;
+            self.acquire("GetStopOrders")?;
+            let stamp = |secs: i64| prost_types::Timestamp {
+                seconds: secs,
+                nanos: 0,
+            };
+            let req = pb::GetStopOrdersRequest {
+                account_id: self.account(),
+                status: pb::StopOrderStatusOption::StopOrderStatusActive as i32,
+                from: period.map(|(from, _)| stamp(from)),
+                to: period.map(|(_, to)| stamp(to)),
+            };
+            let mut c = self.inner.client.stop_orders();
+            match query(self.inner.request_timeout, c.get_stop_orders(req)).await {
+                Ok(r) => {
+                    for o in r.stop_orders {
+                        if seen.insert(o.stop_order_id.clone()) {
+                            found.push(o);
+                        }
+                    }
+                }
+                Err(Error::Rejected { code, .. }) if code == STOP_ORDERS_RESPONSE_LIMIT => {
+                    let (from, to) = period.unwrap_or((STOP_READ_FROM, STOP_READ_TO));
+                    if to - from < 2 {
+                        return Err(stop_list_too_long(requests));
+                    }
+                    // Both halves share the middle second, a stop order there is merged by its number.
+                    let mid = from + (to - from) / 2;
+                    todo.push(Some((mid, to)));
+                    todo.push(Some((from, mid)));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(found)
     }
 
     async fn subscribe(
@@ -2163,6 +2229,12 @@ impl StopOrderExecutor for UserDataConnector {
     /// [`Error::RateLimited`], [`Error::Transport`], [`Error::Config`] and [`Error::Rejected`], as for
     /// [`order_state`](OrderExecutor::order_state). A read, so repeat it later.
     ///
+    /// The broker refuses to answer with too many stop orders at once (error 30261, "narrow the request with
+    /// `from` and `to`"). The connector first asks for the whole list. On 30261 it halves the period until every
+    /// piece fits and merges the pieces, up to 40 requests. If that is still not enough, the error is
+    /// [`Error::Rejected`] with the code `stop_orders_response_limit`. Which time of a stop order `from` and `to`
+    /// compare with, and how many stop orders one answer may hold, are not documented and not verified live.
+    ///
     /// # Examples
     ///
     /// ```
@@ -2190,18 +2262,10 @@ impl StopOrderExecutor for UserDataConnector {
     /// # }
     /// ```
     async fn active_stop_orders(&self) -> Result<Vec<StopOrderSnapshot>, Error> {
-        self.acquire("GetStopOrders")?;
-        let req = pb::GetStopOrdersRequest {
-            account_id: self.account(),
-            status: pb::StopOrderStatusOption::StopOrderStatusActive as i32,
-            from: None,
-            to: None,
-        };
-        let mut c = self.inner.client.stop_orders();
-        let r = query(self.inner.request_timeout, c.get_stop_orders(req)).await?;
+        let raw = self.read_active_stops().await?;
         let now = brokapi_runtime::now();
         let stops = self.inner.stops.lock().expect("stops poisoned");
-        Ok(r.stop_orders
+        Ok(raw
             .iter()
             .map(|o| map_stop::snapshot(o, stops.cid_of(&o.stop_order_id), now))
             .collect())

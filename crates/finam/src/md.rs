@@ -28,7 +28,8 @@ use crate::core::md::DEFAULT_DEPTH;
 use crate::core::{MdCore, MdEvent, MdFrame, StreamEvent, SubStatus};
 use crate::error::{map_protocol_err, transport};
 use crate::map::instrument::{
-    availability_at, kind_from_type, map_asset, map_get_asset, map_schedule, map_trading_params,
+    apply_trade_lot_size, availability_at, kind_from_type, map_asset, map_get_asset, map_schedule,
+    map_trading_params,
 };
 use crate::map::m10::{floor_m10, merge_m5};
 use crate::map::market::{map_bar, map_rest_order_book, map_trade, wire_timeframe};
@@ -566,6 +567,33 @@ impl MarketDataConnector {
             .await
     }
 
+    /// `trade_lot_size` of `GetAssetParams` for the first account of the token, if there is one.
+    ///
+    /// `None` when the token lists no account, when the broker refuses the call (the lot of `GetAsset` is then
+    /// used), or when it answers 0 ("no value"). Other errors (quota, network) are returned: a read, repeat it.
+    async fn trade_lot_size(&self, symbol: &str) -> Result<Option<i64>, Error> {
+        let Some(account) = self.inner.rpc.api.tokens().account_ids().into_iter().next() else {
+            return Ok(None);
+        };
+        let symbol = symbol.to_string();
+        let answer = self
+            .inner
+            .rpc
+            .read("GetAssetParams", |api| {
+                let req = pa::GetAssetParamsRequest {
+                    symbol: symbol.clone(),
+                    account_id: account.clone(),
+                };
+                async move { api.assets().get_asset_params(req).await }
+            })
+            .await;
+        match answer {
+            Ok(r) => Ok((r.trade_lot_size > 0).then_some(r.trade_lot_size)),
+            Err(Error::Rejected { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     async fn schedule_of(&self, symbol: &str) -> Result<pa::ScheduleResponse, Error> {
         let symbol = symbol.to_string();
         self.inner
@@ -946,9 +974,18 @@ impl InstrumentSource for MarketDataConnector {
 
     /// Trading parameters from `GetAsset` (price step, lot size and the like). The library does not
     /// round your orders with them. Errors as in `get`.
+    ///
+    /// The lot size comes from `GetAsset` (`lot_size`). When the token lists an account, a second call
+    /// `GetAssetParams` for the first account asks for `trade_lot_size`, the lot size for trading. If it is
+    /// above 0, it replaces `lot_size` and `min_qty`. If it is 0, missing, or the broker refuses that call, the
+    /// lot of `GetAsset` stays. Not verified live: it is not known when the two differ.
     async fn trading_params(&self, id: &InstrumentId) -> Result<TradingParams, Error> {
         let symbol = symbol_of(id)?;
-        Ok(map_trading_params(&symbol, &self.get_asset(&symbol).await?))
+        let mut params = map_trading_params(&symbol, &self.get_asset(&symbol).await?);
+        if let Some(lot) = self.trade_lot_size(&symbol).await? {
+            apply_trade_lot_size(&mut params, lot);
+        }
+        Ok(params)
     }
 
     /// Derived from the instrument's schedule: Finam has no direct status call.

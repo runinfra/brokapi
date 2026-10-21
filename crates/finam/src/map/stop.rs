@@ -226,6 +226,10 @@ pub fn snapshot(
         // SL/TP order. Only the take-profit leg is ours; a foreign pair is shown by its SL leg.
         let has_sl = price(&s.sl_price).is_some_and(|p| p.is_positive());
         let side = side_from_pb(s.side);
+        // `*_qty_measure` PERCENT: the number is a share of the position (0-100), not pieces. A percent cannot be
+        // shown as `qty`, and passing it on as pieces would be wrong, so the quantity is 0 ("not in pieces").
+        let in_pieces =
+            |measure: i32| pb::SltpQtyMeasure::try_from(measure) != Ok(pb::SltpQtyMeasure::Percent);
         let (kind, qty, stop, limit) = if has_sl {
             let limit = price(&s.limit_price).filter(|p| p.is_positive());
             (
@@ -234,14 +238,22 @@ pub fn snapshot(
                 } else {
                     StopOrderKind::StopLoss
                 },
-                qty0(&s.quantity_sl),
+                if in_pieces(s.sl_qty_measure) {
+                    qty0(&s.quantity_sl)
+                } else {
+                    Qty::ZERO
+                },
                 price0(&s.sl_price),
                 limit,
             )
         } else {
             (
                 StopOrderKind::TakeProfit,
-                qty0(&s.quantity_tp),
+                if in_pieces(s.tp_qty_measure) {
+                    qty0(&s.quantity_tp)
+                } else {
+                    Qty::ZERO
+                },
                 price0(&s.tp_price),
                 None,
             )
@@ -567,6 +579,39 @@ mod tests {
             ..Default::default()
         };
         assert!(!is_stop(&os));
+    }
+
+    #[test]
+    fn a_percent_quantity_of_an_sltp_order_is_not_shown_as_pieces() {
+        let sltp = |sl_measure: pb::SltpQtyMeasure, tp_measure: pb::SltpQtyMeasure, sl: bool| {
+            let leg = |v: &str| Some(crate::util::to_decimal(v.parse::<Decimal>().unwrap()));
+            pb::OrderState {
+                order_id: "S1".into(),
+                status: OrderStatus::Watching as i32,
+                sltp_order: Some(pb::SltpOrder {
+                    symbol: "SBER@MISX".into(),
+                    side: PbSide::Sell as i32,
+                    quantity_sl: leg("25"),
+                    sl_price: sl.then(|| leg("240.0")).flatten(),
+                    quantity_tp: leg("40"),
+                    tp_price: (!sl).then(|| leg("260.0")).flatten(),
+                    sl_qty_measure: sl_measure as i32,
+                    tp_qty_measure: tp_measure as i32,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+        };
+        use pb::SltpQtyMeasure as M;
+        let qty_of = |os: &pb::OrderState| snapshot(os, None, Instant::now()).qty.decimal();
+        // Pieces (or the old answers with no measure): the number is the quantity.
+        assert_eq!(qty_of(&sltp(M::Value, M::Value, true)), dec!(25));
+        assert_eq!(qty_of(&sltp(M::Undefined, M::Undefined, false)), dec!(40));
+        // Percent of the position: no quantity in pieces, not "25".
+        assert_eq!(qty_of(&sltp(M::Percent, M::Value, true)), dec!(0));
+        assert_eq!(qty_of(&sltp(M::Value, M::Percent, false)), dec!(0));
+        // The measure of the other leg does not matter.
+        assert_eq!(qty_of(&sltp(M::Value, M::Percent, true)), dec!(25));
     }
 
     #[test]

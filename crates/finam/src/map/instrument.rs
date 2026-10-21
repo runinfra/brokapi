@@ -87,6 +87,16 @@ pub fn map_trading_params(symbol: &str, a: &pb::GetAssetResponse) -> TradingPara
     }
 }
 
+/// The lot for trading, when `GetAssetParams` gives one: `trade_lot_size` above 0 replaces the lot size of
+/// `GetAsset` (`lot_size` and `min_qty`). 0 or less means "no value" and `params` stays as it is.
+pub fn apply_trade_lot_size(params: &mut TradingParams, trade_lot_size: i64) {
+    if trade_lot_size > 0 {
+        let lot = Qty::from(trade_lot_size);
+        params.lot_size = lot;
+        params.min_qty = lot;
+    }
+}
+
 /// Session type heuristics: the docs do not list the `type` values.
 pub fn session_kind(t: &str) -> SessionKind {
     let t = t.to_ascii_uppercase();

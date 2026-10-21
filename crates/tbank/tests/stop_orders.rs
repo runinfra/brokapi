@@ -242,3 +242,133 @@ async fn plain_orders_are_unaffected_by_stop_orders() {
     // A stop order is not an exchange order: the plain list stays empty.
     assert!(ud.active_orders().await.unwrap().is_empty());
 }
+
+/// A connector whose `GetStopOrders` bucket is wide enough for a long read in pieces (the default burst is 10).
+async fn ud_with_wide_stop_reads(server: &MockServer) -> UserDataConnector {
+    let toml = brokapi_tbank::limits::DEFAULT_LIMITS_TOML.replace(
+        "rate = 60\nper = \"60s\"\nburst = 10",
+        "rate = 60\nper = \"60s\"\nburst = 100",
+    );
+    assert_ne!(
+        toml,
+        brokapi_tbank::limits::DEFAULT_LIMITS_TOML,
+        "the bucket was found"
+    );
+    let limits = brokapi_tbank::limits::limits_from_toml_str(&toml).expect("limits");
+    let (tx, rx) = mpsc::channel(64);
+    std::mem::forget(rx);
+    let cfg = TbankConfig::for_mock(TOKEN, &server.endpoint).with_account(ACCOUNT_A);
+    let ud = UserDataConnector::start(
+        UserDataConfig::new(cfg, "tbank-ud-wide"),
+        BrokerLimiter::new(&limits),
+        tx,
+    )
+    .await
+    .expect("ud");
+    ud.reconcile(&[]).await.unwrap();
+    ud
+}
+
+#[tokio::test]
+async fn a_list_too_long_for_one_answer_is_read_in_pieces() {
+    let opts: Arc<MockOptions> = Arc::default();
+    // The broker answers 30261 for more than 2 stop orders at once; the stop orders are a day apart.
+    opts.stop_response_limit.store(2, Ordering::SeqCst);
+    opts.stop_create_step_secs.store(86_400, Ordering::SeqCst);
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let ud = ud_with_wide_stop_reads(&server).await;
+    let mut placed = Vec::new();
+    for _ in 0..5 {
+        let req = stop(StopOrderKind::StopLoss, dec!(1.0), None);
+        placed.push(req.cid);
+        ud.place_stop(req).await.unwrap();
+    }
+
+    let active = ud.active_stop_orders().await.unwrap();
+    assert_eq!(active.len(), 5, "all of them, none twice");
+    let mut cids: Vec<_> = active.iter().filter_map(|s| s.cid).collect();
+    cids.sort();
+    placed.sort();
+    assert_eq!(cids, placed, "the cids still match");
+
+    let seen = opts.stop_get_requests.lock().unwrap().clone();
+    assert_eq!(
+        seen[0],
+        (None, None),
+        "the first request asks for the whole list"
+    );
+    assert!(seen.len() > 2, "then the period was cut: {seen:?}");
+    assert!(
+        seen[1..].iter().all(|(f, t)| f.is_some() && t.is_some()),
+        "every later request has from and to: {seen:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_short_list_is_one_request_without_a_period() {
+    let opts: Arc<MockOptions> = Arc::default();
+    opts.stop_response_limit.store(10, Ordering::SeqCst);
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let ud = ud(&server).await;
+    ud.place_stop(stop(StopOrderKind::StopLoss, dec!(1.0), None))
+        .await
+        .unwrap();
+    assert_eq!(ud.active_stop_orders().await.unwrap().len(), 1);
+    assert_eq!(*opts.stop_get_requests.lock().unwrap(), vec![(None, None)]);
+}
+
+#[tokio::test]
+async fn a_list_that_cannot_be_cut_gives_a_clear_refusal() {
+    let opts: Arc<MockOptions> = Arc::default();
+    // Three stop orders created in the same second: no period separates them.
+    opts.stop_response_limit.store(2, Ordering::SeqCst);
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let ud = ud_with_wide_stop_reads(&server).await;
+    for _ in 0..3 {
+        ud.place_stop(stop(StopOrderKind::StopLoss, dec!(1.0), None))
+            .await
+            .unwrap();
+    }
+    let err = ud.active_stop_orders().await.unwrap_err();
+    match err {
+        Error::Rejected { code, message } => {
+            assert_eq!(code, "stop_orders_response_limit");
+            assert!(message.contains("30261"), "{message}");
+        }
+        other => panic!("{other:?}"),
+    }
+    let requests = opts.stop_get_requests.lock().unwrap().len();
+    assert!(requests <= 40, "the read stops at its cap: {requests}");
+}
+
+#[tokio::test]
+async fn the_stop_orders_limit_of_an_instrument_is_a_refusal_not_a_rate_limit() {
+    let opts: Arc<MockOptions> = Arc::default();
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let ud = ud(&server).await;
+
+    // 80007: a business refusal. A repeat cannot help, so it is not RateLimited.
+    *opts.stop_post_fail.lock().unwrap() =
+        Some((tonic::Code::ResourceExhausted, "80007".to_string()));
+    let req = stop(StopOrderKind::StopLoss, dec!(1.0), None);
+    let err = ud.place_stop(req.clone()).await.unwrap_err();
+    assert!(
+        matches!(err, Error::Rejected { ref code, .. } if code == "stop_orders_limit"),
+        "{err:?}"
+    );
+
+    // 80002: a request limit. The same status, another number, and now it is a rate limit.
+    *opts.stop_post_fail.lock().unwrap() =
+        Some((tonic::Code::ResourceExhausted, "80002".to_string()));
+    let err = ud
+        .place_stop(stop(StopOrderKind::StopLoss, dec!(1.0), None))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::RateLimited { .. }), "{err:?}");
+
+    // The refusal was clean (the broker did not act): the same cid goes through once the limit is gone.
+    *opts.stop_post_fail.lock().unwrap() = None;
+    ud.place_stop(req)
+        .await
+        .expect("the cid is free after a refusal");
+}

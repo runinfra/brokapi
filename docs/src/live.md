@@ -358,7 +358,10 @@ cargo test -p brokapi-tbank --features integration-live --test live_sandbox -- -
     `ReplaceOrder` подряд по одной заявке - второй должен увидеть новый биржевой номер.
 15. **Стоп-заявки в песочнице (новое, 19.10).** Отвечает ли песочный адрес на `StopOrdersService` или нужны
     `SandboxService/PostSandboxStopOrder` и родственные (через `raw()` они доступны).
-16. **`GetStopOrders` без `from`/`to`**: нужен ли период.
+16. **`GetStopOrders` без `from`/`to`**: нужен ли период. После ошибки 30261 (слишком много стоп-заявок в ответе)
+    (новое, 21.10): сколько стоп-заявок помещается в один ответ, по какому времени заявки (создания, срока) брокер
+    отбирает период, попадают ли в период стопы «до отмены», как настоящий сервер отдает номер ошибки (в тексте
+    статуса, как в имитации, или в заголовке `message`), и отвечает ли `RESOURCE_EXHAUSTED` 80007 при лишнем стопе.
 17. **SELL-стоп без позиции.** Сценарий ставит SELL-стопы ниже рынка. Если песочница или бой не принимают
     продажу без позиции, поставить BUY выше рынка.
 18. **Повтор `order_id` у `PostStopOrder`**, как в вопросе 1.
@@ -431,5 +434,10 @@ cargo test -p brokapi-finam --features integration-live --test live -- --nocaptu
     `time_in_force`, `PlaceSLTPOrder` только с TP-частью, какой статус у ожидающего стопа, попадают ли стопы в
     `GetOrders` и `SubscribeOrders`, снимает ли их `CancelOrder`, возвращается ли `comment` в `sltp_order`, принимается ли
     SELL без позиции.
-17. **`raw()`** (новое): `LastQuote` и `Clock` через `connector.raw()` (`cargo run -p brokapi-finam --example
+17. **Лот для торговли (новое, 21.10).** `GetAssetParams.trade_lot_size`: бывает ли он не равен `lot_size` из
+    `GetAsset`, зависит ли от счета (коннектор спрашивает по первому счету токена), что отвечает метод счету без
+    прав на инструмент. Не проверено вживую.
+18. **Процент в SL/TP (новое, 21.10).** Как выглядят `quantity_sl` и `quantity_tp` при `SLTP_QTY_MEASURE_PERCENT` в
+    `GetOrders` и `GetOrder` (коннектор в этом случае отдает количество 0). Не проверено вживую.
+19. **`raw()`** (новое): `LastQuote` и `Clock` через `connector.raw()` (`cargo run -p brokapi-finam --example
     finam_raw_access`, только чтение), заодно `GetUsageMetrics` для вопроса 8.

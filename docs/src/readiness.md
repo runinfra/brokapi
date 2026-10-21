@@ -130,7 +130,7 @@ Mock БКС (`tests/mock_server/server.rs`) с состоянием: заявк�
 - Т4 `connector_tests.rs::own_trades_stream_and_history`.
 - Т5 `connector_tests.rs::portfolio_reads`.
 - Т6 `multi_account.rs` (подписка на портфель), `sansio_tests.rs::portfolio_subscription_needs_both_streams_and_emits_cash_and_positions`.
-- Т7 `stop_orders.rs` (10 тестов: сверка до начала, параметры туда и обратно, чужой счет, неизвестный cid, повтор cid, неясный ответ, локальные проверки, потока нет).
+- Т7 `stop_orders.rs` (14 тестов: сверка до начала, параметры туда и обратно, чужой счет, неизвестный cid, повтор cid, неясный ответ, локальные проверки, потока нет, длинный список читается по периодам, короткий одним запросом, неделимый список дает понятный отказ, 80007 это `Rejected`, а 80002 это `RateLimited`). Разбор кодов `RESOURCE_EXHAUSTED` - тесты в `error.rs`.
 - Т9 `connector_tests.rs::overflow_of_a_lossless_subscription_degrades_until_reconcile`.
 - Т10 `connector_tests.rs::broken_stream_is_reopened_and_subscriptions_restored`, `sansio_tests.rs` (`SubscriptionReset`).
 - Т11 `connector_tests.rs::rate_limited_place_leaves_the_cid_usable`.
@@ -142,12 +142,12 @@ Mock БКС (`tests/mock_server/server.rs`) с состоянием: заявк�
 - Ф2 `connector_tests.rs::dropped_book_stream_is_reopened_with_resync`, `increment_without_a_base_forces_a_fresh_stream`.
 - Ф3 `connector_tests.rs::quotes_trades_and_candles`.
 - Ф4 `connector_tests.rs::m10_candles_are_built_from_m5`.
-- Ф5 `connector_tests.rs::directory_trading_params_status_and_schedule`.
+- Ф5 `connector_tests.rs::directory_trading_params_status_and_schedule`, лот для торговли (`trade_lot_size`) - `trade_lot_size_replaces_the_lot_of_the_directory_only_when_it_is_above_zero` и `a_refused_params_call_keeps_the_lot_of_the_directory_and_a_quota_error_is_returned`, конец периода в запросах истории - `every_history_request_has_both_ends_of_the_period`.
 - Ф6 `connector_tests.rs::commands_wait_for_reconcile_and_replace_is_unsupported` (метода нет в API Финама, коннектор отвечает `Unsupported`).
 - Ф7 `connector_tests.rs::order_state_stream_delivers_updates_with_our_cid`, `reconcile_sorts_confirmed_closed_offline_and_foreign`.
 - Ф8 `connector_tests.rs::executions_history_and_stream`.
 - Ф9 `connector_tests.rs::portfolio_stream_pushes_updates_and_positions_balances_come_from_one_call`.
-- Ф10 `stop_orders.rs` (9 тестов: сверка до начала, `PlaceOrder` с нужным условием срабатывания, тейк-профит через `PlaceSLTPOrder`, чужой стоп без cid, обычные списки стопов не показывают, повтор cid, неясный ответ, потока нет).
+- Ф10 `stop_orders.rs` (9 тестов: сверка до начала, `PlaceOrder` с нужным условием срабатывания, тейк-профит через `PlaceSLTPOrder`, чужой стоп без cid, обычные списки стопов не показывают, повтор cid, неясный ответ, потока нет). Процент вместо штук в чужой SL/TP-заявке - тест `map/stop.rs`.
 - Ф12 `connector_tests.rs::lossless_overflow_emits_overflow_degrades_and_reconcile_recovers`.
 - Ф13 `connector_tests.rs::rate_limited_place_leaves_the_cid_usable`.
 - Ф11 `connector_tests.rs::two_accounts_share_one_jwt_and_see_only_their_own_data`.

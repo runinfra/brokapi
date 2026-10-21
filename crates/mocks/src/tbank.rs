@@ -90,6 +90,16 @@ pub struct MockOptions {
     pub auth_seen: Mutex<Vec<String>>,
     /// `PostStopOrder` calls received (the delay `post_delay_ms` applies to them too).
     pub stop_post_calls: AtomicU32,
+    /// `PostStopOrder` answers with this gRPC code and this status message (the broker's number, such as
+    /// `80007`) instead of placing.
+    pub stop_post_fail: Mutex<Option<(tonic::Code, String)>>,
+    /// `GetStopOrders` answers `INVALID_ARGUMENT` 30261 when more than this many stop orders would be in
+    /// the reply (0: no limit). A request with `from` and `to` counts only the stop orders created in it.
+    pub stop_response_limit: AtomicU32,
+    /// Each new stop order gets a creation time this many seconds after the one before (0: all the same).
+    pub stop_create_step_secs: std::sync::atomic::AtomicI64,
+    /// Every `GetStopOrders` request seen: (from seconds, to seconds), `None` for a missing bound.
+    pub stop_get_requests: Mutex<Vec<(Option<i64>, Option<i64>)>>,
     /// `GetLastPrices` calls served (a method no connector wraps, used to test `raw()`).
     pub last_price_calls: AtomicU32,
 }
@@ -1274,6 +1284,9 @@ impl StopOrdersService for Mock {
         if delay > 0 {
             tokio::time::sleep(Duration::from_millis(delay)).await;
         }
+        if let Some((code, text)) = self.0.opts.stop_post_fail.lock().unwrap().clone() {
+            return Err(Status::new(code, text));
+        }
         let inst = lookup(&r.instrument_id).ok_or_else(|| Status::not_found("50002"))?;
         if r.quantity < 1 {
             return Err(Status::invalid_argument("30016"));
@@ -1288,7 +1301,9 @@ impl StopOrdersService for Mock {
             direction: r.direction,
             currency: "rub".into(),
             order_type: r.stop_order_type,
-            create_date: ts(1_700_000_000),
+            create_date: ts(
+                1_700_000_000 + n as i64 * self.0.opts.stop_create_step_secs.load(Ordering::SeqCst)
+            ),
             expiration_time: r.expire_date,
             price: money(&r.price),
             stop_price: money(&r.stop_price),
@@ -1316,6 +1331,14 @@ impl StopOrdersService for Mock {
         r: Request<pb::GetStopOrdersRequest>,
     ) -> Result<Response<pb::GetStopOrdersResponse>, Status> {
         let r = r.into_inner();
+        let from = r.from.as_ref().map(|t| t.seconds);
+        let to = r.to.as_ref().map(|t| t.seconds);
+        self.0
+            .opts
+            .stop_get_requests
+            .lock()
+            .unwrap()
+            .push((from, to));
         let mut stop_orders: Vec<pb::StopOrder> = self
             .0
             .stops
@@ -1325,9 +1348,17 @@ impl StopOrdersService for Mock {
             .filter(|(acc, o)| {
                 *acc == r.account_id && (r.status == 0 || r.status == 1 || o.status == r.status)
             })
+            .filter(|(_, o)| {
+                let created = o.create_date.as_ref().map(|t| t.seconds).unwrap_or(0);
+                from.is_none_or(|f| created >= f) && to.is_none_or(|t| created <= t)
+            })
             .map(|(_, o)| o.clone())
             .collect();
         stop_orders.sort_by(|a, b| a.stop_order_id.cmp(&b.stop_order_id));
+        let limit = self.0.opts.stop_response_limit.load(Ordering::SeqCst) as usize;
+        if limit > 0 && stop_orders.len() > limit {
+            return Err(Status::invalid_argument("30261"));
+        }
         Ok(Response::new(pb::GetStopOrdersResponse { stop_orders }))
     }
 
