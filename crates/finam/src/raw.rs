@@ -185,8 +185,9 @@ impl FinamRaw {
     ///
     /// - [`Error::RateLimited`]: the local quota for `method` is spent. Nothing was sent.
     /// - [`Error::Rejected`]: the broker certainly did not process the request (for example
-    ///   `INVALID_ARGUMENT`, `NOT_FOUND`, or `UNAUTHENTICATED`: a command is not repeated after a
-    ///   token renewal).
+    ///   `INVALID_ARGUMENT` or `NOT_FOUND`, which is the code `not_found`).
+    /// - [`Error::Config`]: `UNAUTHENTICATED`, the token is refused. A command is not repeated after a token
+    ///   renewal.
     /// - [`Error::Unknown`]: timeout, broken connection or server fault. The command may have been applied.
     ///
     /// # Examples

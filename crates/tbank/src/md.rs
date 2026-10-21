@@ -1150,7 +1150,7 @@ impl InstrumentSource for MarketDataConnector {
     /// assert_eq!(full.currency, "rub");
     ///
     /// let params = md.trading_params(&sber).await?;
-    /// assert_eq!(params.min_qty.to_string(), "1");
+    /// assert_eq!(params.min_qty.to_string(), "10");
     ///
     /// // T-Bank has no listing of mutual funds.
     /// let funds = md.find(InstrumentQuery::ByKind(InstrumentKind::MutualFund)).await;

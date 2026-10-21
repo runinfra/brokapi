@@ -213,7 +213,7 @@ impl BrokerCore for UdCore {
                     // Keep the first moment of the gap if the stream goes down again before it opens.
                     self.down_since
                         .entry(sub)
-                        .or_insert_with(|| crate::util::now_nanos());
+                        .or_insert_with(crate::util::now_nanos);
                 }
             }
             UdEvent::Failed(r) => {

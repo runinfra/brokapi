@@ -186,7 +186,7 @@ impl MarketDataConnector {
     /// // A wrong secret is refused at start.
     /// let wrong = FinamApiConfig { secret: "wrong".into(), ..cfg };
     /// let err = MarketDataConnector::start(MarketDataConfig::new(wrong, "finam-md"), limiter, events).await.err().unwrap();
-    /// assert!(matches!(err, Error::Rejected { .. }));
+    /// assert!(matches!(err, Error::Config(_)));
     /// # Ok(())
     /// # }
     /// ```

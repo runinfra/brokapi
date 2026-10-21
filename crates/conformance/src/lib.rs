@@ -112,7 +112,7 @@ use tokio::time::timeout;
 ///         instrument: sber,
 ///         side: Side::Buy,
 ///         order_type: OrderType::Limit,
-///         qty: lots(1),
+///         qty: Qty::from(10),
 ///         price: Some(REJECT_PRICE),
 ///     })
 ///     .await;

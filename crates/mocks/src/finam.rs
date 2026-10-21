@@ -475,9 +475,12 @@ impl AccountsService for Mock {
                 iv.start_time.as_ref().map(secs),
                 iv.end_time.as_ref().map(secs),
             );
+            // A trade the test pushed without a time is always in the period.
             trades.retain(|t| {
-                let at = t.timestamp.as_ref().map(secs).unwrap_or(0);
-                from.is_none_or(|f| at >= f) && to.is_none_or(|e| at < e)
+                t.timestamp
+                    .as_ref()
+                    .map(secs)
+                    .is_none_or(|at| from.is_none_or(|f| at >= f) && to.is_none_or(|e| at < e))
             });
         }
         trades.sort_by(|a, b| {
