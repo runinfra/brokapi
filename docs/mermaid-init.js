@@ -53,7 +53,18 @@
             box.scrollLeft = (box.scrollWidth - box.clientWidth) / 2;
         }
     };
-    const draw = () => mermaid.run({ querySelector: 'pre.mermaid' }).then(widen);
+    // Mermaid sizes every box by measuring its label at drawing time. Drawn before Golos Text has loaded, the
+    // boxes fit the fallback font, then the wider web font clips the last letters. So wait for the fonts first
+    // (with a time limit, so a font that never loads does not keep the diagrams from drawing).
+    const fontsReady = () => {
+        if (!document.fonts) return Promise.resolve();
+        // The font is split by alphabet (unicode-range): ask for Cyrillic and Latin text, or only one file loads.
+        const loads = ["14px 'Golos Text'", "600 14px 'Golos Text'"]
+            .map((f) => document.fonts.load(f, 'Аа Яя Aa Zz').catch(() => {}));
+        const limit = new Promise((resolve) => setTimeout(resolve, 6000));
+        return Promise.race([Promise.all(loads).then(() => document.fonts.ready), limit]);
+    };
+    const draw = () => fontsReady().then(() => mermaid.run({ querySelector: 'pre.mermaid' })).then(widen);
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', draw); else draw();
 
     // A change of the theme draws the diagrams again: the simplest way is to reload the page.
