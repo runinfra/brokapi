@@ -97,6 +97,9 @@ def digest(path: Path) -> None:
     section("brokapi.testing: imitations of the brokers", [(n, getattr(brokapi.testing, n)) for n in brokapi.testing.__all__])
     from brokapi import errors, models, numbers
 
+    import brokapi.record
+
+    section("brokapi.record: the event log", [(n, getattr(brokapi.record, n)) for n in brokapi.record.__all__])
     section("brokapi.errors", [(n, getattr(errors, n)) for n in errors.__all__])
     section("brokapi.numbers", [(n, getattr(numbers, n)) for n in numbers.__all__])
     section("brokapi.models: data", [(n, getattr(models, n)) for n in models.__all__ if inspect.isclass(getattr(models, n))])

@@ -14,6 +14,7 @@
 |---|---|---|
 | `brokapi` | `connect`, `Client`, `EventStream`, `merge`, `new_cid`: все, что нужно для работы, и общий обзор | [brokapi](api/python/brokapi.html) |
 | `brokapi.models` | данные: инструменты, стакан, заявки, события, возможности | [brokapi.models](api/python/brokapi/models.html) |
+| `brokapi.record` | запись событий в файл и проигрыш из файла (тот же формат, что у Rust) | [brokapi.record](api/python/brokapi/record.html) |
 | `brokapi.errors` | исключения с теми же именами, что у `Error` в Rust, и `ErrorClass` | [brokapi.errors](api/python/brokapi/errors.html) |
 | `brokapi.numbers` | точное округление до шага цены (`round_to_step`) | [brokapi.numbers](api/python/brokapi/numbers.html) |
 | `brokapi.testing` | имитации брокеров для тестов | [brokapi.testing](api/python/brokapi/testing.html) |

@@ -62,6 +62,8 @@ tokio, а результат возвращается в тот же цикл `a
 для Python. Поля вариантов лежат в атрибутах: `Rejected.code`, `Rejected.message`, `RateLimited.retry_after` (`timedelta`),
 `Unsupported.capability`. Ответ на вопрос «можно ли повторить» дает `error.error_class`: `RETRYABLE`, `FATAL` или `UNKNOWN`.
 
+Ошибки журнала событий (файл, строка, версия) - еще один класс того же семейства, `LogError`, с тем же текстом, что `LogError` в Rust.
+
 Два исключения вне семейства: `ValueError` (аргумент не годится, ничего не отправлено) и `RuntimeError` при вызове метода закрытого
 клиента. Вариант ошибки, которого этот пакет еще не знает (ядро новее пакета), приходит как `BrokapiError` с текстом ядра, а событие
 неизвестного вида - как `UnknownEvent`: цикл бота не падает.
@@ -76,6 +78,8 @@ tokio, а результат возвращается в тот же цикл `a
 | Идентификатор заявки | `ClientOrderId` | `uuid.UUID` (`brokapi.new_cid()`) |
 | Шаг цены коннектору | `ud.price_grid().learn(&params)` | делает `trading_params` |
 | Состояния заявки | варианты `OrderState` | `OrderState.kind` (`OrderStateKind`) и поля |
-| Стоп-заявки, `raw()`, запись событий | есть | пока нет, по запросу |
+| Стоп-заявки | `StopOrderExecutor` | `place_stop`, `cancel_stop`, `active_stop_orders`, `subscribe_stop_orders` |
+| `raw()` | замыкание над типизированным клиентом брокера, потоки отдаются | `await client.raw(имя, словарь)`, ответ словарем, потоки не отдаются |
+| Запись и проигрыш событий | `EnvelopeWriter`, `EnvelopeReader`, `replay` | `brokapi.record`, файл тот же |
 
 Что не меняется: порядок «подписка, сверка, торговля», `cid` от бота, `Unknown` без повтора, один счетчик лимитов на область.

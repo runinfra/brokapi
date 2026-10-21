@@ -84,6 +84,9 @@ DESCRIPTIONS = {
     "python/howto-infrastructure.md": "Python: несколько брокеров и счетов в одном процессе: общий limiter, merge событий, журнал в файле, рестарт со сверкой",
     "python/howto-history.md": "Python: выгрузка длинной истории свечей в файлы по лимитам брокера с продолжением после сбоя (candle_pages)",
     "python/testing.md": "Python: тесты против имитаций brokapi.testing (mock_bcs, mock_tbank, mock_finam), fill, ожидание событий без sleep",
+    "python/stop-orders.md": "Python: стоп-заявки (place_stop, cancel_stop, active_stop_orders), потерянный ответ Unknown, различия брокеров, что проверено",
+    "python/raw.md": "Python: любой метод API брокера через client.raw(имя, словарь): Т-Банк и Финам по имени из .proto, БКС по таблице или пути, квота, command=True, чего raw не делает",
+    "python/record.md": "Python: запись потока событий в файл и проигрыш (brokapi.record: EnvelopeWriter, EnvelopeReader, replay, LogError), формат файла как у Rust",
     "python/design.md": "Объяснение: как пакет Python связан с ядром, мост tokio и asyncio, Decimal, ошибки, отличия от Rust",
     "gateway/index.md": "ЕЩЕ НЕТ, заглушка: Gateway, служба с gRPC для любого языка и командная строка brokapi, стадия к бете",
     "cli/index.md": "ЕЩЕ НЕТ, заглушка: CLI, командная строка для людей и ИИ-агентов (status, book, portfolio, вывод --json), через Gateway или напрямую",
@@ -92,7 +95,7 @@ DESCRIPTIONS = {
     "events.md": "Конверт Envelope, события Event, возможности коннекторов caps()",
     "coverage.md": "Какие методы API каждого брокера закрыты общим интерфейсом, а какие только через raw()",
     "api.md": "Справочник API Rust (rustdoc): список крейтов и ссылки на страницы справочника",
-    "api-python.md": "Справочник API Python (pdoc, из docstring): модули brokapi, models, errors, numbers, testing и ссылки на страницы справочника",
+    "api-python.md": "Справочник API Python (pdoc, из docstring): модули brokapi, models, errors, numbers, record, testing и ссылки на страницы справочника",
     "api-gateway.md": "ЕЩЕ НЕТ, заглушка: справочник gRPC-интерфейса Gateway (из .proto), появится вместе со службой",
     "readiness.md": "Готовность: что проверено в коде, на имитации и вживую",
     "live.md": "Живые прогоны: вопросы, на которые ответит только настоящий счет",
@@ -216,8 +219,8 @@ def python_index(sections, book):
         "Как писать код. 1) Прочитайте \"Контракт для агентов\": обязательные правила одни для любого языка (торговля только после "
         "reconcile, cid придумывает бот и пишет в журнал до place, Unknown не повторять, один счетчик лимитов на область брокера: "
         "limiter=, цены только Decimal). 2) Возьмите ближайшую инструкцию из раздела Python и копируйте код: каждый пример - тест "
-        "против имитаций brokapi.testing. 3) Сигнатуры и поля - в python/api-reference.md. Что пока нет в пакете: стоп-заявки, "
-        "raw(), запись событий в файл. Сеть и деньги в тестах не трогайте: mock_bcs(), mock_tbank(), mock_finam().",
+        "против имитаций brokapi.testing. 3) Сигнатуры и поля - в python/api-reference.md. Возможности те же, что у Rust: стоп-заявки, "
+        "raw() и запись событий в файл (brokapi.record). Сеть и деньги в тестах не трогайте: mock_bcs(), mock_tbank(), mock_finam().",
         "",
         "## Python",
         "",
