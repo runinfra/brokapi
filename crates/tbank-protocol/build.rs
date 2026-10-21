@@ -31,8 +31,11 @@ fn main() {
     for file in &mut bare.file {
         file.source_code_info = None;
     }
-    std::fs::write(out.join("descriptor.bin"), prost::Message::encode_to_vec(&bare))
-        .expect("write the file descriptor set");
+    std::fs::write(
+        out.join("descriptor.bin"),
+        prost::Message::encode_to_vec(&bare),
+    )
+    .expect("write the file descriptor set");
     let server = env::var_os("CARGO_FEATURE_SERVER").is_some();
     tonic_prost_build::configure()
         .build_client(true)

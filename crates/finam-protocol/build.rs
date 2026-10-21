@@ -37,7 +37,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let out = PathBuf::from(std::env::var("OUT_DIR")?);
-    std::fs::write(out.join("descriptor.bin"), prost::Message::encode_to_vec(&all))?;
+    std::fs::write(
+        out.join("descriptor.bin"),
+        prost::Message::encode_to_vec(&all),
+    )?;
 
     let mut config = tonic_prost_build::Config::new();
     config.include_file("all.rs");
