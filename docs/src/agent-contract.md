@@ -15,7 +15,7 @@
 
 ```mermaid
 flowchart TB
-  A[Шаг 1: один BrokerLimiter на область квоты,<br>один канал событий] --> B[Шаг 2: start, MD (рынок) на брокера,<br>UD (счет) на счет]
+  A[Шаг 1: один BrokerLimiter на область квоты,<br>один канал событий] --> B["Шаг 2: start, MD (рынок) на брокера,<br>UD (счет) на счет"]
   B --> C[Шаг 3: subscribe_order_state<br>и subscribe_executions]
   C --> D[Шаг 4: reconcile со списком cid из журнала]
   D --> E[Шаг 5: разобрать confirmed, closed_offline, foreign]
