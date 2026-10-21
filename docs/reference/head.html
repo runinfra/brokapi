@@ -1,0 +1,15 @@
+<script>
+/* Theme of the reference = theme of the book: the book keeps it in localStorage "mdbook-theme" ("light" or "coal"). This runs in
+   the head, before the first paint, so the page does not flash in the wrong colors. rustdoc and pdoc both read data-theme. */
+(function () {
+  var t = null;
+  try { t = localStorage.getItem('mdbook-theme'); } catch (e) {}
+  if (t && t.charAt(0) === '"') t = t.slice(1, -1);
+  var dark = t ? t === 'coal' : !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  try {
+    localStorage.setItem('rustdoc-theme', dark ? 'dark' : 'light');
+    localStorage.setItem('rustdoc-use-system-theme', 'false');
+  } catch (e) {}
+})();
+</script>

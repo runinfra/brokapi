@@ -495,19 +495,13 @@ async def connect(
     What you do not pass is read from the environment (and a ``.env`` file next to the program), as in the Rust
     library:
 
-    ============  ===========================  =========================================================
-    Broker        Argument                     Environment variable
-    ============  ===========================  =========================================================
-    ``bcs``       ``refresh_token``            ``BCS_REFRESH_TOKEN`` (required)
-    ``bcs``       ``write``                    ``BCS_IS_WRITE`` (``true``: the token can trade)
-    ``tbank``     ``token``                    ``TBANK_TOKEN`` (required)
-    ``tbank``     ``sandbox``                  ``TBANK_SANDBOX`` (without it the address is the real one)
-    ``tbank``     ``account_id``               ``TBANK_ACCOUNT_ID`` (needed when the token has several)
-    ``tbank``     ``endpoint``, ``app_name``   ``TBANK_ENDPOINT``, ``TBANK_APP_NAME``
-    ``finam``     ``secret``                   ``FINAM_SECRET`` (required)
-    ``finam``     ``account_id``               ``FINAM_ACCOUNT_ID`` (required)
-    ``finam``     ``endpoint``                 ``FINAM_API_URL``
-    ============  ===========================  =========================================================
+    - ``bcs``: ``refresh_token`` (``BCS_REFRESH_TOKEN``, required), ``write`` (``BCS_IS_WRITE``, ``true``: the token can
+      trade).
+    - ``tbank``: ``token`` (``TBANK_TOKEN``, required), ``sandbox`` (``TBANK_SANDBOX``, without it the address is the real
+      one), ``account_id`` (``TBANK_ACCOUNT_ID``, needed when the token has several), ``endpoint`` and ``app_name``
+      (``TBANK_ENDPOINT``, ``TBANK_APP_NAME``).
+    - ``finam``: ``secret`` (``FINAM_SECRET``, required), ``account_id`` (``FINAM_ACCOUNT_ID``, required), ``endpoint``
+      (``FINAM_API_URL``).
 
     ``name`` labels the events (``<name>-md``, ``<name>-ud``) and defaults to the broker. Give each client of a
     process its own name. ``limiter`` puts this client on the rate limit counter of another one (see

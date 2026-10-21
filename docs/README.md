@@ -7,15 +7,16 @@
 Одна книга на https://brokapi.ru/docs/. Общее написано один раз, у каждого продукта свой раздел:
 
 ```text
-README.md                    Что это: развилка из четырех карточек (Rust, Python, gateway, MCP)
+install.md                   Установка: cargo add, pip install, из репозитория, проверка, частые ошибки (часть «Начать»)
+README.md                    Что это: развилка из четырех карточек (Rust, Python, Gateway, CLI)
 architecture, streams, orders, reconcile, limits, numbers    Как устроено (общее)
 brokers/                     Брокеры (общее)
 rust/                        Rust: index.md, быстрый старт и инструкции (работает сейчас)
 python/                      Python: index.md, быстрый старт, инструкции, тесты, объяснение (работает сейчас)
 gateway/index.md             Gateway: заглушка (служба и командная строка brokapi)
-mcp/index.md                 MCP: заглушка, стадия "возможно"
+cli/index.md                 CLI: заглушка, стадия "к бете" (командная строка brokapi)
 agent-contract, errors, events, coverage    Справочник (общее)
-api.md, api-python.md, api-gateway.md       Справочник API: Rust (rustdoc в api/), Python (pdoc в api/python/), gateway - заглушка
+api.md, api-python.md, api-gateway.md       Справочник API: Rust (rustdoc в api/), Python (pdoc в api/python/), Gateway - заглушка
 readiness, live, changelog   Состояние
 ```
 
@@ -57,7 +58,7 @@ readiness, live, changelog   Состояние
 ```bash
 mdbook build docs      # только книга, результат в docs/book (в git не попадает)
 mdbook serve docs      # локально на http://localhost:3000 (справочника API здесь нет)
-docs/build.sh          # книга + справочник Rust (rustdoc) в docs/book/api/ + справочник Python (pdoc) в docs/book/api/python/
+docs/build.sh          # книга + индекс поиска (Pagefind) + справочник Rust (rustdoc) в docs/book/api/ + справочник Python (pdoc) в docs/book/api/python/
 tools/check            # проверка перед пушем: fmt, clippy, тесты, примеры, rustdoc, книга
 ```
 
@@ -79,7 +80,9 @@ tools/check            # проверка перед пушем: fmt, clippy, т
   Останавливается на первом упавшем. Запускайте перед пушем. CI пока нет, этот скрипт и есть проверка.
 - **`docs/build.sh`** собирает книгу в `docs/book.new`, rustdoc (`cargo doc --no-deps` без `brokapi-mocks` и служебных
   крейтов) кладет в `docs/book.new/api/`, и только после успеха подменяет `docs/book`. Сломанная сборка оставляет прежнюю
-  версию. Сайт документации собирается именно этим скриптом, а не голым `mdbook build docs`.
+  версию. Сайт документации собирается именно этим скриптом, а не голым `mdbook build docs`. Нужны `mdbook`, `mdbook-mermaid`,
+  `pagefind` (бинарь версии 1.5 или новее, либо `npx`, который его скачает) и Rust. Без `pagefind` сборка падает: поиска не будет.
+  Собрать без поиска можно с `BROKAPI_NO_SEARCH=1`.
 - Крейт `brokapi-mocks` - только для тестов и примеров, не часть публичных обещаний библиотеки. Имитации написаны по документации
   брокеров и не доказывают, что настоящий брокер отвечает так же.
 
@@ -101,6 +104,29 @@ tools/check            # проверка перед пушем: fmt, clippy, т
   `docs/mermaid-init.js`: он свой, поэтому после `mdbook-mermaid install docs` его нужно вернуть
   (`git checkout docs/mermaid-init.js`). Справочник API (rustdoc) в тех же цветах и шрифтах, по умолчанию светлый:
   `--default-theme=light` и `--extend-css docs/rustdoc-brokapi.css` в `docs/build.sh`.
+- **Поиск по-русски - Pagefind.** Встроенный поиск mdBook выключен (`[output.html.search] enable = false` в `book.toml`): его
+  индекс режет все не-ASCII буквы. После `mdbook build` скрипт `docs/build.sh` запускает `pagefind --site docs/book.new --force-language ru`,
+  индекс ложится в `docs/book/pagefind/` и грузится только при первом поиске. Индексируется `<main data-pagefind-body>` каждой
+  главы (`theme/index.hbs`), схемы (`pre.mermaid`) и страница печати не индексируются. Окно поиска - `docs/search.js` (клавиши
+  `/` и `s`, Esc), вид - в `theme/brokapi.css`. Проверка: запросы заявка, лимиты, сверка, стакан, токен, таймаут, Т-Банк, неизвестно,
+  Unknown, cid, БКС, Python, reconcile, количество, лот находят нужную страницу.
+- **Схемы грузятся только там, где они есть.** `theme/index.hbs` не подключает `mermaid.min.js` (2,7 МБ), а кладет его адрес в
+  `<script type="text/plain" id="mermaid-lib">`, `mermaid-init.js` подгружает файл, если на странице есть `pre.mermaid`, и ждет шрифт перед отрисовкой.
+- **Один язык на весь сайт.** Переключатель Rust и Python в шапке и вкладки на страницах - `docs/lang-tabs.js` (ключ `brokapi-lang` в
+  `localStorage`, тот же, что на сайте). Пары страниц Rust и Python (`TWINS` в начале файла) предлагают перейти к странице на другом языке.
+  Одиночный блок кода на общей странице подписывается языком (`Rust`), если рядом нет вкладок. Вкладки имеют роли `tablist`, `tab`,
+  `tabpanel`, стрелки внутри таб-бара не листают главу. У страниц Rust и Python разные названия в `SUMMARY.md` и в заголовках.
+- **Мелочи интерфейса - `docs/ui.js`:** таблицы из трех колонок и больше на телефоне (до 700 px) становятся карточками (подпись колонки берется из
+  заголовка и ставится как `data-label`), широкие таблицы на компьютере листаются с закрепленным первым столбцом и подсказкой, все,
+  что листается вбок (таблица, код, схема), получает `tabindex` и имя, код длиннее 45 строк складывается в `<details>` с ограничением
+  высоты (от 120 строк закрыт), кнопка копирования видна на касании и по фокусу и называется по-русски, кнопка «Сообщить об ошибке»
+  внизу страницы открывает форму (`<dialog>`), отчет уходит POST-запросом на `/api/report` того же хоста (приемник на сервере,
+  не в этом репозитории), адрес получателя читатель не видит. Ссылка «К содержимому» и роль `banner` - в
+  `theme/index.hbs`.
+- **Справочники API (rustdoc и pdoc) с шапкой книги.** Шапка (знак, `docs`, «В книгу», переключение между справочниками Rust и Python,
+  тема) лежит в `docs/reference/bar.html`, ранняя установка темы по `localStorage` `mdbook-theme` - в `docs/reference/head.html`. rustdoc
+  получает их флагами `--html-before-content` и `--html-in-header` (`docs/build.sh`), pdoc - через `docs/reference/frame.html.jinja2`
+  (`docs/pydoc.py`, `template_directory`). Стили pdoc - `docs/reference/custom.css`, rustdoc - `docs/rustdoc-brokapi.css`.
 - **Адрес: https://brokapi.ru/docs/.** Папка `docs/book` - это корень `/docs/`: книга лежит в ней, справочник в `api/`
   (`/docs/api/`), файлы для агентов рядом (`/docs/llms.txt`, `/docs/llms-full.txt`, `страница.md`). Все ссылки внутри
   относительные, в `book.toml` стоит `site-url = "/docs/"` (от него строятся `404.html` и поиск), шрифты справочника

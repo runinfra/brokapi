@@ -32,7 +32,9 @@
         <link rel="stylesheet" href="{{ resource "css/print.css" }}" media="print">
         {{/if}}
 
-        <!-- Fonts -->
+        <!-- Fonts. The text font in both alphabets is fetched at once: the page is Russian, a late font shifts the layout. -->
+        <link rel="preload" as="font" type="font/woff2" crossorigin href="{{ resource "fonts/golos-text-cyrillic-wght-normal.woff2" }}">
+        <link rel="preload" as="font" type="font/woff2" crossorigin href="{{ resource "fonts/golos-text-latin-wght-normal.woff2" }}">
         <link rel="stylesheet" href="{{ resource "fonts/fonts.css" }}">
 
         <!-- Highlight.js Stylesheets -->
@@ -55,24 +57,20 @@
             const path_to_root = "{{ path_to_root }}";
             const default_light_theme = "{{ default_theme }}";
             const default_dark_theme = "{{ preferred_dark_theme }}";
-        {{#if search_js}}
-            window.path_to_searchindex_js = "{{ resource "searchindex.js" }}";
-        {{/if}}
         </script>
         <!-- Start loading toc.js asap -->
         <script src="{{ resource "toc.js" }}"></script>
     </head>
     <body>
+    <a class="skip-link" href="#main-content">К содержимому</a>
     <div id="mdbook-help-container">
         <div id="mdbook-help-popup">
-            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <h2 class="mdbook-help-title">Горячие клавиши</h2>
             <div>
-                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
-                {{#if search_enabled}}
-                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
-                {{/if}}
-                <p>Press <kbd>?</kbd> to show this help</p>
-                <p>Press <kbd>Esc</kbd> to hide this help</p>
+                <p><kbd>←</kbd> и <kbd>→</kbd>: предыдущая и следующая глава</p>
+                <p><kbd>S</kbd> или <kbd>/</kbd>: поиск по книге</p>
+                <p><kbd>?</kbd>: показать эту подсказку</p>
+                <p><kbd>Esc</kbd>: закрыть подсказку или поиск</p>
             </div>
         </div>
     </div>
@@ -125,7 +123,7 @@
             }
         </script>
 
-        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Оглавление">
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
@@ -141,26 +139,25 @@
             <div class="page">
                 {{> header}}
                 <div id="mdbook-menu-bar-hover-placeholder"></div>
-                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                <div id="mdbook-menu-bar" class="menu-bar sticky" role="banner">
                     <div class="left-buttons">
-                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                        <button id="mdbook-sidebar-toggle" class="icon-button" type="button" title="Оглавление" aria-label="Оглавление" aria-controls="mdbook-sidebar">
                             {{fa "solid" "bars"}}
-                        </label>
-                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                        </button>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Тема" aria-label="Сменить тему" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
                             {{fa "solid" "paintbrush"}}
                         </button>
-                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Темы" role="menu">
                             <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Темная</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Светлая</button></li>
                         </ul>
-                        {{#if search_enabled}}
-                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
-                            {{fa "solid" "magnifying-glass"}}
+                        <!-- Search: Pagefind, docs/search.js builds the window. The index is made by docs/build.sh. -->
+                        <button id="brokapi-search-toggle" class="icon-button search-toggle" type="button" title="Поиск (/)" aria-label="Поиск по книге" aria-haspopup="dialog" aria-keyshortcuts="/ s">
+                            {{fa "solid" "magnifying-glass"}}<span class="search-toggle-text">Поиск</span>
                         </button>
-                        {{/if}}
                     </div>
 
-                    <h1 class="menu-title">{{ book_title }}</h1>
+                    <div class="menu-title">{{ book_title }}</div>
                     <!-- Mark and name of brokapi lead to the site brokapi.ru (same mark as on the site). -->
                     <div class="brand">
                         <a class="brand-home" href="https://brokapi.ru/" aria-label="brokapi, brokapi.ru">
@@ -170,23 +167,28 @@
                             </svg>
                             <span class="brand-word">brokapi</span>
                         </a>
-                        <a class="brand-docs" href="{{ path_to_root }}index.html" aria-label="Documentation: first page of the book">docs</a>
+                        <a class="brand-docs" href="{{ path_to_root }}index.html" aria-label="Документация: первая страница книги">docs</a>
                     </div>
 
                     <div class="right-buttons">
+                        <!-- One language for the whole site (docs/lang-tabs.js): the tabs "Rust | Python" follow it and
+                             the pages that have a twin in the other language offer to move there. -->
+                        <div class="lang-switch" role="group" aria-label="Язык примеров">
+                            <button type="button" data-lang="rust" aria-pressed="false">Rust</button><button type="button" data-lang="python" aria-pressed="false">Python</button>
+                        </div>
                         <a class="site-link" href="https://brokapi.ru/">brokapi.ru</a>
                         {{#if print_enable}}
-                        <a href="{{ path_to_root }}print.html" title="Print this book" aria-label="Print this book">
+                        <a href="{{ path_to_root }}print.html" title="Печать книги" aria-label="Печать книги">
                             {{fa "solid" "print" "print-button"}}
                         </a>
                         {{/if}}
                         {{#if git_repository_url}}
-                        <a href="{{git_repository_url}}" title="Git repository" aria-label="Git repository">
+                        <a href="{{git_repository_url}}" title="Репозиторий" aria-label="Репозиторий">
                             {{fa git_repository_icon_class git_repository_icon}}
                         </a>
                         {{/if}}
                         {{#if git_repository_edit_url}}
-                        <a href="{{git_repository_edit_url}}" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                        <a href="{{git_repository_edit_url}}" title="Предложить правку" aria-label="Предложить правку" rel="edit">
                             {{fa "solid" "pencil" "git-edit-button"}}
                         </a>
                         {{/if}}
@@ -194,23 +196,6 @@
                     </div>
                 </div>
 
-                {{#if search_enabled}}
-                <div id="mdbook-search-wrapper" class="hidden">
-                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
-                        <div class="search-wrapper">
-                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
-                            <div class="spinner-wrapper">
-                                {{fa "solid" "spinner" "fa-spin"}}
-                            </div>
-                        </div>
-                    </form>
-                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
-                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
-                        <ul id="mdbook-searchresults">
-                        </ul>
-                    </div>
-                </div>
-                {{/if}}
 
                 <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
                 <script>
@@ -222,17 +207,18 @@
                 </script>
 
                 <!-- Stage of the library. The only place with this text: change it here at the next stage. -->
-                <a class="stage-strip" href="{{ path_to_root }}readiness.html"><span class="dot"></span>Закрытая альфа: проверено на имитациях брокеров, интерфейс может меняться</a>
+                <aside class="stage-wrap" aria-label="Стадия проекта"><a class="stage-strip" href="{{ path_to_root }}readiness.html"><span class="dot"></span>Закрытая альфа: проверено на имитациях брокеров, интерфейс может меняться</a></aside>
 
                 <div id="mdbook-content" class="content">
-                    <main>
+                    <!-- data-pagefind-body: only the text of a chapter goes to the search index (not the print page). -->
+                    <main id="main-content" tabindex="-1"{{#unless is_print}} data-pagefind-body{{/unless}}>
                         {{{ content }}}
                     </main>
 
-                    <nav class="nav-wrapper" aria-label="Page navigation">
+                    <nav class="nav-wrapper" aria-label="Переход между главами">
                         <!-- Mobile navigation buttons -->
                         {{#if previous}}
-                            <a rel="prev" href="{{ path_to_root }}{{previous.link}}" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="{{ path_to_root }}{{previous.link}}" class="mobile-nav-chapters previous" title="Предыдущая глава" aria-label="Предыдущая глава" aria-keyshortcuts="Left">
                                 {{#if (eq ../text_direction "rtl")}}
                                 {{fa "solid" "angle-right"}}
                                 {{else}}
@@ -242,7 +228,7 @@
                         {{/if}}
 
                         {{#if next}}
-                            <a rel="next prefetch" href="{{ path_to_root }}{{next.link}}" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="{{ path_to_root }}{{next.link}}" class="mobile-nav-chapters next" title="Следующая глава" aria-label="Следующая глава" aria-keyshortcuts="Right">
                                 {{#if (eq ../text_direction "rtl")}}
                                 {{fa "solid" "angle-left"}}
                                 {{else}}
@@ -253,13 +239,22 @@
 
                         <div style="clear: both"></div>
                     </nav>
-                    <footer class="book-foot">brokapi by <a href="https://runinfra.ru">RunInfra</a></footer>
+                    <footer class="book-foot">
+                        {{#if next}}
+                        <a class="next-up" href="{{ path_to_root }}{{next.link}}"><span class="next-up-label">Дальше</span><span class="next-up-title">{{next.title}}</span></a>
+                        {{/if}}
+                        <div class="book-foot-line">
+                            <span>brokapi by <a href="https://runinfra.ru">RunInfra</a></span>
+                            <!-- Opens the report form (docs/ui.js), which also shows the button: without the script there is no form. -->
+                            <button class="report-error" type="button" hidden>Сообщить об ошибке</button>
+                        </div>
+                    </footer>
                 </div>
             </div>
 
-            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+            <nav class="nav-wide-wrapper" aria-label="Переход между главами">
                 {{#if previous}}
-                    <a rel="prev" href="{{ path_to_root }}{{previous.link}}" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="{{ path_to_root }}{{previous.link}}" class="nav-chapters previous" title="Предыдущая глава" aria-label="Предыдущая глава" aria-keyshortcuts="Left">
                         {{#if (eq ../text_direction "rtl")}}
                         {{fa "solid" "angle-right"}}
                         {{else}}
@@ -269,7 +264,7 @@
                 {{/if}}
 
                 {{#if next}}
-                    <a rel="next prefetch" href="{{ path_to_root }}{{next.link}}" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="{{ path_to_root }}{{next.link}}" class="nav-chapters next" title="Следующая глава" aria-label="Следующая глава" aria-keyshortcuts="Right">
                         {{#if (eq text_direction "rtl")}}
                         {{fa "solid" "angle-left"}}
                         {{else}}
@@ -326,11 +321,6 @@
         <script src="{{ resource "theme-tomorrow_night.js" }}"></script>
         {{/if}}
 
-        {{#if search_js}}
-        <script src="{{ resource "elasticlunr.min.js" }}"></script>
-        <script src="{{ resource "mark.min.js" }}"></script>
-        <script src="{{ resource "searcher.js" }}"></script>
-        {{/if}}
 
         <script src="{{ resource "clipboard.min.js" }}"></script>
         <script src="{{ resource "highlight.js" }}"></script>
@@ -338,7 +328,12 @@
 
         <!-- Custom JS scripts -->
         {{#each additional_js}}
+        {{#if (eq this "mermaid.min.js")}}
+        <!-- mermaid.min.js (2.7 MB) is not loaded here: mermaid-init.js fetches it from this address, and only on a page that has a diagram. -->
+        <script type="text/plain" id="mermaid-lib" data-src="{{ resource this}}"></script>
+        {{else}}
         <script src="{{ resource this}}"></script>
+        {{/if}}
         {{/each}}
 
         {{#if is_print}}

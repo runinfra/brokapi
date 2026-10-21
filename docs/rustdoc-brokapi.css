@@ -114,3 +114,15 @@ pre, .docblock pre, .rustdoc .example-wrap pre { color: #ecebe6; border-radius: 
 /* Links inside a dark code block (types in the declaration, links in examples): light, or they vanish on the dark block */
 pre a, pre a:visited, pre a[class] { color: #f4b79a !important; text-decoration: none; }
 pre a:hover { color: #ffffff !important; text-decoration: underline; }
+
+/* The bar of the book on top (reference/bar.html, given to rustdoc by docs/build.sh with --html-before-content): it is fixed,
+   so the page and everything that sticks to the top of the window start under it. */
+body.rustdoc { padding-top: var(--bk-bar-h, 42px); }
+html { scroll-padding-top: calc(var(--bk-bar-h, 42px) + 8px); }
+.sidebar { top: var(--bk-bar-h, 42px); height: calc(100vh - var(--bk-bar-h, 42px)); }
+.sidebar-resizer { top: var(--bk-bar-h, 42px); height: calc(100% - var(--bk-bar-h, 42px)); }
+rustdoc-topbar { top: var(--bk-bar-h, 42px); }
+@media (max-width: 700px) {
+  .sidebar { top: calc(var(--topbar-height) + var(--bk-bar-h, 42px)); height: calc(100vh - var(--topbar-height) - var(--bk-bar-h, 42px)); }
+}
+:target { scroll-margin-top: calc(var(--bk-bar-h, 42px) + 8px); }

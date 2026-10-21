@@ -16,8 +16,16 @@ additional-css = ["theme/brokapi.css"]
 # Книга живет в подкаталоге https://brokapi.ru/docs/: от этого адреса строятся 404.html и поиск, остальные ссылки относительные
 site-url = "/docs/"
 # Схемы Mermaid рисуются в браузере из локальных файлов mermaid.min.js и mermaid-init.js
-# (библиотека ставится командой `mdbook-mermaid install docs`, mermaid-init.js у нас свой, в цветах темы)
-additional-js = ["mermaid.min.js", "mermaid-init.js", "lang-tabs.js"]
+# (библиотека ставится командой `mdbook-mermaid install docs`, mermaid-init.js у нас свой, в цветах темы).
+# mermaid.min.js (2,7 МБ) страница не подключает сама: theme/index.hbs кладет его адрес в #mermaid-lib, а mermaid-init.js
+# подгружает файл только там, где есть схема. lang-tabs.js - выбор языка и вкладки Rust | Python, ui.js - таблицы-карточки,
+# длинный код, кнопка копирования, search.js - окно поиска (Pagefind).
+additional-js = ["mermaid.min.js", "mermaid-init.js", "lang-tabs.js", "ui.js", "search.js"]
+
+# Встроенный поиск mdBook (elasticlunr) выключен: он режет все не-ASCII буквы, и по-русски ничего не находил. Поиск делает
+# Pagefind: после mdbook build его индекс строит docs/build.sh (`pagefind --site docs/book`), окно поиска - docs/search.js.
+[output.html.search]
+enable = false
 
 [output.html.playground]
 runnable = false
@@ -49,6 +57,7 @@ after = ["links"]
 "/stop-orders.html" = "rust/stop-orders.html"
 "/raw.html" = "rust/raw.html"
 "/mocks.html" = "rust/mocks.html"
+"/mcp/index.html" = "../cli/index.html"
 "/README.html" = "index.html"
 "/brokers/README.html" = "index.html"
 "/api-reference.html" = "api-reference.md"

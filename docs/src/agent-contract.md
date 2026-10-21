@@ -15,7 +15,7 @@
 
 ```mermaid
 flowchart TB
-  A[Шаг 1: один BrokerLimiter на область квоты,<br>один канал событий] --> B[Шаг 2: start, MD на брокера,<br>UD на счет]
+  A[Шаг 1: один BrokerLimiter на область квоты,<br>один канал событий] --> B[Шаг 2: start, MD (рынок) на брокера,<br>UD (счет) на счет]
   B --> C[Шаг 3: subscribe_order_state<br>и subscribe_executions]
   C --> D[Шаг 4: reconcile со списком cid из журнала]
   D --> E[Шаг 5: разобрать confirmed, closed_offline, foreign]
@@ -60,9 +60,17 @@ flowchart TB
 
 **Как правильно.**
 
+<div class="lang-tabs">
+
 ```rust,ignore
 {{#include ../../examples/contract.rs:cid_first}}
 ```
+
+```python
+{{#include ../../crates/python/examples/rules.py:cid_first}}
+```
+
+</div>
 
 **Подробнее:** [Круг команд, cid](orders.md#cid-номер-заявки), [Запуск, рестарт и остановка](rust/lifecycle.md).
 
@@ -79,9 +87,17 @@ flowchart TB
 
 **Как правильно.**
 
+<div class="lang-tabs">
+
 ```rust,ignore
 {{#include ../../examples/contract.rs:reconcile_first}}
 ```
+
+```python
+{{#include ../../crates/python/examples/rules.py:reconcile_first}}
+```
+
+</div>
 
 `reconcile` только читает, его можно вызывать когда угодно и сколько угодно. Ошибка `reconcile` значит, что сверки
 не было и шлюз закрыт: подождать и повторить.
@@ -103,9 +119,17 @@ flowchart TB
 
 **Как правильно.**
 
+<div class="lang-tabs">
+
 ```rust,ignore
 {{#include ../../examples/contract.rs:unknown}}
 ```
+
+```python
+{{#include ../../crates/python/examples/rules.py:unknown}}
+```
+
+</div>
 
 Как брокеры отвечают на номер, которого не знают (`order_state`):
 

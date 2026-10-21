@@ -95,7 +95,7 @@ stateDiagram-v2
 sequenceDiagram
   participant J as Журнал бота
   participant Bot as Бот
-  participant UD as UD
+  participant UD as UD, коннектор счета
   participant Br as Брокер
   Bot->>UD: start, шлюз закрыт
   Bot->>UD: подписка на заявки и сделки

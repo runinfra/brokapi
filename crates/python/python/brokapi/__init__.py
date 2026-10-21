@@ -4,7 +4,7 @@ A thin layer over the Rust core of brokapi. The rules of the core are kept: trad
 ``cid`` of an order is made by the bot, a command whose outcome is :class:`Unknown` is never repeated, and one rate
 limit counter serves one broker area. Money, prices and quantities are :class:`decimal.Decimal`, never ``float``.
 
-Read first, then trade. For example, against the imitations of the brokers (no network, no money)::
+Read first, then trade. For example, against the imitations of the brokers (no network, no money):
 
     import asyncio
     from decimal import Decimal

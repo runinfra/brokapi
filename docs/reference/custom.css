@@ -6,9 +6,12 @@
 @font-face { font-family: 'Golos Text'; font-weight: 400 900; font-display: swap;
   src: url('/docs/api/python/fonts/golos-text-latin-wght-normal.woff2') format('woff2-variations'); }
 @font-face { font-family: 'JetBrains Mono'; font-weight: 100 800; font-display: swap;
+  src: url('/docs/api/python/fonts/jetbrains-mono-cyrillic-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 100 800; font-display: swap;
   src: url('/docs/api/python/fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2-variations'); }
 
-:root {
+:root, :root .pdoc {
   --pdoc-background: #f5f4ef;
   --text: #121212;
   --muted: #5c5a55;
@@ -23,23 +26,31 @@
   --def: #c23c00;
   --annotation: #5c5a55;
 }
+/* The dark theme: the book's choice (reference/head.html sets data-theme); without script, the choice of the system. */
+:root[data-theme="dark"], :root[data-theme="dark"] .pdoc {
+  --pdoc-background: #151513;
+  --text: #e7e5de;
+  --muted: #a19e94;
+  --link: #ff8a5c;
+  --link-hover: #ffb79b;
+  --accent: #1a1a17;
+  --accent2: #3a3935;
+  --active: #5a2a15;
+  --nav-hover: rgba(255, 138, 92, 0.12);
+  --name: #ff8a5c;
+  --code: #26251f;
+  --def: #ff8a5c;
+  --annotation: #a19e94;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
-    --pdoc-background: #161615;
-    --text: #ecebe6;
-    --muted: #a19e94;
-    --link: #ff8a5c;
-    --link-hover: #ffb79b;
-    --accent: #232321;
-    --accent2: #3a3935;
-    --active: #5a2a15;
-    --nav-hover: rgba(255, 138, 92, 0.12);
-    --name: #ff8a5c;
-    --code: #232321;
-    --def: #ff8a5c;
-    --annotation: #a19e94;
+  :root:not([data-theme]), :root:not([data-theme]) .pdoc {
+    --pdoc-background: #151513; --text: #e7e5de; --muted: #a19e94; --link: #ff8a5c; --link-hover: #ffb79b;
+    --accent: #1a1a17; --accent2: #3a3935; --active: #5a2a15; --nav-hover: rgba(255, 138, 92, 0.12);
+    --name: #ff8a5c; --code: #26251f; --def: #ff8a5c; --annotation: #a19e94;
   }
 }
+:root { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 html, body { background: var(--pdoc-background); color: var(--text); font-family: 'Golos Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
 code, pre, .pdoc-code, .signature { font-family: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; font-variant-ligatures: none; }
 pre { background: #121212; color: #ecebe6; border-radius: 4px; }
@@ -55,5 +66,13 @@ h1, h2, h3 { font-weight: 650; }
 .pdoc-button { border-color: var(--accent2); }
 .attribution { display: none; }
 footer { color: var(--muted); }
-body::before { content: "brokapi for Python - closed alpha, checked on imitations"; display: block;
-  background: #ff5b1f; color: #121212; font-size: 0.78rem; padding: 0.25rem 1rem; letter-spacing: 0.02em; }
+
+/* The bar of the book (bar.html) is fixed at the top: the page starts under it. */
+body { padding-top: var(--bk-bar-h, 42px); }
+@media (min-width: 770px) {
+  nav.pdoc { top: var(--bk-bar-h, 42px); height: calc(100vh - var(--bk-bar-h, 42px)); }
+}
+@media (max-width: 769px) {
+  #navtoggle { top: calc(var(--bk-bar-h, 42px) + 0.8rem); }
+}
+html { scroll-padding-top: calc(var(--bk-bar-h, 42px) + 12px); }

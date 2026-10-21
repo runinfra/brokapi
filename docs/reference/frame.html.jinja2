@@ -1,0 +1,8 @@
+{# The page frame of the Python reference: pdoc's own, with the bar of the book on top (reference/bar.html) and the theme of the
+   book (reference/head.html). pdoc finds this file before its own frame.html.jinja2. #}
+{% extends "default/frame.html.jinja2" %}
+{% block head %}{% include "head.html" %}{% endblock %}
+{% block body %}
+{% include "bar.html" %}
+{{ super() }}
+{% endblock %}
