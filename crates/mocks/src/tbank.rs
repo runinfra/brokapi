@@ -106,6 +106,8 @@ pub struct MockOptions {
     pub instrument_by_calls: AtomicU32,
     /// `GetInstrumentBy` answers `UNAVAILABLE` (the lot size cannot be read).
     pub instrument_by_fail: AtomicBool,
+    /// `GetInstrumentBy` answers with no instrument in it.
+    pub instrument_by_empty: AtomicBool,
     /// The order state stream messages carry no `lot_size` (0), as the unary calls never do.
     pub omit_lot_size: AtomicBool,
     /// How many times the order state stream and the trades stream were opened, together. A reconnect
@@ -1146,6 +1148,9 @@ impl InstrumentsService for Mock {
             .fetch_add(1, Ordering::SeqCst);
         if self.0.opts.instrument_by_fail.load(Ordering::SeqCst) {
             return Err(Status::unavailable("mock: directory down"));
+        }
+        if self.0.opts.instrument_by_empty.load(Ordering::SeqCst) {
+            return Ok(Response::new(pb::InstrumentResponse { instrument: None }));
         }
         let i = [SBER, GAZP]
             .into_iter()

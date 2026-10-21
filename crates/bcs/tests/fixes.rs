@@ -506,3 +506,62 @@ fn errors_are_the_same_kind_as_at_the_other_brokers() {
     };
     assert!(matches!(map_err(sub), Error::Transport(_)));
 }
+
+#[test]
+fn the_totals_of_old_orders_are_forgotten_so_the_memory_does_not_grow() {
+    let mut core = core_with_executions();
+    let mut out = EventSink::new();
+    let now = Instant::now();
+    let one = |order: usize, last: &str, executed: &str, value: &str, exec: &str| {
+        text(last, executed, "0", value, exec).replace("\"O-1\"", &format!("\"O-{order}\""))
+    };
+    // The first order has a fill of 40 at 100.
+    core.feed_ws(
+        BcsWsChannel::OrderEvents,
+        &one(0, "40", "40", "4000", "E0"),
+        now,
+        &mut out,
+    );
+    // Twenty thousand other orders come after it.
+    for n in 1..=20_000 {
+        core.feed_ws(
+            BcsWsChannel::OrderEvents,
+            &one(n, "1", "1", "100", &format!("E{n}")),
+            now,
+            &mut out,
+        );
+    }
+    out.drain();
+    // The totals of the first order are gone: its second fill (60 more, 100 in all) cannot be priced from them.
+    // Without `averagePrice` the best the message says is the price of the order (245 in these messages).
+    let second = one(0, "60", "100", "10600", "E0b");
+    core.feed_ws(BcsWsChannel::OrderEvents, &second, now, &mut out);
+    let fills = fills_of(&mut out);
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].price.decimal(), dec!(245.0));
+}
+
+#[tokio::test]
+async fn a_reconcile_does_not_guess_when_the_answer_has_no_report() {
+    let opts = Arc::new(MockOptions::default());
+    let (_server, ud, _rx) = ud(&opts).await;
+    reconcile_of(&ud, &[]).await;
+    let req = limit_buy(10, dec!(120));
+    ud.place(req.clone()).await.unwrap();
+    opts.empty_reports.store(true, Ordering::SeqCst);
+    // The broker answers about the order, and the answer says nothing: not closed, not alive. The reconcile
+    // fails, and the gate stays as it was.
+    let err = loop {
+        match ud.reconcile(&[req.cid]).await {
+            Err(Error::RateLimited { retry_after }) => {
+                brokapi_mocks::time::jump(retry_after.max(Duration::from_secs(1))).await
+            }
+            other => break other.unwrap_err(),
+        }
+    };
+    assert!(matches!(err, Error::Transport(_)), "{err:?}");
+    opts.empty_reports.store(false, Ordering::SeqCst);
+    let report = reconcile_of(&ud, &[req.cid]).await;
+    assert_eq!(report.confirmed.len(), 1);
+    ud.shutdown(ShutdownMode::Immediate).await;
+}

@@ -845,3 +845,131 @@ fn refresh_after_reconnect_emits_only_what_changed() {
     }));
     assert_eq!(order_events(&mut h).len(), 1);
 }
+
+// ---------- units, and the cut of the order streams ----------
+
+#[test]
+fn only_the_streams_of_orders_and_fills_announce_a_reopen() {
+    let mut h = ud();
+    for kind in [
+        StreamKind::OrderState,
+        StreamKind::Trades,
+        StreamKind::Portfolio,
+        StreamKind::Positions,
+    ] {
+        h.feed_frame(UdFrame::Connected(kind));
+    }
+    assert!(h.take_events().is_empty(), "the first open loses nothing");
+    for kind in [
+        StreamKind::OrderState,
+        StreamKind::Trades,
+        StreamKind::Portfolio,
+        StreamKind::Positions,
+    ] {
+        h.feed_frame(UdFrame::Connected(kind));
+    }
+    let told: Vec<_> = h
+        .take_events()
+        .into_iter()
+        .map(|e| match e.payload {
+            Event::Reconnected { sub, .. } => {
+                assert_eq!(e.sub, Some(sub));
+                sub
+            }
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    // The order state and the trades are told (subscriptions 1001 and 1002). The portfolio is a whole state
+    // in every message, it needs no notice.
+    assert_eq!(
+        told,
+        vec![SubscriptionId::new(1001), SubscriptionId::new(1002)]
+    );
+}
+
+#[test]
+fn a_reopen_with_no_subscription_says_nothing() {
+    let mut core = UdCore::new(ACC);
+    core.remove_sub(UdSubKind::OrderState);
+    let mut h = Harness::new(core, Instant::now());
+    h.feed_frame(UdFrame::Connected(StreamKind::OrderState));
+    h.feed_frame(UdFrame::Connected(StreamKind::OrderState));
+    assert!(h.take_events().is_empty());
+}
+
+#[test]
+fn quantities_of_the_stream_are_units_by_the_lot_of_the_message() {
+    let mut h = ud();
+    let now = Instant::now();
+    let mut req = place_req(cid(1));
+    req.qty = Qty::from(30);
+    h.core_mut().begin_place(&req, now).unwrap();
+    // 3 lots of 10 requested, 1 executed: the message carries the lot size.
+    let mut frame = stream_state(
+        cid(1),
+        pb::OrderExecutionReportStatus::ExecutionReportStatusPartiallyfill,
+        1,
+        ACC,
+    );
+    if let UdFrame::OrderState(r) = &mut frame
+        && let Some(pb::order_state_stream_response::Payload::OrderState(o)) = &mut r.payload
+    {
+        o.lot_size = 10;
+    }
+    h.feed_frame(frame);
+    let events = order_events(&mut h);
+    let (_, s) = events.last().expect("an order event");
+    assert_eq!((s.qty, s.filled), (Qty::from(30), Qty::from(10)));
+    assert!(matches!(
+        s.state,
+        OrderState::PartiallyFilled { filled, left, .. } if filled == Qty::from(10) && left == Qty::from(20)
+    ));
+}
+
+#[test]
+fn an_order_with_no_quantity_yet_takes_it_from_the_first_message() {
+    let mut h = ud();
+    let now = Instant::now();
+    let mut req = place_req(cid(1));
+    req.qty = Qty::ZERO;
+    h.core_mut().begin_place(&req, now).unwrap();
+    h.feed_frame(stream_state(
+        cid(1),
+        pb::OrderExecutionReportStatus::ExecutionReportStatusNew,
+        0,
+        ACC,
+    ));
+    let events = order_events(&mut h);
+    assert_eq!(
+        events.last().unwrap().1.qty,
+        Qty::from(3),
+        "lot unknown: lots stay as they are"
+    );
+}
+
+#[test]
+fn a_replace_answer_for_an_order_never_seen_makes_its_meta() {
+    let mut h = ud();
+    let now = Instant::now();
+    let resp = pb::PostOrderResponse {
+        order_id: "EX9".into(),
+        order_request_id: cid(9).hyphenated().to_string(),
+        execution_report_status: pb::OrderExecutionReportStatus::ExecutionReportStatusNew as i32,
+        lots_requested: 2,
+        lots_executed: 0,
+        direction: pb::OrderDirection::Buy as i32,
+        order_type: pb::OrderType::Limit as i32,
+        instrument_uid: "uid-sber".into(),
+        ticker: "SBER".into(),
+        class_code: "TQBR".into(),
+        ..Default::default()
+    };
+    let mut sink = brokapi_sansio::EventSink::new();
+    // The new cid was registered, but the original was never seen by this process: no meta to copy.
+    h.core_mut().orders_mut().register_place(cid(9), now);
+    h.core_mut().replace_response(cid(9), &resp, now, &mut sink);
+    let ev = sink.drain();
+    assert!(ev.iter().any(
+        |e| matches!(&e.payload, Event::Order(s) if s.cid == cid(9) && s.qty == Qty::from(2))
+    ));
+}

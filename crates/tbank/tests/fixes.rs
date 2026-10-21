@@ -451,3 +451,75 @@ async fn an_order_event_whose_lot_is_unknown_is_a_loss_the_bot_is_told_about() {
     assert!(matches!(env.payload, Event::Order(_)));
     watcher.shutdown(ShutdownMode::Immediate).await;
 }
+
+#[tokio::test]
+async fn orders_read_again_after_a_cut_arrive_in_units_even_when_their_lot_was_never_read() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    // Someone else's order is already at the broker when this connector starts.
+    server.place_foreign(
+        ACCOUNT_A,
+        "6f1c4f6e-0a54-4a43-8c46-0f6d3b2c8a11",
+        "uid-sber",
+        3,
+    );
+    let (ud, mut rx) = ud(&server).await;
+    ud.subscribe_order_state().await.unwrap();
+    let before = opts.user_stream_opens.load(Ordering::SeqCst);
+    server.cut_user_streams();
+    // The connector reopens the stream and reads the live orders again: the foreign order comes with its lot
+    // read from the directory, and in units.
+    brokapi_mocks::time::jump_until("the stream is back", Duration::from_millis(600), || {
+        opts.user_stream_opens.load(Ordering::SeqCst) > before
+    })
+    .await;
+    let env = next_event(&mut rx, |e| matches!(e, Event::Order(_))).await;
+    let Event::Order(o) = env.payload else {
+        unreachable!()
+    };
+    assert_eq!(o.qty, Qty::from(3 * LOT));
+    assert_eq!(opts.instrument_by_calls.load(Ordering::SeqCst), 1);
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn orders_read_again_after_a_cut_are_a_loss_when_their_lot_cannot_be_read() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    server.place_foreign(
+        ACCOUNT_A,
+        "6f1c4f6e-0a54-4a43-8c46-0f6d3b2c8a11",
+        "uid-sber",
+        3,
+    );
+    let (ud, mut rx) = ud(&server).await;
+    let sub = ud.subscribe_order_state().await.unwrap();
+    opts.instrument_by_fail.store(true, Ordering::SeqCst);
+    let before = opts.user_stream_opens.load(Ordering::SeqCst);
+    server.cut_user_streams();
+    brokapi_mocks::time::jump_until("the stream is back", Duration::from_millis(600), || {
+        opts.user_stream_opens.load(Ordering::SeqCst) > before
+    })
+    .await;
+    // The refresh cannot turn lots into units: the bot is told that events were lost.
+    let env = next_event(&mut rx, |e| matches!(e, Event::Overflow { .. })).await;
+    assert!(matches!(env.payload, Event::Overflow { sub: s, .. } if s == sub));
+    opts.instrument_by_fail.store(false, Ordering::SeqCst);
+    ud.reconcile(&[]).await.unwrap();
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn a_directory_answer_with_no_instrument_is_not_found() {
+    let opts = Arc::new(MockOptions::default());
+    opts.instrument_by_empty.store(true, Ordering::SeqCst);
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (ud, _rx) = ud(&server).await;
+    ud.reconcile(&[]).await.unwrap();
+    assert!(ud.place(buy(10)).await.unwrap_err().is_not_found());
+    let (md, _rx) = md(&server).await;
+    assert!(md.get(&sber()).await.unwrap_err().is_not_found());
+    assert!(md.order_book(&sber(), 5).await.unwrap_err().is_not_found());
+    ud.shutdown(ShutdownMode::Immediate).await;
+    md.shutdown(ShutdownMode::Immediate).await;
+}

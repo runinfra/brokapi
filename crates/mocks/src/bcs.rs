@@ -106,6 +106,9 @@ pub struct MockOptions {
     /// timeout of the client, or to keep one command in flight while others wait). The clock is the tokio
     /// clock of the test, so `brokapi_mocks::time::jump` ends the wait.
     pub order_delay_ms: std::sync::atomic::AtomicU64,
+    /// `GET /orders` answers an empty list of reports (`data: []`) for a known order: an answer that says
+    /// nothing about the order.
+    pub empty_reports: AtomicBool,
     /// A cancel is answered with status 6 ("cancelling"): the order stays alive until
     /// [`MockServer::finish_cancel`] or a fill.
     pub cancel_pending: AtomicBool,
@@ -1073,6 +1076,10 @@ fn handle_orders(
             return Some(validation("orderId", "required"));
         };
         return Some(match book.find(&owner, &id_type, &id) {
+            Some(i) if opts.empty_reports.load(Ordering::SeqCst) => json_response(
+                StatusCode::OK,
+                &json!({"clientOrderId": id, "originalClientOrderId": book.orders[i].cid, "data": []}).to_string(),
+            ),
             Some(i) => json_response(StatusCode::OK, &book.orders[i].state_list(&id).to_string()),
             None => not_found(),
         });
