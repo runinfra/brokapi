@@ -13,7 +13,7 @@
 ## Подключение
 
 ```toml
-# edition = "2024" в [package], Rust 1.85 или новее
+# edition = "2024" в [package], Rust 1.88 или новее
 [dev-dependencies]
 brokapi       = { path = "../brokapi", features = ["bcs", "tbank", "finam"] }
 brokapi-mocks = { path = "../brokapi/crates/mocks" }

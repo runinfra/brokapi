@@ -4,10 +4,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use brokapi_core::{Event, OrderState, SubscriptionId, UnixNanos};
+use brokapi_core::{ClientOrderId, Event, OrderState, SubscriptionId, UnixNanos};
 use brokapi_finam_protocol::pb::grpc::tradeapi::v1::accounts::GetAccountResponse;
 use brokapi_finam_protocol::pb::grpc::tradeapi::v1::orders as pb;
-use brokapi_runtime::OrderRuntime;
+use brokapi_runtime::{FinishedWindow, OrderRuntime};
 use brokapi_sansio::{
     BrokerCore, CoreEvent, EventSink, OrderSignal, Outbound, SubscriptionKind, SubscriptionSet,
 };
@@ -100,6 +100,10 @@ pub struct UdCore {
     down_since: HashMap<SubscriptionId, UnixNanos>,
     orders: OrderRuntime,
     index: Arc<OrderIndex>,
+    /// Finished orders, to forget their ids after the memory window.
+    done: FinishedWindow<ClientOrderId>,
+    /// Cids forgotten since the last call of `take_forgotten`.
+    forgotten: Vec<ClientOrderId>,
 }
 
 impl UdCore {
@@ -112,12 +116,20 @@ impl UdCore {
             down_since: HashMap::new(),
             orders: OrderRuntime::new(),
             index,
+            done: FinishedWindow::new(),
+            forgotten: Vec::new(),
         }
     }
 
     /// Local lifecycle of orders placed through this connector.
     pub fn orders(&mut self) -> &mut OrderRuntime {
         &mut self.orders
+    }
+
+    /// Takes the cids the core forgot since the last call: orders that finished long ago (see the memory
+    /// window of [`OrderRuntime`]). The connector drops what else it keeps for them.
+    pub fn take_forgotten(&mut self) -> Vec<ClientOrderId> {
+        std::mem::take(&mut self.forgotten)
     }
 
     /// The order index shared with the connector.
@@ -159,7 +171,8 @@ impl UdCore {
             OrderState::Rejected { reason, .. } => OrderSignal::Rejected {
                 reason: reason.clone(),
             },
-            OrderState::InFlight { .. } | OrderState::Unknown { .. } => return None,
+            // `InFlight`, `Unknown`, and a state of a later version: no signal.
+            _ => return None,
         })
     }
 
@@ -173,6 +186,13 @@ impl UdCore {
         let (client_order_id, comment) = crate::map::stop::echo_keys(os);
         let cid = self.index.resolve(&os.order_id, &client_order_id, &comment);
         let snap = map_order_state(os, cid, now);
+        if snap.state.is_final() {
+            self.done.push(now, cid);
+            for old in self.done.expired(now) {
+                self.index.forget(old);
+                self.forgotten.push(old);
+            }
+        }
         if let Some(signal) = Self::order_signal(&snap.state) {
             // Foreign orders are unknown to the registry: the error is expected and ignored.
             self.orders.apply_signal(cid, signal, now);
@@ -222,6 +242,14 @@ impl BrokerCore for UdCore {
             UdEvent::Orders(msg) if kind == UdSubKind::Orders => {
                 self.status.insert(sub, SubStatus::Active);
                 for os in &msg.orders {
+                    // Stop and SL/TP orders have a stream of their own (see `map::stop`). Here they would
+                    // arrive as an ordinary order with no instrument, side Buy and quantity 0. The cid is
+                    // still learned, so that the stop order can be cancelled by it.
+                    if crate::map::stop::is_stop(os) {
+                        let (client_order_id, comment) = crate::map::stop::echo_keys(os);
+                        self.index.resolve(&os.order_id, &client_order_id, &comment);
+                        continue;
+                    }
                     let snap = self.ingest_order(os, now);
                     out.push(CoreEvent {
                         sub: Some(sub),

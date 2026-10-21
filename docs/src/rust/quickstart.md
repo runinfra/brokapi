@@ -10,13 +10,13 @@
 
 ## Шаг 1. Получить библиотеку
 
-Нужен Rust 1.85 или новее (редакция 2024). Подключается один крейт `brokapi`, брокеры включаются флагами, как у `tokio`
+Нужен Rust 1.88 или новее (редакция 2024). Подключается один крейт `brokapi`, брокеры включаются флагами, как у `tokio`
 (`tbank`, `bcs`, `finam`, можно несколько). Целевые команды, когда крейт опубликован (открытая бета):
 
 ```bash
 cargo add brokapi --features tbank
 cargo add tokio --features full
-cargo add dotenv
+cargo add dotenvy
 ```
 
 Закрытая альфа: крейта на crates.io еще нет. Сейчас первая строка такая (репозиторий откроется вместе с открытой бетой,
@@ -32,7 +32,7 @@ cargo add --git https://github.com/runinfra/brokapi brokapi --features tbank
 [dependencies]
 brokapi = { git = "https://github.com/runinfra/brokapi", version = "0.1.0-alpha.1", features = ["tbank"] }   # после беты без git
 tokio   = { version = "1", features = ["full"] }
-dotenv  = "0.15"
+dotenvy = "0.15"
 ```
 
 Из клона репозитория подключают по пути: `brokapi = { path = "../brokapi", features = ["tbank"] }`. В коде все лежит под
@@ -221,7 +221,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Шаг 4. Программа для БКС
 
 Счет определяет токен, поэтому `account_id` нет. Лимиты встроены в крейт: `brokapi::bcs::limits::default_limits()`, как у двух
-других брокеров (числа осторожные, брокер своих не публикует). Инструмент БКС задается тикером и классом (`SBER`, `TQBR`),
+других брокеров (числа из таблицы ограничений брокера). Инструмент БКС задается тикером и классом (`SBER`, `TQBR`),
 справочник для этого не нужен.
 
 ```rust
@@ -281,7 +281,7 @@ use brokapi::runtime::BrokerLimiter;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // api_config_from_env сам .env не читает, поэтому загружаем его вручную
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
     let (api, account) = api_config_from_env()?;
     let account = account.ok_or("FINAM_ACCOUNT_ID не задан")?;
     let price: Price = std::env::var("EXAMPLE_PRICE")?.parse()?;

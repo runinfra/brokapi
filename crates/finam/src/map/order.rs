@@ -99,18 +99,18 @@ pub fn map_order_state(os: &pb::OrderState, cid: ClientOrderId, now: Instant) ->
         .unwrap_or(filled + left);
     let description = os.status_description.clone().unwrap_or_default();
     let limit = price(&order.limit_price).filter(|p| p.is_positive());
-    OrderSnapshot {
+    OrderSnapshot::new(
         cid,
-        broker_id: (!os.order_id.is_empty()).then(|| BrokerOrderId::new(os.order_id.clone())),
-        instrument: instrument_from_symbol(&order.symbol),
-        state: map_status(os.status, cid, &os.order_id, filled, left, &description),
-        side: side_from_pb(order.side),
-        order_type: order_type_from_pb(order.r#type),
-        qty: total,
-        filled,
-        price: limit,
-        ts: timestamps(os.accept_at.as_ref().or(os.transact_at.as_ref()), now),
-    }
+        instrument_from_symbol(&order.symbol),
+        map_status(os.status, cid, &os.order_id, filled, left, &description),
+        side_from_pb(order.side),
+        order_type_from_pb(order.r#type),
+        total,
+        timestamps(os.accept_at.as_ref().or(os.transact_at.as_ref()), now),
+    )
+    .with_broker_id((!os.order_id.is_empty()).then(|| BrokerOrderId::new(os.order_id.clone())))
+    .with_filled(filled)
+    .with_price(limit)
 }
 
 /// Cid carried by an order echo: the comment (lossless) wins.

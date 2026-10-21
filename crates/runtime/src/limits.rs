@@ -30,7 +30,7 @@ pub const DEFAULT_ROUTE: &str = "*";
 /// send `burst` calls at once, and a busy one is held to `rate` calls per `per`.
 ///
 /// In a limits file the three keys are written as `rate = 10`, `per = "1s"`, `burst = 3`. The
-/// `per` value is an integer followed by `ms`, `s` or `m` (see [`BrokerLimits::from_toml_str`]).
+/// `per` value is an integer followed by `ms`, `s`, `m`, `h` or `d` (see [`BrokerLimits::from_toml_str`]).
 ///
 /// # Examples
 ///
@@ -144,8 +144,8 @@ impl BrokerLimits {
     ///
     /// The file layout is one top-level table per broker, with `buckets`, `route` and `conns`
     /// below it: `[bcs.buckets.global]`, `[bcs.route]`, `[bcs.conns]`. A `per` value is an integer
-    /// followed by `ms`, `s` or `m` (`"250ms"`, `"1s"`, `"1m"`). Fractions (`"1.5s"`), other
-    /// units (`"1h"`) and spaces inside (`"1 s"`) are refused. `buckets` and `route` must be
+    /// followed by `ms`, `s`, `m`, `h` or `d` (`"250ms"`, `"1s"`, `"24h"`). Zero, fractions (`"1.5s"`), other
+    /// units (`"1w"`) and spaces inside (`"1 s"`) are refused. `buckets` and `route` must be
     /// present. Keys the parser does not know are ignored (an older file with
     /// `dedicated_command_conns` still reads), so a misspelled optional key is silently lost.
     ///
@@ -178,7 +178,7 @@ impl BrokerLimits {
     /// assert_eq!(limits.conns.max_conns, 4);
     ///
     /// // An unsupported duration unit is a configuration error, not a silent default.
-    /// let bad = raw.replace("\"1s\"", "\"1h\"");
+    /// let bad = raw.replace("\"1s\"", "\"1w\"");
     /// assert!(BrokerLimits::from_toml_str(&bad).is_err());
     ///
     /// // Two broker sections: pick one with `from_toml_section`.
@@ -578,25 +578,30 @@ mod humantime_serde {
 
     fn parse_duration(s: &str) -> Result<Duration, String> {
         let s = s.trim();
-        if let Some(num) = s.strip_suffix("ms") {
-            let v: u64 = num
-                .parse()
-                .map_err(|e: std::num::ParseIntError| e.to_string())?;
-            return Ok(Duration::from_millis(v));
+        // "ms" must be tried before "s" and "m".
+        let (num, unit_ms) = if let Some(n) = s.strip_suffix("ms") {
+            (n, 1u64)
+        } else if let Some(n) = s.strip_suffix('s') {
+            (n, 1_000)
+        } else if let Some(n) = s.strip_suffix('m') {
+            (n, 60_000)
+        } else if let Some(n) = s.strip_suffix('h') {
+            (n, 3_600_000)
+        } else if let Some(n) = s.strip_suffix('d') {
+            (n, 86_400_000)
+        } else {
+            return Err(format!("unsupported duration: {s}"));
+        };
+        let v: u64 = num
+            .parse()
+            .map_err(|e: std::num::ParseIntError| e.to_string())?;
+        if v == 0 {
+            return Err(format!("a period must be longer than zero: {s}"));
         }
-        if let Some(num) = s.strip_suffix('s') {
-            let v: u64 = num
-                .parse()
-                .map_err(|e: std::num::ParseIntError| e.to_string())?;
-            return Ok(Duration::from_secs(v));
-        }
-        if let Some(num) = s.strip_suffix('m') {
-            let v: u64 = num
-                .parse()
-                .map_err(|e: std::num::ParseIntError| e.to_string())?;
-            return Ok(Duration::from_secs(v * 60));
-        }
-        Err(format!("unsupported duration: {s}"))
+        let ms = v
+            .checked_mul(unit_ms)
+            .ok_or_else(|| format!("period too long: {s}"))?;
+        Ok(Duration::from_millis(ms))
     }
 }
 
@@ -678,14 +683,6 @@ mod tests {
             limiter.acquire("PlaceOrder", t0),
             Err(Error::RateLimited { .. })
         ));
-    }
-
-    #[test]
-    fn parses_bcs_limits_toml() {
-        let raw = include_str!("../../../configs/bcs_limits.toml");
-        let limits = BrokerLimits::from_toml_str(raw).expect("parse");
-        assert!(limits.buckets.contains_key("global"));
-        assert!(limits.route.contains_key("PlaceOrder"));
     }
 
     #[test]

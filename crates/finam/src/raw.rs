@@ -39,7 +39,7 @@
 //!
 //! Rules of a call:
 //! 1. The quota is taken first, by the proto method name (`"GetFutureSplits"`), from the route in
-//!    `configs/finam_limits.toml`. A name without a route spends the `"*"` default route, so a call is
+//!    `limits.toml`. A name without a route spends the `"*"` default route, so a call is
 //!    never free. A refusal is `Error::RateLimited` and the request is not sent.
 //! 2. The closure gets a [`FinamApi`] that attaches the CURRENT JWT to every request (the connector's
 //!    token manager renews it ahead of expiry). One closure is one API method.

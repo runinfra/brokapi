@@ -34,18 +34,7 @@ use brokapi_core::{ClientOrderId, OrderSnapshot, ReconcileReport};
 ///     InstrumentKey::new("SBER", "TQBR"),
 ///     NativeId::TickerClass { ticker: "SBER".into(), class_code: "TQBR".into() },
 /// );
-/// let order = |cid: ClientOrderId| OrderSnapshot {
-///     cid,
-///     broker_id: None,
-///     instrument: sber.clone(),
-///     state: OrderState::Acked { cid, broker_id: BrokerOrderId::new("1") },
-///     side: Side::Buy,
-///     order_type: OrderType::Limit,
-///     qty: Qty::from(1),
-///     filled: Qty::from(0),
-///     price: Some(Price::from(100)),
-///     ts: Timestamps::new(UnixNanos::ZERO, Instant::now()),
-/// };
+/// let order = |cid: ClientOrderId| OrderSnapshot::new(cid, sber.clone(), OrderState::Acked { cid, broker_id: BrokerOrderId::new("1") }, Side::Buy, OrderType::Limit, Qty::from(1), Timestamps::new(UnixNanos::ZERO, Instant::now())).with_filled(Qty::from(0)).with_price(Some(Price::from(100)));
 /// let (kept, gone, other) = (ClientOrderId::new_v4(), ClientOrderId::new_v4(), ClientOrderId::new_v4());
 ///
 /// // We remember `kept` and `gone`. The broker shows `kept` and one we never placed.
@@ -85,11 +74,7 @@ pub fn reconcile_ledger(
         .filter_map(|cid| broker_map.get(cid).copied().cloned())
         .collect();
 
-    ReconcileReport {
-        confirmed,
-        closed_offline,
-        foreign,
-    }
+    ReconcileReport::new(confirmed, closed_offline, foreign)
 }
 
 #[cfg(test)]
@@ -103,27 +88,25 @@ mod tests {
     use std::time::Instant;
 
     fn snapshot(cid: u8) -> OrderSnapshot {
-        OrderSnapshot {
-            cid: ClientOrderId::from_bytes([cid; 16]),
-            broker_id: None,
-            instrument: InstrumentId::new(
+        OrderSnapshot::new(
+            ClientOrderId::from_bytes([cid; 16]),
+            InstrumentId::new(
                 InstrumentKey::new("SBER", "TQBR"),
                 NativeId::TickerClass {
                     ticker: "SBER".into(),
                     class_code: "TQBR".into(),
                 },
             ),
-            state: OrderState::Acked {
+            OrderState::Acked {
                 cid: ClientOrderId::from_bytes([cid; 16]),
                 broker_id: brokapi_core::BrokerOrderId::new("1"),
             },
-            side: Side::Buy,
-            order_type: OrderType::Limit,
-            qty: Qty::from(1),
-            filled: Qty::from(0),
-            price: None,
-            ts: Timestamps::new(UnixNanos::ZERO, Instant::now()),
-        }
+            Side::Buy,
+            OrderType::Limit,
+            Qty::from(1),
+            Timestamps::new(UnixNanos::ZERO, Instant::now()),
+        )
+        .with_filled(Qty::from(0))
     }
 
     #[test]

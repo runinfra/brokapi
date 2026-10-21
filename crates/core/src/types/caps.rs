@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 /// A `false` means the matching `subscribe_*` method answers
 /// [`Error::Unsupported`](crate::Error::Unsupported). Poll the REST read yourself if you need the data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct StreamingCaps {
     /// [`OrderBookSource::subscribe_order_book`](crate::OrderBookSource::subscribe_order_book) works.
     pub order_book: bool,
@@ -26,6 +27,19 @@ pub struct StreamingCaps {
 }
 
 impl StreamingCaps {
+    /// Caps with the four streams given: order book, market trades, quotes, candles.
+    ///
+    /// The struct is `#[non_exhaustive]`: it gets a new field when a stream is added, so build it with this
+    /// function (or [`NONE`](Self::NONE) and set the fields) and not with a struct literal.
+    pub const fn new(order_book: bool, market_trades: bool, quotes: bool, candles: bool) -> Self {
+        Self {
+            order_book,
+            market_trades,
+            quotes,
+            candles,
+        }
+    }
+
     /// No streams at all.
     pub const NONE: Self = Self {
         order_book: false,
@@ -42,14 +56,11 @@ impl StreamingCaps {
 /// ```
 /// use brokapi_core::{MarketDataCaps, StreamingCaps};
 ///
-/// let caps = MarketDataCaps {
-///     max_order_book_depth: 20,
-///     incremental_order_book: false,
-///     streaming: StreamingCaps { order_book: true, ..StreamingCaps::NONE },
-/// };
+/// let caps = MarketDataCaps::new(20, false, StreamingCaps::new(true, false, false, false));
 /// assert!(caps.streaming.order_book && !caps.streaming.quotes);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MarketDataCaps {
     /// Deepest order book the connector serves. A larger `depth` is cut to this value (the BCS
     /// connector does so silently).
@@ -114,6 +125,7 @@ mod duration_secs {
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UserDataCaps {
     /// What the broker does on a repeated cid, see [`PlaceIdempotency`].
     pub place_idempotency: PlaceIdempotency,
@@ -133,4 +145,61 @@ pub struct UserDataCaps {
     pub streams_executions: bool,
     /// The connector talks to the broker's test environment (sandbox), not to real money.
     pub sandbox: bool,
+}
+
+impl MarketDataCaps {
+    /// Caps of a market data connector. The struct is `#[non_exhaustive]`: build it with this function.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use brokapi_core::{MarketDataCaps, StreamingCaps};
+    ///
+    /// let caps = MarketDataCaps::new(20, false, StreamingCaps::new(true, true, true, true));
+    /// assert_eq!(caps.max_order_book_depth, 20);
+    /// ```
+    pub const fn new(
+        max_order_book_depth: u32,
+        incremental_order_book: bool,
+        streaming: StreamingCaps,
+    ) -> Self {
+        Self {
+            max_order_book_depth,
+            incremental_order_book,
+            streaming,
+        }
+    }
+}
+
+impl UserDataCaps {
+    /// Caps of a user data connector, the fields in the order they are declared. The struct is
+    /// `#[non_exhaustive]`: build it with this function.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use brokapi_core::{PlaceIdempotency, UserDataCaps};
+    ///
+    /// let caps = UserDataCaps::new(PlaceIdempotency::LabelOnly, false, false, true, true, true, false);
+    /// assert!(caps.supports_replace && !caps.sandbox);
+    /// ```
+    pub const fn new(
+        place_idempotency: PlaceIdempotency,
+        ws_rpc: bool,
+        ordered_command_channel: bool,
+        supports_replace: bool,
+        supports_stop_orders: bool,
+        streams_executions: bool,
+        sandbox: bool,
+    ) -> Self {
+        Self {
+            place_idempotency,
+            ws_rpc,
+            ordered_command_channel,
+            supports_replace,
+            supports_stop_orders,
+            streams_executions,
+            sandbox,
+        }
+    }
 }

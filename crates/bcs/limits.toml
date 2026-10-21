@@ -1,0 +1,118 @@
+# BCS Trade API rate limits for brokapi-bcs.
+#
+# Source: the table "Ограничения" of the BCS documentation (trade-api-bcs-docs, rest/restrictions): for every
+# service 10 requests per second per client account, except non-trade operations (operation history),
+# 3 per second. The orders service also has a cap of 200000 requests per day. WebSocket: 2 connections for
+# portfolio, limits and marginal indicators, 4 for orders, 20 for market data (100 instruments per connection).
+# An answer 429 means the limit is exceeded.
+#
+# What is NOT verified against a live account: whether the broker counts a second as a fixed window or as a
+# sliding one, whether "per account" really means per token, and whether the daily 200000 is a calendar day
+# (Moscow time) or 24 hours. Every service gets its own bucket of 10 per second with a burst of 10 (one
+# second's worth, so a short run of calls such as place, status, cancel, list is not held back). Sustained use
+# is held to 10 a second. The daily bucket counts only what this process sends (several processes on one account each have their own count: give the limiter to all
+# connectors of one process, see the Rate limits page of the book).
+
+[bcs.buckets.portfolio]
+# Service "Портфель": 10 RPS
+rate = 10
+per = "1s"
+burst = 10
+
+[bcs.buckets.limits]
+# Service "Лимиты": 10 RPS
+rate = 10
+per = "1s"
+burst = 10
+
+[bcs.buckets.reference]
+# Service "Справочник" (instruments, trading status, schedule): 10 RPS
+rate = 10
+per = "1s"
+burst = 10
+
+[bcs.buckets.orders]
+# Service "Заявки" (place, change, cancel, the list of orders): 10 RPS
+rate = 10
+per = "1s"
+burst = 10
+
+[bcs.buckets.place]
+# Not a limit of the broker: placements (and replacements, stop orders) go through this bucket too, so that
+# they can never use all of the 10 a second of the orders service. At least 2 a second are left for cancels.
+rate = 8
+per = "1s"
+burst = 4
+
+[bcs.buckets.orders_daily]
+# The same service, 200000 requests a day. A bucket of 200000 that refills evenly over 24 hours.
+rate = 200000
+per = "24h"
+burst = 200000
+
+[bcs.buckets.order_status]
+# "Получение статуса заявки": 10 RPS, a service of its own in the table
+rate = 10
+per = "1s"
+burst = 10
+
+[bcs.buckets.trades]
+# Service "Сделки": 10 RPS
+rate = 10
+per = "1s"
+burst = 10
+
+[bcs.buckets.discounts]
+# "Дисконты по инструментам": 10 RPS
+rate = 10
+per = "1s"
+burst = 10
+
+[bcs.buckets.market_data]
+# Service "Рыночные данные": 10 RPS
+rate = 10
+per = "1s"
+burst = 10
+
+[bcs.buckets.non_trade]
+# "Неторговые операции" (operation history): 3 RPS
+rate = 3
+per = "1s"
+burst = 3
+
+[bcs.route]
+# "*" = any method with no route below (raw() calls). It goes to the budget of the reference service, so
+# a call made through raw() is never free.
+"*" = ["reference"]
+PlaceOrder = ["orders", "orders_daily", "place"]
+CancelOrder = ["orders", "orders_daily"]
+ReplaceOrder = ["orders", "orders_daily", "place"]
+PlaceStopOrder = ["orders", "orders_daily", "place"]
+CancelStopOrder = ["orders", "orders_daily"]
+SearchOrders = ["orders", "orders_daily"]
+GetOrder = ["order_status"]
+GetOrderStatus = ["order_status"]
+SearchTrades = ["trades"]
+GetPortfolio = ["portfolio"]
+# A reconciliation spends the budget of its own call here, the GET per order and the list spend theirs.
+Reconcile = ["order_status"]
+GetOrderBook = ["market_data"]
+SubscribeOrderBook = ["market_data"]
+SubscribeQuotes = ["market_data"]
+GetQuotes = ["market_data"]
+GetCandles = ["market_data"]
+GetLastTrades = ["market_data"]
+GetOperationHistory = ["non_trade"]
+GetLimits = ["limits"]
+GetInstrumentsDiscounts = ["discounts"]
+GetDailySchedule = ["reference"]
+GetTradingStatus = ["reference"]
+GetInstrumentsByTickers = ["reference"]
+GetInstrumentsByIsins = ["reference"]
+GetInstrumentsByType = ["reference"]
+
+[bcs.conns]
+# The orders channel allows 4 connections, the other channels allow 2 (portfolio, limits) and 20 (market data).
+max_conns = 4
+max_subs_per_conn = 50
+supports_multiplex = false

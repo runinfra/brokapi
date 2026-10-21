@@ -41,15 +41,43 @@ pub fn map_order_status(resp: &OrderStatusResponse, now: Instant) -> Option<Even
     Some(Event::Order(map_execution_data(cid, data, now)))
 }
 
+/// The cid of the order an `orders/events/ws` message is about.
+///
+/// The two ids of the message mean: `clientOrderId` is the id of the request that caused the message,
+/// `originalClientOrderId` is the order that was changed (docs: "идентификатор измененной заявки"). For a
+/// cancel the request id is a fresh id of the cancel, for a replace the new order's id. So:
+///
+/// - only one of them is a UUID: that one (the docs sample of a fill has `clientOrderId` empty);
+/// - both are, and the message is a cancel, a replace or a cancel in progress (`orderStatus` 4, 5, 6):
+///   `originalClientOrderId`, the order the news is about, not the id of the request;
+/// - both are, any other status: `clientOrderId`, the id of the order that was placed or changed.
+///
+/// Not verified against the live API: which id the broker puts in which field for each kind of message.
+/// `None` when neither is a UUID.
+pub fn message_cid(msg: &OrderMessage) -> Option<ClientOrderId> {
+    use brokapi_bcs_protocol::models::enums::OrderStatus as S;
+    let client = parse_cid(&msg.client_order_id);
+    let original = msg.original_client_order_id.as_deref().and_then(parse_cid);
+    match (client, original) {
+        (Some(c), Some(o)) => {
+            let about_the_original = msg.data.as_ref().is_some_and(|d| {
+                matches!(
+                    d.order_status,
+                    S::Cancelled | S::Replaced | S::PendingCancel
+                )
+            });
+            Some(if about_the_original { o } else { c })
+        }
+        (c, o) => c.or(o),
+    }
+}
+
 /// Maps a message of the order events WebSocket to an `Event::Order`.
 ///
-/// The client order id is the message's `clientOrderId`, or `originalClientOrderId` when the first is
-/// empty (the docs sample for a cancel or a reject has it empty). `None` when neither is a UUID or
-/// the message has no report. Fills are mapped separately by [`crate::map::execution::map_ws_execution`].
+/// The client order id is chosen by [`message_cid`]. `None` when neither id is a UUID or the message has no
+/// report. Fills are mapped separately by [`crate::map::execution::map_ws_execution`].
 pub fn map_ws_order_message(msg: &OrderMessage, now: Instant) -> Option<Event> {
-    // `clientOrderId` can be empty (the docs sample for cancel/reject is): then the original id.
-    let cid = parse_cid(&msg.client_order_id)
-        .or_else(|| msg.original_client_order_id.as_deref().and_then(parse_cid))?;
+    let cid = message_cid(msg)?;
     let data = msg.data.as_ref()?;
     let original = msg
         .original_client_order_id
@@ -84,18 +112,20 @@ pub fn map_order_record(
     let qty = record.order_quantity.unwrap_or(Decimal::ZERO);
     let filled = record.executed_quantity.unwrap_or(Decimal::ZERO);
     let state = list_state(record, cid);
-    Some(OrderSnapshot {
-        cid,
-        broker_id: Some(BrokerOrderId::new(record.order_id.clone())),
-        instrument,
-        state,
-        side,
-        order_type,
-        qty: Qty::new(qty),
-        filled: Qty::new(filled),
-        price: record.price.filter(|p| *p > Decimal::ZERO).map(Price::new),
-        ts: timestamps(now, None),
-    })
+    Some(
+        OrderSnapshot::new(
+            cid,
+            instrument,
+            state,
+            side,
+            order_type,
+            Qty::new(qty),
+            timestamps(now, None),
+        )
+        .with_broker_id(Some(BrokerOrderId::new(record.order_id.clone())))
+        .with_filled(Qty::new(filled))
+        .with_price(record.price.filter(|p| *p > Decimal::ZERO).map(Price::new)),
+    )
 }
 
 /// Status of the list (`orderStatus`): 1 cancelled, 2 executed, 3 active. An active order with some
@@ -229,20 +259,18 @@ fn map_operation_ack(
     now: Instant,
     state: OrderState,
 ) -> OrderSnapshot {
-    OrderSnapshot {
-        cid: resp.client_order_id,
-        broker_id: Some(BrokerOrderId::new(
-            resp.client_order_id.hyphenated().to_string(),
-        )),
-        instrument: instrument_id_ticker("", ""),
+    OrderSnapshot::new(
+        resp.client_order_id,
+        instrument_id_ticker("", ""),
         state,
-        side: Side::Buy,
-        order_type: OrderType::Limit,
-        qty: Qty::ZERO,
-        filled: Qty::ZERO,
-        price: None,
-        ts: timestamps(now, None),
-    }
+        Side::Buy,
+        OrderType::Limit,
+        Qty::ZERO,
+        timestamps(now, None),
+    )
+    .with_broker_id(Some(BrokerOrderId::new(
+        resp.client_order_id.hyphenated().to_string(),
+    )))
 }
 
 fn map_ws_execution_data(
@@ -266,21 +294,22 @@ fn map_ws_execution_data(
     let broker_ts = data.transaction_time.map(super::unix_nanos);
     let _original = parse_cid(original_cid);
 
-    OrderSnapshot {
+    OrderSnapshot::new(
         cid,
-        broker_id: data
-            .order_id
-            .as_ref()
-            .map(|id| BrokerOrderId::new(id.clone())),
         instrument,
         state,
         side,
         order_type,
         qty,
-        filled,
-        price: Some(Price::new(data.price)),
-        ts: timestamps(now, broker_ts),
-    }
+        timestamps(now, broker_ts),
+    )
+    .with_broker_id(
+        data.order_id
+            .as_ref()
+            .map(|id| BrokerOrderId::new(id.clone())),
+    )
+    .with_filled(filled)
+    .with_price(Some(Price::new(data.price)))
 }
 
 fn map_execution_data(
@@ -301,22 +330,23 @@ fn map_execution_data(
     let qty = Qty::new(data.order_quantity.unwrap_or(Decimal::ZERO));
     let filled = Qty::new(data.executed_quantity.unwrap_or(Decimal::ZERO));
 
-    OrderSnapshot {
+    OrderSnapshot::new(
         cid,
-        broker_id: data
-            .order_id
-            .as_ref()
-            .filter(|id| !id.is_empty())
-            .map(|id| BrokerOrderId::new(id.clone())),
         instrument,
         state,
         side,
         order_type,
         qty,
-        filled,
-        price: data.price.filter(|p| *p > Decimal::ZERO).map(Price::new),
-        ts: timestamps(now, data.transaction_time.map(super::unix_nanos)),
-    }
+        timestamps(now, data.transaction_time.map(super::unix_nanos)),
+    )
+    .with_broker_id(
+        data.order_id
+            .as_ref()
+            .filter(|id| !id.is_empty())
+            .map(|id| BrokerOrderId::new(id.clone())),
+    )
+    .with_filled(filled)
+    .with_price(data.price.filter(|p| *p > Decimal::ZERO).map(Price::new))
 }
 
 fn parse_cid(raw: &str) -> Option<ClientOrderId> {

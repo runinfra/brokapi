@@ -84,6 +84,12 @@ where
             tokens.refresh().await?;
             once(timeout, &f).await
         }
+        // A command is never repeated, but the next call must not meet the same expired token: the
+        // renewal runs in the background.
+        Err(e) if e.is_unauthenticated() => {
+            tokens.request_refresh();
+            Err(e)
+        }
         other => other,
     }
 }

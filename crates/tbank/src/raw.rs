@@ -43,7 +43,7 @@
 //!
 //! Rules of a call:
 //! 1. The quota is taken first, by the proto method name (`"GetBondCoupons"`), from the route in
-//!    `configs/tbank_limits.toml`. A name without a route spends the `"*"` default route, so a call
+//!    `limits.toml`. A name without a route spends the `"*"` default route, so a call
 //!    is never free. A refusal is `Error::RateLimited` and the request is not sent.
 //! 2. One closure is one API method. Do not call several methods inside one closure: only one quota
 //!    unit is taken for it.

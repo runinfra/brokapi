@@ -48,6 +48,8 @@ pub fn instrument_ref(id: &InstrumentId) -> String {
         NativeId::Figi(f) => f.clone(),
         NativeId::TickerClass { ticker, class_code } => format!("{ticker}_{class_code}"),
         NativeId::SymbolMic { symbol, mic } => format!("{symbol}_{mic}"),
+        // A kind of id of a later version: the key still names ticker and class.
+        _ => format!("{}_{}", id.key.symbol, id.key.mic),
     }
 }
 
@@ -79,6 +81,7 @@ pub fn matches(id: &InstrumentId, uid: &str, figi: &str, ticker: &str, class_cod
             class_code: c,
         } => t == ticker && c == class_code,
         NativeId::SymbolMic { symbol, mic } => symbol == ticker && mic == class_code,
+        _ => false,
     }
 }
 
@@ -308,6 +311,11 @@ pub fn instrument_request(id: &InstrumentId) -> pb::InstrumentRequest {
             id_type: pb::InstrumentIdType::Ticker as i32,
             id: symbol.clone(),
             class_code: Some(mic.clone()),
+        },
+        _ => pb::InstrumentRequest {
+            id_type: pb::InstrumentIdType::Ticker as i32,
+            id: id.key.symbol.clone(),
+            class_code: Some(id.key.mic.clone()),
         },
     }
 }

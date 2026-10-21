@@ -260,10 +260,11 @@ where
         self.fills.insert(order.cid, order.filled);
         let entry = match &order.state {
             OrderState::Acked { .. } | OrderState::PartiallyFilled { .. } => Entry::Working,
-            OrderState::InFlight { .. } | OrderState::Unknown { .. } => Entry::Check,
             OrderState::Filled { .. } => Entry::Done("filled".into()),
             OrderState::Cancelled { .. } => Entry::Done("cancelled".into()),
             OrderState::Rejected { reason, .. } => Entry::Done(format!("rejected: {reason}")),
+            // `InFlight`, `Unknown`, and a state a later version adds: look at the broker.
+            _ => Entry::Check,
         };
         let is_final = matches!(entry, Entry::Done(_));
         self.journal.set(order.cid, entry);

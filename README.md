@@ -37,7 +37,7 @@ brokapi = { version = "0.1.0-alpha.1", features = ["bcs"] }   # или "tbank", 
 tools/check   # fmt, clippy, тесты, doctest-ы, rustdoc, примеры, сборка книги
 ```
 
-Нужен Rust 1.85 или новее, [mdBook](https://rust-lang.github.io/mdBook/) с `mdbook-mermaid` и python 3 (файлы для ИИ-агентов собирает `docs/llms.py`, только стандартная библиотека).
+Нужен Rust 1.88 или новее, [mdBook](https://rust-lang.github.io/mdBook/) с `mdbook-mermaid` и python 3 (файлы для ИИ-агентов собирает `docs/llms.py`, только стандартная библиотека).
 
 ## Лицензия
 

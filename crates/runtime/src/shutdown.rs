@@ -99,18 +99,15 @@ impl ShutdownController {
         self.gate.begin_shutdown();
 
         let (unsubscribed, unsubscribe_failed) = match mode {
-            ShutdownMode::Immediate => (0, 0),
             ShutdownMode::Graceful { .. } => unsubscribe(),
+            // `Immediate`, and a mode of a later version: close nothing in the protocol.
+            _ => (0, 0),
         };
 
         let inflight_abandoned = orders.abandon_inflight(now);
         self.root.cancel();
 
-        ShutdownReport {
-            unsubscribed,
-            unsubscribe_failed,
-            inflight_abandoned,
-        }
+        ShutdownReport::new(unsubscribed, unsubscribe_failed, inflight_abandoned)
     }
 
     /// Sleeps for the `deadline` of a `Graceful` mode, and returns at once for `Immediate`.

@@ -213,7 +213,7 @@ dependencies = [
  "brokapi-sansio",
  "brokapi-tbank",
  "brokapi-tbank-protocol",
- "dotenv",
+ "dotenvy",
  "tokio",
 ]
 
@@ -249,7 +249,7 @@ dependencies = [
  "brokapi-core",
  "brokapi-mocks",
  "chrono",
- "dotenv",
+ "dotenvy",
  "futures-util",
  "kanal",
  "mockito",
@@ -315,7 +315,7 @@ dependencies = [
  "brokapi-runtime",
  "brokapi-sansio",
  "chrono",
- "dotenv",
+ "dotenvy",
  "futures-util",
  "proptest",
  "prost-types",
@@ -423,7 +423,7 @@ name = "brokapi-tbank-protocol"
 version = "0.1.0-alpha.1"
 dependencies = [
  "brokapi-mocks",
- "dotenv",
+ "dotenvy",
  "proptest",
  "prost",
  "prost-types",
@@ -592,10 +592,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotenv"
-version = "0.15.0"
+name = "dotenvy"
+version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "either"

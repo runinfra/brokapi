@@ -65,6 +65,8 @@ fn parts(e: &Error) -> (&'static str, Vec<(&'static str, Field)>) {
         Error::NotReconciled => ("NotReconciled", vec![]),
         Error::Degraded => ("Degraded", vec![]),
         Error::ShuttingDown => ("ShuttingDown", vec![]),
+        // An error that a later version of the library adds: the safe reading for a caller is "unknown".
+        _ => ("Unknown", vec![]),
     }
 }
 

@@ -211,8 +211,10 @@ impl Interceptor for AuthInterceptor {
         } else {
             token.to_string()
         };
-        let value = MetadataValue::try_from(value.as_str())
+        let mut value = MetadataValue::try_from(value.as_str())
             .map_err(|_| Status::unauthenticated("token is not valid metadata"))?;
+        // Sensitive: the JWT does not show in the Debug output of the request or in HTTP/2 traces.
+        value.set_sensitive(true);
         req.metadata_mut().insert("authorization", value);
         Ok(req)
     }
@@ -346,5 +348,47 @@ impl FinamApi {
     /// `CorporateActionsService`: splits, dividends and bond events.
     pub fn corporate_actions(&self) -> CorporateActionsServiceClient<Authorized> {
         CorporateActionsServiceClient::new(self.svc())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+
+    use super::*;
+    use crate::auth::{TokenApi, TokenInfo};
+    use crate::error::FinamError;
+
+    struct Fixed;
+
+    #[async_trait]
+    impl TokenApi for Fixed {
+        async fn auth(&self, _s: &str, _a: &str) -> Result<String, FinamError> {
+            Ok("the-jwt".into())
+        }
+        async fn token_details(&self, _t: &str) -> Result<TokenInfo, FinamError> {
+            Ok(TokenInfo::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn the_jwt_header_is_sensitive_and_is_sent_bare_or_with_bearer() {
+        let tokens = crate::auth::TokenManager::start(Arc::new(Fixed), "secret", "")
+            .await
+            .unwrap();
+        for (bearer, want) in [(false, "the-jwt"), (true, "Bearer the-jwt")] {
+            let mut interceptor = AuthInterceptor {
+                tokens: Arc::clone(&tokens),
+                bearer,
+            };
+            let req = interceptor.call(Request::new(())).unwrap();
+            let value = req.metadata().get("authorization").unwrap();
+            assert_eq!(value, want);
+            // The value does not show in `Debug` output.
+            assert!(value.is_sensitive());
+            assert!(!format!("{req:?}").contains("the-jwt"), "{req:?}");
+        }
     }
 }

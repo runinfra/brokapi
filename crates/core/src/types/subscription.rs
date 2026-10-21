@@ -46,6 +46,7 @@ impl SubscriptionId {
 /// assert_eq!(opts.backpressure, Backpressure::Lossless { cap: 1024 });
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Backpressure {
     /// Full snapshots: a new value replaces the previous one that was not read yet.
     Conflate,

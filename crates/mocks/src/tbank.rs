@@ -113,6 +113,11 @@ pub struct MockOptions {
     /// How many times the order state stream and the trades stream were opened, together. A reconnect
     /// after [`MockServer::cut_user_streams`] makes it grow.
     pub user_stream_opens: AtomicU32,
+    /// When set, the order state stream and the trades stream are refused with this status (a rejected
+    /// token, the limit of open streams) instead of being opened.
+    pub user_stream_refuse: Mutex<Option<(tonic::Code, String)>>,
+    /// The `operation_types` of every `GetOperationsByCursor` request, in the order they came.
+    pub operation_types: Mutex<Vec<Vec<i32>>>,
 }
 
 #[derive(Clone)]
@@ -870,6 +875,9 @@ impl OrdersStreamService for Mock {
         &self,
         request: Request<pb::OrderStateStreamRequest>,
     ) -> Result<Response<Out<pb::OrderStateStreamResponse>>, Status> {
+        if let Some((code, message)) = self.0.opts.user_stream_refuse.lock().unwrap().clone() {
+            return Err(Status::new(code, message));
+        }
         let accounts = request.into_inner().accounts;
         let account = account_of(&accounts);
         let mut events = self.0.events.subscribe();
@@ -978,6 +986,12 @@ impl OperationsService for Mock {
         request: Request<pb::GetOperationsByCursorRequest>,
     ) -> Result<Response<pb::GetOperationsByCursorResponse>, Status> {
         let request = request.into_inner();
+        self.0
+            .opts
+            .operation_types
+            .lock()
+            .unwrap()
+            .push(request.operation_types.clone());
         let account = request.account_id;
         let pages = self.0.opts.operations_pages.load(Ordering::SeqCst).max(1);
         let page: u32 = request

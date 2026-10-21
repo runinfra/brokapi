@@ -29,21 +29,20 @@ fn cid(n: u8) -> ClientOrderId {
 
 fn snapshot(cid_byte: u8) -> OrderSnapshot {
     let cid = cid(cid_byte);
-    OrderSnapshot {
+    OrderSnapshot::new(
         cid,
-        broker_id: None,
-        instrument: sber(),
-        state: OrderState::Acked {
+        sber(),
+        OrderState::Acked {
             cid,
             broker_id: brokapi_core::BrokerOrderId::new("1"),
         },
-        side: Side::Buy,
-        order_type: OrderType::Limit,
-        qty: Qty::from(1),
-        filled: Qty::from(0),
-        price: Some(Price::from(100)),
-        ts: Timestamps::new(UnixNanos::ZERO, Instant::now()),
-    }
+        Side::Buy,
+        OrderType::Limit,
+        Qty::from(1),
+        Timestamps::new(UnixNanos::ZERO, Instant::now()),
+    )
+    .with_filled(Qty::from(0))
+    .with_price(Some(Price::from(100)))
 }
 
 #[tokio::test(start_paused = true)]
@@ -189,12 +188,19 @@ fn command_timeout_moves_to_unknown() {
 }
 
 #[test]
-fn bcs_limits_toml_loads() {
-    let limits = BrokerLimits::from_toml_path(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../configs/bcs_limits.toml"
-    ))
-    .expect("load limits");
+fn a_limits_file_on_disk_loads() {
+    let dir = std::env::temp_dir().join(format!("brokapi-limits-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("limits.toml");
+    std::fs::write(
+        &path,
+        "[demo.buckets.orders]\nrate = 10\nper = \"1s\"\nburst = 3\n\
+         [demo.route]\nCancelOrder = [\"orders\"]\n\
+         [demo.conns]\nmax_conns = 4\nmax_subs_per_conn = 50\nsupports_multiplex = false\n",
+    )
+    .unwrap();
+    let limits = BrokerLimits::from_toml_path(path.to_str().unwrap()).expect("load limits");
+    let _ = std::fs::remove_dir_all(&dir);
     let limiter = BrokerLimiter::new(&limits);
     assert!(limiter.acquire("CancelOrder", Instant::now()).is_ok());
 }

@@ -28,17 +28,29 @@ pub const WS_BASE_URL: &str = "wss://ws.broker.ru";
 /// [`BcsConfig::request_timeout`], whose default has the same value.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The access token and the moment after which the client does not trust it any more.
+#[derive(Clone)]
+struct CachedToken {
+    token: String,
+    /// 90% of `expires_in` after the token was issued.
+    valid_until: Option<tokio::time::Instant>,
+}
+
 /// The authorized HTTP client of the BCS Trade API.
 ///
 /// It holds the refresh token and the current access token, adds `Authorization: Bearer ...` to every
 /// call, and handles the token life cycle for you:
 ///
 /// * The first call trades the refresh token for an access token. The access token is cached.
-/// * The client does **not** track the expiry time. When the broker answers 401, the client gets a new
-///   access token and repeats the **same request once**. If the second answer is 401 again, you get
-///   the error of that answer.
-/// * Only a 401 is retried. A transport error or a timeout is returned as it is and never repeated.
-///   This matters for commands: see [`BcsApiError::HttpError`].
+/// * The client tracks the expiry time: a token past 90% of its `expires_in` is renewed before the next
+///   call.
+/// * When the broker answers 401 to a **read**, the client gets a new access token and repeats the
+///   **same request once**. If the second answer is 401 again, you get the error of that answer.
+/// * A **command** (placing, changing or cancelling an order) is never repeated, not even after a 401:
+///   the client renews the token for the next call and returns the 401 as an error, see
+///   [`BcsHttpClient::post_command`].
+/// * A transport error or a timeout is never repeated. This matters for commands: see
+///   [`BcsApiError::HttpError`].
 /// * If the token service returns a new refresh token (rotation), the client keeps it in memory. See
 ///   [`BcsHttpClient::current_refresh_token`].
 ///
@@ -71,7 +83,7 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Clone)]
 pub struct BcsHttpClient {
     client: Client,
-    access_token: Arc<RwLock<Option<String>>>,
+    access_token: Arc<RwLock<Option<CachedToken>>>,
     refresh_token: Arc<RwLock<String>>,
     refresh_mutex: Arc<Mutex<()>>,
     client_id: String,
@@ -126,14 +138,15 @@ impl BcsHttpClient {
 
     /// Returns the cached access token, or gets a new one if there is none yet.
     ///
-    /// The cache is not checked for expiry. A token older than its 24 hours is returned as it is, and
-    /// the next call that uses it ends with 401 and is repaired by the client. The WebSocket session
-    /// calls this at every (re)connect, and forces a refresh itself when the broker refuses the
-    /// connection.
+    /// A token that is past 90% of its `expires_in` is renewed here, before it is used, so a command does
+    /// not meet a 401 after a day of work. A 401 on a read is still repaired by one refresh and one
+    /// repeat. The WebSocket session calls this at every (re)connect, and forces a refresh itself when
+    /// the broker refuses the connection.
     ///
     /// # Errors
     ///
-    /// As [`BcsHttpClient::refresh_access_token`], and only when there is no cached token.
+    /// As [`BcsHttpClient::refresh_access_token`], and only when there is no cached token or it is
+    /// (nearly) expired.
     ///
     /// # Examples
     ///
@@ -153,9 +166,12 @@ impl BcsHttpClient {
     /// ```
     pub async fn get_access_token(&self) -> Result<String, BcsApiError> {
         {
-            let token = self.access_token.read().await;
-            if let Some(ref t) = *token {
-                return Ok(t.clone());
+            let cached = self.access_token.read().await;
+            if let Some(c) = cached.as_ref()
+                && c.valid_until
+                    .is_none_or(|until| tokio::time::Instant::now() < until)
+            {
+                return Ok(c.token.clone());
             }
         }
         self.refresh_access_token().await
@@ -229,7 +245,11 @@ impl BcsHttpClient {
 
             {
                 let mut at = self.access_token.write().await;
-                *at = Some(access.clone());
+                let lifetime = Duration::from_secs(token_resp.expires_in).mul_f64(0.9);
+                *at = Some(CachedToken {
+                    token: access.clone(),
+                    valid_until: Some(tokio::time::Instant::now() + lifetime),
+                });
             }
 
             debug!("Access token refreshed successfully");
@@ -410,10 +430,10 @@ impl BcsHttpClient {
 
     /// `POST`s a JSON body to a path and parses the JSON reply into `T`.
     ///
-    /// A 401 is answered with one token refresh and **one repeat of the same body**. That is safe for
-    /// an order command, because a 401 means the broker did not process it. A transport error or a
-    /// timeout is returned as it is and is never repeated. For a command that creates an order that
-    /// means an unknown outcome, and you must look the order up before you send it again.
+    /// A 401 is answered with one token refresh and **one repeat of the same body**. Use this for
+    /// requests that only read (a `POST` that searches or asks for quotes). For a command use
+    /// [`BcsHttpClient::post_command`], which never repeats. A transport error or a timeout is returned
+    /// as it is and is never repeated.
     ///
     /// # Errors
     ///
@@ -444,6 +464,40 @@ impl BcsHttpClient {
     {
         self.request_with_retry(reqwest::Method::POST, path, Some(body))
             .await
+    }
+
+    /// `POST`s a command (place, change or cancel an order) and parses the JSON reply into `T`. **Never
+    /// repeats the request.**
+    ///
+    /// A repeat of a command is the one way to place an order twice, so the client sends it once. If the
+    /// broker answers 401, the client renews the access token (so the next call works) and returns the
+    /// 401 as [`BcsApiError::HttpError`] with `status: Some(401)`. A 401 means the broker did not act, so
+    /// it is safe to send the command again with the same client order id, if you want to. A transport
+    /// error or a timeout is an unknown outcome, as for every command.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`BcsHttpClient::post`].
+    pub async fn post_command<T, B>(&self, path: &str, body: &B) -> Result<T, BcsApiError>
+    where
+        T: serde::de::DeserializeOwned,
+        B: serde::Serialize,
+    {
+        let url = format!("{}{}", self.http_base_url, path);
+        let token = self.get_access_token().await?;
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&token)
+            .json(body)
+            .send()
+            .await?;
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            warn!("Got 401 on a command: renewing the token, the command is not repeated");
+            // The next call needs a fresh token. A failure of the renewal does not hide the 401.
+            let _ = self.refresh_access_token().await;
+        }
+        self.handle_response(resp).await
     }
 
     /// One request with a single repeat after a 401.

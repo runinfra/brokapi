@@ -18,7 +18,7 @@ use brokapi_core::{Backpressure, Event, InstrumentId, SubscriptionId, UnixNanos}
 pub enum PushResult {
     /// The event is in the buffer and will be delivered in order.
     Delivered,
-    /// The event is the buffer's single "latest" value. It replaced the previous one, if any.
+    /// The event is the buffer's "latest" value of its kind. It replaced the previous one of that kind, if any.
     /// This is the only result of a `Conflate` subscription, even for its first event.
     Conflated,
     /// The buffer was full and the new event was thrown away. Older events are kept. The loss is
@@ -62,7 +62,8 @@ pub struct SubscriptionBuffer {
     instrument: InstrumentId,
     policy: Backpressure,
     queue: VecDeque<Event>,
-    latest: Option<Event>,
+    /// `Conflate`: the latest event of each kind, in the order the kinds first appeared.
+    latest: Vec<(std::mem::Discriminant<Event>, Event)>,
     conflated: u64,
     dropped: u64,
     overflowed: bool,
@@ -79,7 +80,7 @@ impl SubscriptionBuffer {
             instrument,
             policy,
             queue: VecDeque::new(),
-            latest: None,
+            latest: Vec::new(),
             conflated: 0,
             dropped: 0,
             overflowed: false,
@@ -114,8 +115,8 @@ impl SubscriptionBuffer {
     /// How many events wait in the buffer. For `Conflate` this is `0` or `1`.
     pub fn len(&self) -> usize {
         match self.policy {
-            Backpressure::Conflate => usize::from(self.latest.is_some()),
-            Backpressure::Lossless { .. } | Backpressure::DropNewest { .. } => self.queue.len(),
+            Backpressure::Conflate => self.latest.len(),
+            _ => self.queue.len(),
         }
     }
 
@@ -126,7 +127,8 @@ impl SubscriptionBuffer {
 
     /// Offers an event to the buffer without blocking.
     ///
-    /// - `Conflate`: the event becomes the single latest value. A value that was still waiting is
+    /// - `Conflate`: the event becomes the latest value of its kind (an order book, a quote, a portfolio
+    ///   and so on: one slot per kind). A value of the same kind that was still waiting is
     ///   replaced and counted in [`conflated`](Self::conflated). Result: [`PushResult::Conflated`].
     /// - `Lossless { cap }`: stored while fewer than `cap` events wait. The first event that finds
     ///   the buffer full is not stored, the buffer is flagged overflowed and the result is
@@ -160,10 +162,16 @@ impl SubscriptionBuffer {
     pub fn try_push(&mut self, event: Event) -> PushResult {
         match self.policy {
             Backpressure::Conflate => {
-                if self.latest.is_some() {
-                    self.conflated += 1;
+                // One slot per kind of event: a subscription can carry several (T-Bank sends portfolio,
+                // positions and balances on one), and a newer balance must not replace a position.
+                let kind = std::mem::discriminant(&event);
+                match self.latest.iter_mut().find(|(k, _)| *k == kind) {
+                    Some(slot) => {
+                        slot.1 = event;
+                        self.conflated += 1;
+                    }
+                    None => self.latest.push((kind, event)),
                 }
-                self.latest = Some(event);
                 PushResult::Conflated
             }
             Backpressure::Lossless { cap } => {
@@ -178,14 +186,14 @@ impl SubscriptionBuffer {
                     PushResult::Delivered
                 }
             }
-            Backpressure::DropNewest { cap } => {
-                if self.queue.len() >= cap {
-                    self.dropped += 1;
-                    PushResult::DroppedNewest
-                } else {
-                    self.queue.push_back(event);
-                    PushResult::Delivered
-                }
+            Backpressure::DropNewest { cap } if self.queue.len() >= cap => {
+                self.dropped += 1;
+                PushResult::DroppedNewest
+            }
+            // `DropNewest` with room, and a policy of a later version: keep everything, the safe reading.
+            _ => {
+                self.queue.push_back(event);
+                PushResult::Delivered
             }
         }
     }
@@ -222,9 +230,7 @@ impl SubscriptionBuffer {
     /// Draining does not clear the overflowed flag. Use [`BackpressureManager::clear_degraded`] for that.
     pub fn drain(&mut self) -> Vec<Event> {
         let mut out = Vec::new();
-        if let Some(ev) = self.latest.take() {
-            out.push(ev);
-        }
+        out.extend(self.latest.drain(..).map(|(_, ev)| ev));
         out.extend(self.queue.drain(..));
         out
     }
@@ -339,7 +345,7 @@ impl BackpressureManager {
 
     /// Takes the next event of `sub` that is ready for delivery, if any.
     ///
-    /// A `Conflate` subscription yields its latest value. Others yield their queue front, oldest
+    /// A `Conflate` subscription yields its latest value of each kind, one per call. Others yield their queue front, oldest
     /// first. Returns `None` for an empty buffer and for an unknown `sub`.
     ///
     /// # Examples
@@ -365,8 +371,8 @@ impl BackpressureManager {
     /// ```
     pub fn pop_ready(&mut self, sub: SubscriptionId) -> Option<Event> {
         let buf = self.buffers.iter_mut().find(|b| b.sub_id() == sub)?;
-        if let Some(ev) = buf.latest.take() {
-            return Some(ev);
+        if !buf.latest.is_empty() {
+            return Some(buf.latest.remove(0).1);
         }
         buf.queue.pop_front()
     }

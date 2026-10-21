@@ -29,7 +29,14 @@ fn sber() -> InstrumentId {
 }
 
 fn limiter() -> Arc<BrokerLimiter> {
-    BrokerLimiter::new(&default_limits())
+    // The scenarios run a dozen calls of the orders service in a fraction of a second against an imitation.
+    // They test the connector, not the budget (the budget has tests of its own, `tests/wave2.rs`), so the
+    // buckets get room for a burst.
+    let mut limits = default_limits();
+    for bucket in limits.buckets.values_mut() {
+        bucket.burst = bucket.burst.max(100);
+    }
+    BrokerLimiter::new(&limits)
 }
 
 async fn md(server: &MockServer) -> (MarketDataConnector, mpsc::Receiver<Envelope>) {

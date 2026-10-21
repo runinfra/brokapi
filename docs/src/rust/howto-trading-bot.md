@@ -39,7 +39,7 @@ flowchart TB
 ```toml
 [package]
 name = "my-bot"
-edition = "2024"   # нужен Rust 1.85 или новее: в коде книги цепочки let
+edition = "2024"   # нужен Rust 1.88 или новее: в коде книги цепочки let
 
 [dependencies]
 brokapi = { version = "0.1.0-alpha.1", features = ["bcs"] }   # или "tbank", "finam"

@@ -4,8 +4,9 @@
 //! so several accounts or roles do not each run their own `Auth`. The refresher task holds only a
 //! `Weak` reference and ends when the last `Arc` is dropped.
 //!
-//! Lifetime comes from `TokenDetails` (`expires_at - created_at`, both server clock, so no local
-//! clock skew), falling back to the JWT `exp`/`iat` claims, then to a conservative assumption.
+//! Lifetime is the shorter of `TokenDetails` (`expires_at - created_at`, both server clock, so no local
+//! clock skew) and the JWT claims `exp - iat`. If only one of them is known, that one. If neither, a
+//! conservative assumption. `Auth` and `TokenDetails` each have a deadline of [`AUTH_TIMEOUT`].
 //!
 //! # Examples
 //!
@@ -56,6 +57,10 @@ use crate::pb::grpc::tradeapi::v1::auth::{AuthRequest, TokenDetailsRequest};
 
 /// Used only when neither `TokenDetails` nor the JWT claims tell the lifetime.
 pub const ASSUMED_TTL: Duration = Duration::from_secs(5 * 60);
+
+/// Deadline of the `Auth` call and of the `TokenDetails` call. Without it a connection that
+/// accepted the request and never answers would hold the refresh lock for ever.
+pub const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Refresh retry backoff bounds after a failed refresh.
 const RETRY_MIN: Duration = Duration::from_secs(1);
@@ -368,11 +373,11 @@ impl TokenManager {
 
 async fn fetch(api: &dyn TokenApi, secret: &str, source_app_id: &str) -> Result<State, FinamError> {
     let started = Instant::now();
-    let token = api.auth(secret, source_app_id).await?;
+    let token = with_deadline("Auth", api.auth(secret, source_app_id)).await?;
     if token.is_empty() {
         return Err(FinamError::Auth("server returned an empty token".into()));
     }
-    let mut info = match api.token_details(&token).await {
+    let mut info = match with_deadline("TokenDetails", api.token_details(&token)).await {
         Ok(info) => info,
         Err(e) => {
             // The token itself is good; only the lifetime/account list is missing.
@@ -380,9 +385,12 @@ async fn fetch(api: &dyn TokenApi, secret: &str, source_app_id: &str) -> Result<
             TokenInfo::default()
         }
     };
-    if info.ttl.is_none() {
-        info.ttl = jwt_ttl(&token);
-    }
+    // The shorter of the two: a token that the JWT says ends sooner than TokenDetails claims must not be
+    // trusted past its `exp`.
+    info.ttl = match (info.ttl, jwt_ttl(&token)) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
     let ttl = info.ttl.unwrap_or(ASSUMED_TTL);
     debug!(?ttl, "finam token issued");
     Ok(State {
@@ -392,6 +400,19 @@ async fn fetch(api: &dyn TokenApi, secret: &str, source_app_id: &str) -> Result<
         refresh_at: started + refresh_after(ttl),
         generation: 1,
     })
+}
+
+async fn with_deadline<T>(
+    what: &str,
+    call: impl std::future::Future<Output = Result<T, FinamError>>,
+) -> Result<T, FinamError> {
+    match tokio::time::timeout(AUTH_TIMEOUT, call).await {
+        Ok(result) => result,
+        Err(_) => Err(FinamError::Status {
+            code: tonic::Code::DeadlineExceeded,
+            message: format!("{what}: no response within {AUTH_TIMEOUT:?}"),
+        }),
+    }
 }
 
 async fn refresh_loop(weak: Weak<TokenManager>) {
@@ -619,5 +640,133 @@ mod tests {
             .unwrap();
         let shown = format!("{m:?}");
         assert!(!shown.contains("hunter2"), "{shown}");
+    }
+
+    /// An auth server whose token is a JWT of a given lifetime, and whose `TokenDetails` says another one.
+    struct JwtApi {
+        jwt_ttl: i64,
+        details_ttl: Option<Duration>,
+    }
+
+    #[async_trait]
+    impl TokenApi for JwtApi {
+        async fn auth(&self, _s: &str, _a: &str) -> Result<String, FinamError> {
+            Ok(jwt(1000, 1000 + self.jwt_ttl))
+        }
+
+        async fn token_details(&self, _t: &str) -> Result<TokenInfo, FinamError> {
+            Ok(TokenInfo {
+                ttl: self.details_ttl,
+                account_ids: vec![],
+                readonly: false,
+            })
+        }
+    }
+
+    async fn ttl_of(jwt_ttl: i64, details_ttl: Option<u64>) -> Option<Duration> {
+        let api = Arc::new(JwtApi {
+            jwt_ttl,
+            details_ttl: details_ttl.map(Duration::from_secs),
+        });
+        TokenManager::start(api, "secret", "")
+            .await
+            .unwrap()
+            .info()
+            .ttl
+    }
+
+    #[tokio::test]
+    async fn the_lifetime_is_the_shorter_of_the_details_and_the_claims() {
+        // The claims say 600 s, the details say 900 s: 600 s.
+        assert_eq!(ttl_of(600, Some(900)).await, Some(Duration::from_secs(600)));
+        // The other way round: 300 s.
+        assert_eq!(ttl_of(900, Some(300)).await, Some(Duration::from_secs(300)));
+        // One of the two is enough.
+        assert_eq!(ttl_of(600, None).await, Some(Duration::from_secs(600)));
+        // Claims that are not a lifetime (exp before iat) leave the details alone.
+        assert_eq!(ttl_of(-5, Some(120)).await, Some(Duration::from_secs(120)));
+    }
+
+    /// An auth server that takes the request and never answers.
+    struct HangApi {
+        auth_hangs: bool,
+    }
+
+    #[async_trait]
+    impl TokenApi for HangApi {
+        async fn auth(&self, _s: &str, _a: &str) -> Result<String, FinamError> {
+            if self.auth_hangs {
+                std::future::pending::<()>().await;
+            }
+            Ok("jwt-1".into())
+        }
+
+        async fn token_details(&self, _t: &str) -> Result<TokenInfo, FinamError> {
+            std::future::pending::<()>().await;
+            unreachable!()
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_auth_call_that_never_answers_ends_with_a_deadline() {
+        let started = tokio::time::Instant::now();
+        let err = TokenManager::start(Arc::new(HangApi { auth_hangs: true }), "secret", "")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                FinamError::Status { code: tonic::Code::DeadlineExceeded, ref message } if message.contains("Auth")
+            ),
+            "{err:?}"
+        );
+        assert_eq!(started.elapsed(), AUTH_TIMEOUT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn token_details_that_never_answer_do_not_stop_the_start() {
+        // The token itself is good: the lifetime falls back to the assumption.
+        let m = TokenManager::start(Arc::new(HangApi { auth_hangs: false }), "secret", "")
+            .await
+            .unwrap();
+        assert_eq!(&*m.current(), "jwt-1");
+        assert!(m.account_ids().is_empty());
+        // No lifetime is known; the renewal is planned with the assumption.
+        assert_eq!(m.info().ttl, None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_hanging_renewal_does_not_hold_the_lock_for_ever() {
+        // Start with a good server, then renew against a hanging one: the renewal ends with a deadline
+        // and the old token stays.
+        struct Flip(std::sync::atomic::AtomicBool);
+        #[async_trait]
+        impl TokenApi for Flip {
+            async fn auth(&self, _s: &str, _a: &str) -> Result<String, FinamError> {
+                if self.0.load(Ordering::SeqCst) {
+                    std::future::pending::<()>().await;
+                }
+                Ok("jwt-1".into())
+            }
+            async fn token_details(&self, _t: &str) -> Result<TokenInfo, FinamError> {
+                Ok(TokenInfo::default())
+            }
+        }
+        let api = Arc::new(Flip(std::sync::atomic::AtomicBool::new(false)));
+        let m = TokenManager::start(api.clone(), "secret", "")
+            .await
+            .unwrap();
+        api.0.store(true, Ordering::SeqCst);
+        let err = m.refresh().await.unwrap_err();
+        assert!(matches!(
+            err,
+            FinamError::Status {
+                code: tonic::Code::DeadlineExceeded,
+                ..
+            }
+        ));
+        assert_eq!(&*m.current(), "jwt-1");
+        // And a second renewal can take the lock again.
+        assert!(m.refresh().await.is_err());
     }
 }

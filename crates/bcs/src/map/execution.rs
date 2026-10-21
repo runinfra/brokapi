@@ -4,6 +4,7 @@ use brokapi_core::Decimal;
 use std::time::Instant;
 
 use brokapi_bcs_protocol::http::models::TradeRecord;
+use brokapi_bcs_protocol::models::enums::ExecutionType;
 use brokapi_bcs_protocol::ws::models::OrderMessage;
 use brokapi_core::{BrokerOrderId, Execution, Money, Price, Qty, Side};
 use uuid::Uuid;
@@ -119,8 +120,8 @@ pub fn cumulative_of(
 }
 
 /// A fill from the `orders/events/ws` WebSocket. Only messages that carry a fill: `lastQuantity > 0`
-/// and an `executionId`. `clientOrderId` may be empty (the sample in the docs has it empty): then
-/// `originalClientOrderId`.
+/// and an `executionId`, and not a corrected report (`executionType` 13, which restates an earlier
+/// message). The order's cid is read as [`crate::map::order::message_cid`] says.
 ///
 /// **The price of the fill.** `before` is the running total of the same order from the previous message
 /// the connector saw ([`cumulative_of`]). With it the price is exact:
@@ -140,16 +141,17 @@ pub fn map_ws_execution(
     before: Option<Cumulative>,
 ) -> Option<Execution> {
     let data = msg.data.as_ref()?;
+    // A corrected report (`executionType` 13, "Исправлено") restates an earlier one. It is not a new fill:
+    // counting it would count the fill twice. The history of trades settles a real correction.
+    if data.execution_type == Some(ExecutionType::Corrected) {
+        return None;
+    }
     let qty = data.last_quantity;
     if qty <= Decimal::ZERO {
         return None;
     }
     let execution_id = data.execution_id.as_deref().filter(|s| !s.is_empty())?;
-    let cid = Uuid::parse_str(&msg.client_order_id).ok().or_else(|| {
-        msg.original_client_order_id
-            .as_deref()
-            .and_then(|s| Uuid::parse_str(s).ok())
-    });
+    let cid = super::order::message_cid(msg);
     let exact = cumulative_of(data).and_then(|after| {
         let base = match before {
             Some(b) => b,

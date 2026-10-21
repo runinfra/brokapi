@@ -24,10 +24,60 @@ use crate::error::Error;
 use crate::types::{
     Balance, Candle, ClientOrderId, Execution, Instrument, InstrumentId, InstrumentQuery,
     MarketTrade, OrderAck, OrderBook, OrderSnapshot, PlaceOrderRequest, PlaceStopOrderRequest,
-    Portfolio, Position, ReconcileReport, ReplaceOrderRequest, Schedule, StopOrderRef,
-    StopOrderSnapshot, SubscribeOpts, SubscriptionId, TimeRange, Timeframe, TradingParams,
-    TradingStatus,
+    Portfolio, Position, ReconcileReport, ReplaceOrderRequest, Schedule, ShutdownMode,
+    ShutdownReport, StopOrderRef, StopOrderSnapshot, SubscribeOpts, SubscriptionId, TimeRange,
+    Timeframe, TradingParams, TradingStatus,
 };
+
+/// What every connector offers besides its capabilities: it says what it can do, and it stops.
+///
+/// Code that is generic over a connector can ask for the capabilities without knowing the broker, and
+/// shut any connector down the same way. A market data connector has [`MarketDataCaps`](crate::MarketDataCaps),
+/// a user data connector has [`UserDataCaps`](crate::UserDataCaps). The two methods are also inherent
+/// methods of each connector, so code that names the type needs no trait in scope.
+///
+/// # Examples
+///
+/// ```
+/// use brokapi_bcs::limits::default_limits;
+/// use brokapi_bcs::{MarketDataConfig, MarketDataConnector};
+/// use brokapi_core::{Connector, MarketDataCaps, ShutdownMode};
+/// use brokapi_runtime::BrokerLimiter;
+/// # use brokapi_bcs_protocol::config::BcsConfig;
+///
+/// /// Works with the connector of any broker.
+/// async fn depth_of<C: Connector<Caps = MarketDataCaps>>(c: C) -> u32 {
+///     let depth = c.caps().max_order_book_depth;
+///     c.shutdown(ShutdownMode::Immediate).await;
+///     depth
+/// }
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # let server = brokapi_mocks::bcs::MockServer::start(Default::default()).await;
+/// # let cfg = BcsConfig::for_mock("mock-refresh-token", &server.http_base);
+/// let (events_tx, _events) = tokio::sync::mpsc::channel(16);
+/// let limiter = BrokerLimiter::new(&default_limits());
+/// let md = MarketDataConnector::start(MarketDataConfig::new(cfg, "bcs-md"), limiter, events_tx).await?;
+/// assert!(depth_of(md).await > 0);
+/// # Ok(())
+/// # }
+/// ```
+#[async_trait]
+pub trait Connector: Send + Sync {
+    /// The type that describes what this connector can do.
+    type Caps: Copy + Send + Sync + 'static;
+
+    /// What this connector can do. Read it before you use a feature that not every broker has.
+    fn caps(&self) -> Self::Caps;
+
+    /// Stops the connector: closes its streams, gives up commands that have no answer yet (they become
+    /// [`Error::Unknown`], see [`ShutdownReport`]) and ends its tasks. Takes the connector by value, so it
+    /// cannot be used afterwards.
+    async fn shutdown(self, mode: ShutdownMode) -> ShutdownReport
+    where
+        Self: Sized;
+}
 
 /// Order book snapshot and stream.
 ///
@@ -841,7 +891,15 @@ pub trait OrderExecutor: Send + Sync {
     /// same cid is refused with [`Error::Rejected`] (BCS: code `duplicate_place`) without being sent.
     /// This is on purpose. After a timeout the first one may have reached the broker, and a retry
     /// could make a second order. Use a new cid for a new order, after you know what happened to the
-    /// first. The library does not check quantity against lot size or price against the price step.
+    /// first. The price is checked against the price step and the quantity against the lot when the
+    /// connector knows them (see `price_grid` in the config of the connector).
+    ///
+    /// **Dropping the future does not cancel the order.** Once the cid is marked and the request is on
+    /// its way, the connector (T-Bank, Finam) finishes the command in a task of its own: the request, the
+    /// answer and the update of the order's state happen even if you stop waiting (a `timeout` around the
+    /// call, a lost `select!`). Before that moment (the wait for the quota or for earlier commands on the
+    /// same instrument) dropping the future sends nothing. So after you drop a `place` look at the order,
+    /// as after [`Error::Unknown`].
     ///
     /// # Contract
     ///
@@ -870,7 +928,9 @@ pub trait OrderExecutor: Send + Sync {
     ///   (timeout, cut connection, HTTP 5xx). Do NOT place again. Ask the broker with
     ///   [`order_state`](Self::order_state) or [`active_orders`](Self::active_orders).
     /// - [`Error::Transport`] when the failure happened before the request left, for example
-    ///   authentication.
+    ///   authentication. It is **not** a sign that a repeat is safe: ask
+    ///   [`Error::retryable_for_command`](crate::Error::retryable_for_command), which says `true` for
+    ///   [`Error::RateLimited`] only, and not [`Error::class`](crate::Error::class), which is the class of a read.
     ///
     /// # Examples
     ///
@@ -1101,7 +1161,8 @@ pub trait OrderExecutor: Send + Sync {
     ///     OrderState::Acked { .. } => println!("working, nothing filled"),
     ///     OrderState::PartiallyFilled { filled, left, .. } => println!("{} done, {} to go", filled.decimal(), left.decimal()),
     ///     OrderState::Filled { .. } | OrderState::Cancelled { .. } | OrderState::Rejected { .. } => println!("final"),
-    ///     OrderState::InFlight { .. } | OrderState::Unknown { .. } => println!("ask again a bit later"),
+    ///     // InFlight, Unknown, and a state that a later version adds: ask again a bit later.
+    ///     _ => println!("ask again a bit later"),
     /// }
     /// assert_eq!(snapshot.qty, Qty::from(2));
     /// # ud.cancel(cid).await?;

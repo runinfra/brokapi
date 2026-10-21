@@ -16,7 +16,7 @@ use brokapi_core::{
     OrderSnapshot, OrderState, OrderType, PlaceOrderRequest, Price, Qty, Side, SubscriptionId,
     Timestamps,
 };
-use brokapi_runtime::OrderRuntime;
+use brokapi_runtime::{FinishedWindow, OrderRuntime};
 use brokapi_sansio::{
     BrokerCore, EventSink, OrderSignal, Outbound, SubscriptionKind, SubscriptionSet,
 };
@@ -73,6 +73,9 @@ pub enum UdFrame {
     Positions(pb::PositionsStreamResponse),
     /// `GetOrders` result used to refresh order state after a stream reconnect.
     ActiveOrders(pb::GetOrdersResponse),
+    /// The broker refused to open the stream for good (a rejected token, no permission, the limit of open
+    /// streams): the subscription fed by it fails with this reason, and the stream is not reopened.
+    StreamFailed(StreamKind, String),
 }
 
 #[derive(Debug, Clone)]
@@ -122,6 +125,13 @@ pub struct UdCore {
     orders: OrderRuntime,
     meta: HashMap<ClientOrderId, OrderMeta>,
     by_exchange: HashMap<String, ClientOrderId>,
+    /// Own trades that arrived while a placement was still in flight and whose order is not known yet,
+    /// by exchange order id. They wait for the answer to the placement, which gives the cid.
+    pending_trades: HashMap<String, Vec<brokapi_core::Execution>>,
+    /// Finished orders, to forget their ids after the memory window.
+    done: FinishedWindow<ClientOrderId>,
+    /// Cids forgotten since the last call of `take_forgotten`.
+    forgotten: Vec<ClientOrderId>,
     known: HashMap<String, InstrumentKey>,
     subs: HashMap<UdSubKind, SubscriptionId>,
     cash: BTreeMap<String, (Money, Money)>,
@@ -140,6 +150,9 @@ impl UdCore {
             orders: OrderRuntime::new(),
             meta: HashMap::new(),
             by_exchange: HashMap::new(),
+            pending_trades: HashMap::new(),
+            done: FinishedWindow::new(),
+            forgotten: Vec::new(),
             known: HashMap::new(),
             subs: HashMap::new(),
             cash: BTreeMap::new(),
@@ -186,6 +199,12 @@ impl UdCore {
     /// The state this core holds for `cid`, or `None` if it never saw that cid.
     pub fn order_state(&self, cid: ClientOrderId) -> Option<&OrderState> {
         self.orders.state(cid)
+    }
+
+    /// Takes the cids the core forgot since the last call (orders finished long ago, see the memory window
+    /// of [`OrderRuntime`]). The connector drops what else it keeps for them.
+    pub fn take_forgotten(&mut self) -> Vec<ClientOrderId> {
+        std::mem::take(&mut self.forgotten)
     }
 
     /// Takes the subscription confirmations and refusals since the last call.
@@ -421,12 +440,29 @@ impl UdCore {
         self.signal(new_cid, signal, now, out);
     }
 
+    /// Moves the placements that have had no answer for the command timeout to `Unknown`, one event each.
+    /// The connector calls it on a timer. It is the safety net: a command normally ends by itself, within
+    /// the request timeout.
+    pub fn sweep_timeouts(&mut self, now: Instant, out: &mut EventSink) {
+        for (cid, _) in self.orders.sweep_timeouts(now) {
+            self.emit_order(cid, now, out);
+        }
+        self.settle_pending_trades(out);
+    }
+
+    /// Sets how long a placement may wait for its answer before [`sweep_timeouts`](Self::sweep_timeouts)
+    /// gives it up. Keep it above the request timeout of the connector.
+    pub fn set_command_timeout(&mut self, timeout: std::time::Duration) {
+        self.orders.set_command_timeout(timeout);
+    }
+
     /// In-flight placements become `Unknown` at shutdown, one event each.
     pub fn abandon_inflight(&mut self, now: Instant, out: &mut EventSink) -> Vec<ClientOrderId> {
         let abandoned = self.orders.abandon_inflight(now);
         for cid in &abandoned {
             self.emit_order(*cid, now, out);
         }
+        self.settle_pending_trades(out);
         abandoned
     }
 
@@ -471,6 +507,33 @@ impl UdCore {
         }
     }
 
+    // ----- own trades that came before their order was known -----
+
+    /// Sends the waiting trades of `order_id` with the cid that is known for it now.
+    fn release_trades(&mut self, order_id: &str, out: &mut EventSink) {
+        let Some(list) = self.pending_trades.remove(order_id) else {
+            return;
+        };
+        let cid = self.by_exchange.get(order_id).copied();
+        let sub = self.sub(UdSubKind::Executions);
+        for mut e in list {
+            e.cid = cid;
+            out.push_payload(sub, Event::Execution(e));
+        }
+    }
+
+    /// When no placement is in flight any more, nothing can claim the waiting trades: send them with
+    /// whatever cid is known (none for an order that is not ours).
+    fn settle_pending_trades(&mut self, out: &mut EventSink) {
+        if self.pending_trades.is_empty() || self.orders.in_flight_count() > 0 {
+            return;
+        }
+        let ids: Vec<String> = self.pending_trades.keys().cloned().collect();
+        for id in ids {
+            self.release_trades(&id, out);
+        }
+    }
+
     // ----- order state machine -----
 
     fn signal(
@@ -488,6 +551,7 @@ impl UdCore {
         if self.orders.state(cid) != before.as_ref() {
             self.emit_order(cid, now, out);
         }
+        self.settle_pending_trades(out);
     }
 
     fn emit_order(&mut self, cid: ClientOrderId, now: Instant, out: &mut EventSink) {
@@ -495,18 +559,29 @@ impl UdCore {
         else {
             return;
         };
-        let snap = OrderSnapshot {
+        let snap = OrderSnapshot::new(
             cid,
-            broker_id: meta.exchange_id.clone().map(BrokerOrderId::new),
-            instrument: meta.instrument.clone(),
+            meta.instrument.clone(),
             state,
-            side: meta.side,
-            order_type: meta.order_type,
-            qty: meta.qty,
-            filled: meta.filled,
-            price: meta.price,
-            ts: Timestamps::new(crate::ids::wall_nanos(), now),
-        };
+            meta.side,
+            meta.order_type,
+            meta.qty,
+            Timestamps::new(crate::ids::wall_nanos(), now),
+        )
+        .with_broker_id(meta.exchange_id.clone().map(BrokerOrderId::new))
+        .with_filled(meta.filled)
+        .with_price(meta.price);
+        if snap.state.is_final() {
+            self.done.push(now, cid);
+            for old in self.done.expired(now) {
+                if let Some(m) = self.meta.remove(&old)
+                    && let Some(id) = m.exchange_id
+                {
+                    self.by_exchange.remove(&id);
+                }
+                self.forgotten.push(old);
+            }
+        }
         out.push_payload(self.sub(UdSubKind::OrderState), Event::Order(snap));
     }
 
@@ -520,6 +595,9 @@ impl UdCore {
     ) {
         use pb::OrderExecutionReportStatus as S;
         self.note_order(p);
+        if !p.exchange_id.is_empty() {
+            self.release_trades(&p.exchange_id, out);
+        }
         if let Some(m) = self.meta.get_mut(&cid) {
             m.filled = p.qty_executed();
             if m.qty.is_zero() {
@@ -563,6 +641,7 @@ impl UdCore {
         if self.orders.state(cid) != before.as_ref() {
             self.emit_order(cid, now, out);
         }
+        self.settle_pending_trades(out);
     }
 
     // ----- inbound messages -----
@@ -614,7 +693,17 @@ impl UdCore {
                 let cid = self.by_exchange.get(&t.order_id).copied();
                 let sub = self.sub(UdSubKind::Executions);
                 for e in execution::from_order_trades(&t, instrument, cid, now) {
-                    out.push_payload(sub, Event::Execution(e));
+                    // The stream can be faster than the answer to `PostOrder`: the exchange order id is not
+                    // bound to a cid yet. While a placement is in flight such a fill waits for it, and gets
+                    // its cid when the answer comes (or none, when no placement claims it).
+                    if e.cid.is_none() && self.orders.in_flight_count() > 0 {
+                        self.pending_trades
+                            .entry(t.order_id.clone())
+                            .or_default()
+                            .push(e);
+                    } else {
+                        out.push_payload(sub, Event::Execution(e));
+                    }
                 }
             }
             Some(TradesPayload::Subscription(s)) => {
@@ -801,6 +890,14 @@ impl BrokerCore for UdCore {
             UdFrame::Portfolio(r) => self.on_portfolio_stream(r, now, out),
             UdFrame::Positions(r) => self.on_positions_stream(r, now, out),
             UdFrame::ActiveOrders(r) => self.on_active_orders(r, now, out),
+            UdFrame::StreamFailed(kind, reason) => {
+                let sub = match kind {
+                    StreamKind::OrderState => UdSubKind::OrderState,
+                    StreamKind::Trades => UdSubKind::Executions,
+                    StreamKind::Portfolio | StreamKind::Positions => UdSubKind::Portfolio,
+                };
+                self.resolve_sub(sub, false, reason);
+            }
         }
     }
 

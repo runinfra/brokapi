@@ -6,6 +6,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 homepage.workspace = true
+repository.workspace = true
+documentation.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 brokapi-bcs-protocol.workspace = true
@@ -17,12 +23,12 @@ serde_json.workspace = true
 uuid = { workspace = true, features = ["v5"] }
 async-trait.workspace = true
 kanal.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
 tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["full", "test-util"] }
 brokapi-conformance.workspace = true
 brokapi-mocks.workspace = true
 futures-util.workspace = true

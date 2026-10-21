@@ -1,4 +1,4 @@
-//! Rate limits of the Finam connectors, loaded from the bundled `configs/finam_limits.toml`.
+//! Rate limits of the Finam connectors, loaded from the bundled `limits.toml`.
 //!
 //! The only number Finam documents is 200 requests per minute for the whole API. The bundled buckets sit
 //! below it (global 200 per minute, orders 60, cancel 100, market data 120, reference 100, reports
@@ -26,7 +26,7 @@ use brokapi_core::{ConfigError, Error};
 use brokapi_runtime::BrokerLimits;
 
 /// Text of the bundled limits file. Written from the broker documentation, see the file header for sources.
-pub const DEFAULT_LIMITS_TOML: &str = include_str!("../../../configs/finam_limits.toml");
+pub const DEFAULT_LIMITS_TOML: &str = include_str!("../limits.toml");
 
 /// Parses the `[finam]` section of a limits file through `BrokerLimits::from_toml_section`.
 ///

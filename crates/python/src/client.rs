@@ -238,8 +238,8 @@ pub fn connect<'py>(
         let go = async {
             let kind = broker_kind(&broker)?;
             let settings = Settings::parse(&settings)?;
-            // `.env` next to the program, like `from_env` of the Rust library.
-            dotenv::dotenv().ok();
+            // `.env` in the working directory only (never a parent), like `from_env` of the Rust library.
+            dotenvy::from_path(".env").ok();
             let limiter = match limiter {
                 Some(l) if l.broker == kind => l,
                 Some(l) => {

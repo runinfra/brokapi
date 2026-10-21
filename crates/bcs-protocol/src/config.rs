@@ -16,7 +16,7 @@ use crate::http::client::{HTTP_BASE_URL, WS_BASE_URL};
 /// once, at issue. [`BcsConfig::is_write`] must say which kind you hold, because it picks the
 /// `client_id` of the token request (`trade-api-write` or `trade-api-read`).
 ///
-/// The `Debug` output of this struct prints the refresh token. Do not log it.
+/// The `Debug` output of this struct hides the refresh token (`<redacted>`), so a config can be logged.
 ///
 /// # Examples
 ///
@@ -31,7 +31,7 @@ use crate::http::client::{HTTP_BASE_URL, WS_BASE_URL};
 /// assert!(trade.is_write);
 /// assert_eq!(trade.request_timeout.as_secs(), 30);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BcsConfig {
     /// The long-lived refresh token from the BCS web cabinet.
     ///
@@ -61,6 +61,18 @@ pub struct BcsConfig {
     pub ws_base_url: String,
 }
 
+impl std::fmt::Debug for BcsConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BcsConfig")
+            .field("refresh_token", &"<redacted>")
+            .field("request_timeout", &self.request_timeout)
+            .field("is_write", &self.is_write)
+            .field("http_base_url", &self.http_base_url)
+            .field("ws_base_url", &self.ws_base_url)
+            .finish()
+    }
+}
+
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl BcsConfig {
@@ -72,8 +84,9 @@ impl BcsConfig {
     /// * `BCS_IS_WRITE`: optional. The exact text `true` means a write token. Any other value, or no
     ///   variable, means a read token.
     ///
-    /// A `.env` file in the working directory (or a parent) is loaded first, without overriding
-    /// variables that are already set. The URLs and the timeout are the defaults (production host,
+    /// A `.env` file in the working directory is loaded first, without overriding variables that are
+    /// already set. Parent directories are not searched (see [`BcsConfig::from_env_file`] for another
+    /// path). The URLs and the timeout are the defaults (production host,
     /// 30 seconds). No network call is made.
     ///
     /// # Errors
@@ -97,7 +110,32 @@ impl BcsConfig {
     /// }
     /// ```
     pub fn from_env() -> Result<Self, std::env::VarError> {
-        dotenv::dotenv().ok();
+        // Only `.env` of the working directory: `dotenvy::dotenv` would also look in every parent.
+        dotenvy::from_path(".env").ok();
+        Self::from_vars()
+    }
+
+    /// Like [`BcsConfig::from_env`], but loads the `.env` file at `path` (a file that is not there is
+    /// skipped, variables that are already set are kept).
+    ///
+    /// # Errors
+    ///
+    /// The same as [`BcsConfig::from_env`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use brokapi_bcs_protocol::config::BcsConfig;
+    ///
+    /// // No such file: only the environment is read.
+    /// let _ = BcsConfig::from_env_file("/no/such/.env");
+    /// ```
+    pub fn from_env_file(path: impl AsRef<std::path::Path>) -> Result<Self, std::env::VarError> {
+        dotenvy::from_path(path.as_ref()).ok();
+        Self::from_vars()
+    }
+
+    fn from_vars() -> Result<Self, std::env::VarError> {
         Ok(Self {
             refresh_token: std::env::var("BCS_REFRESH_TOKEN")?,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,

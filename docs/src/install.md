@@ -12,9 +12,9 @@
 
 | | Rust | Python |
 |---|---|---|
-| Язык | Rust 1.85 или новее (редакция 2024) | Python 3.10 или новее. Пакет один на все версии (`abi3`) |
+| Язык | Rust 1.88 или новее (редакция 2024) | Python 3.10 или новее. Пакет один на все версии (`abi3`) |
 | Инструменты | `cargo` (идет вместе с Rust, ставится через [rustup](https://rustup.rs)) | `pip`, лучше виртуальное окружение |
-| Для установки из репозитория | `git` | `git` и Rust 1.85 или новее: расширение собирается на месте, сборщик `maturin` подтянется сам |
+| Для установки из репозитория | `git` | `git` и Rust 1.88 или новее: расширение собирается на месте, сборщик `maturin` подтянется сам |
 
 Брокеры включаются флагами, как у `tokio`: `bcs`, `tbank`, `finam`, можно несколько. В Python все три брокера уже в пакете.
 
@@ -32,11 +32,11 @@ cargo add brokapi --features bcs
 cargo add --git https://github.com/runinfra/brokapi brokapi --features bcs
 ```
 
-Обе команды добавляют зависимость в `Cargo.toml`. Для программ из быстрого старта нужны еще `tokio` и `dotenv`:
+Обе команды добавляют зависимость в `Cargo.toml`. Для программ из быстрого старта нужны еще `tokio` и `dotenvy`:
 
 ```bash
 cargo add tokio --features full
-cargo add dotenv
+cargo add dotenvy
 ```
 
 Из клона репозитория (без доступа в сеть к GitHub во время сборки, например на закрытой машине):
@@ -82,7 +82,7 @@ python -c "import brokapi; print(brokapi.__version__)"
 | Что видно | Что значит | Что делать |
 |---|---|---|
 | Git спрашивает имя и пароль или пишет `Repository not found` | Репозиторий пока закрыт, или у вас нет доступа | Дождаться открытой беты или получить доступ к альфе. Пакетов на crates.io и PyPI до беты нет |
-| `error: package ... requires rustc 1.85` | Версия Rust старее нужной | `rustup update` |
+| `error: package ... requires rustc 1.88` | Версия Rust старее нужной | `rustup update` |
 | `pip` пишет, что не нашел `cargo` или `rustc`, при установке из репозитория | Расширение Python собирается из исходников, нужен Rust | Поставить Rust через [rustup](https://rustup.rs) и повторить |
 | `ModuleNotFoundError: No module named 'brokapi'` | Пакет поставлен в другое окружение | Активировать то окружение, в которое ставили (`. .venv/bin/activate`), и проверить `python -m pip show brokapi` |
 | `the crate brokapi could not be found in registry index` у `cargo add brokapi` | Пакета на crates.io еще нет, он появится в открытой бете | Ставить из репозитория (команда выше) |

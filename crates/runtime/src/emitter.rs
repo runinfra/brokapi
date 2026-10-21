@@ -12,8 +12,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use brokapi_core::{
-    Backpressure, ENVELOPE_SCHEMA, Envelope, Event, InstrumentId, InstrumentKey, NativeId,
-    SubscriptionId, Timestamps, UnixNanos,
+    Backpressure, Envelope, Event, InstrumentId, InstrumentKey, NativeId, SubscriptionId,
+    Timestamps, UnixNanos,
 };
 use brokapi_sansio::CoreEvent;
 use tokio::sync::mpsc::{self, error::TrySendError};
@@ -236,13 +236,12 @@ impl Emitter {
     }
 
     fn envelope(&self, sub: Option<SubscriptionId>, payload: Event) -> Envelope {
-        Envelope {
-            schema: ENVELOPE_SCHEMA,
-            source: Arc::clone(&self.source),
-            sub,
-            ts: Timestamps::new(wall_nanos(), crate::now()),
+        Envelope::new(
+            Arc::clone(&self.source),
+            Timestamps::new(wall_nanos(), crate::now()),
             payload,
-        }
+        )
+        .with_sub_opt(sub)
     }
 
     /// Buffers events and moves what the channel accepts. Never blocks.

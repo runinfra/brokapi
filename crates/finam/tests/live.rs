@@ -25,7 +25,7 @@ use brokapi_runtime::BrokerLimiter;
 use tokio::sync::mpsc;
 
 fn env(name: &str) -> Option<String> {
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
     std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 

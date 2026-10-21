@@ -5,7 +5,13 @@ version = "0.1.0-alpha.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["The brokapi Authors"]
-homepage = "https://brokapi.ru/docs/"
+homepage = "https://brokapi.ru"
+repository = "https://github.com/runinfra/brokapi"
+documentation = "https://brokapi.ru/docs/python/"
+rust-version = "1.88"
+readme = "README.md"
+keywords = ["trading", "broker", "finance", "algotrading", "moex"]
+categories = ["api-bindings", "finance"]
 publish = false
 
 # A workspace of its own: the extension needs a Python interpreter to build, and the Rust workspace of the
@@ -30,7 +36,7 @@ extension-module = ["pyo3/extension-module"]
 [dependencies]
 brokapi = { path = "../..", features = ["bcs", "tbank", "finam"] }
 brokapi-mocks = { path = "../mocks", optional = true }
-dotenv = "0.15"
+dotenvy = "0.15"
 pyo3 = { version = "0.30", features = ["abi3-py310"] }
 pyo3-async-runtimes = { version = "0.30", features = ["tokio-runtime"] }
 serde = { version = "1", features = ["derive"] }

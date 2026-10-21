@@ -118,6 +118,8 @@ pub struct UdCore {
     /// a fill is the growth of the value over the growth of the quantity.
     totals: HashMap<String, Cumulative>,
     totals_order: VecDeque<String>,
+    /// Finished orders (cid, broker order id), to forget what is kept for them after the memory window.
+    done: brokapi_runtime::FinishedWindow<(brokapi_core::ClientOrderId, Option<String>)>,
     /// How many times the order events session announced a connect. From the second on, the connection
     /// was lost once and what happened to the orders in the gap is not known.
     connects: u32,
@@ -150,6 +152,7 @@ impl UdCore {
             order_ids: HashMap::new(),
             totals: HashMap::new(),
             totals_order: VecDeque::new(),
+            done: brokapi_runtime::FinishedWindow::new(),
             connects: 0,
         }
     }
@@ -391,6 +394,17 @@ impl UdCore {
             _ => return,
         };
         let _ = self.orders.apply(snapshot.cid, signal, now);
+        if snapshot.state.is_final() {
+            let order_id = snapshot.broker_id.as_ref().map(|b| b.as_str().to_string());
+            self.done.push(now, (snapshot.cid, order_id));
+            for (cid, order_id) in self.done.expired(now) {
+                self.orders.forget_finished(cid);
+                if let Some(id) = order_id {
+                    self.order_ids.remove(&id);
+                    self.totals.remove(&id);
+                }
+            }
+        }
     }
 
     fn find_order_state_sub(&self) -> Option<SubscriptionId> {
@@ -451,10 +465,9 @@ impl BrokerCore for UdCore {
         for (cid, state) in changed {
             out.push(CoreEvent {
                 sub: None,
-                payload: brokapi_core::Event::Order(brokapi_core::OrderSnapshot {
+                payload: brokapi_core::Event::Order(brokapi_core::OrderSnapshot::new(
                     cid,
-                    broker_id: None,
-                    instrument: brokapi_core::InstrumentId::new(
+                    brokapi_core::InstrumentId::new(
                         brokapi_core::InstrumentKey::new("", ""),
                         brokapi_core::NativeId::TickerClass {
                             ticker: String::new(),
@@ -462,13 +475,11 @@ impl BrokerCore for UdCore {
                         },
                     ),
                     state,
-                    side: brokapi_core::Side::Buy,
-                    order_type: brokapi_core::OrderType::Limit,
-                    qty: brokapi_core::Qty::ZERO,
-                    filled: brokapi_core::Qty::ZERO,
-                    price: None,
-                    ts: brokapi_core::Timestamps::new(brokapi_core::UnixNanos::ZERO, now),
-                }),
+                    brokapi_core::Side::Buy,
+                    brokapi_core::OrderType::Limit,
+                    brokapi_core::Qty::ZERO,
+                    brokapi_core::Timestamps::new(brokapi_core::UnixNanos::ZERO, now),
+                )),
             });
         }
         self.next_deadline = None;

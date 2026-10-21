@@ -52,6 +52,7 @@ impl InstrumentKey {
 /// [`TickerClass`](Self::TickerClass)). Turning a key into a native id and back needs no network
 /// call.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum NativeId {
     /// Finam style: symbol and market code.
     SymbolMic {

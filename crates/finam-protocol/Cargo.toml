@@ -6,6 +6,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 homepage.workspace = true
+repository.workspace = true
+documentation.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 async-trait.workspace = true
@@ -14,7 +20,7 @@ prost = "0.14"
 prost-types = "0.14"
 serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
 tokio-util.workspace = true
 tonic = { version = "0.14", default-features = false, features = ["codegen", "transport", "tls-ring", "tls-webpki-roots"] }
 tonic-prost = "0.14"
@@ -30,6 +36,6 @@ name = "brokapi_finam_protocol"
 path = "src/lib.rs"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["full", "test-util"] }
 # Doctests run against the in-process Finam imitation (a dev-dependency cycle is fine for doctests).
 brokapi-mocks.workspace = true

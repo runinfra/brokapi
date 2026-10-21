@@ -57,8 +57,19 @@ pub type InstrumentGuard = OwnedMutexGuard<()>;
 #[derive(Debug, Default)]
 pub struct InstrumentLocks {
     locks: Mutex<HashMap<InstrumentKey, Arc<AsyncMutex<()>>>>,
-    by_cid: Mutex<HashMap<ClientOrderId, InstrumentId>>,
+    by_cid: Mutex<Bound>,
 }
+
+/// The cid -> instrument map with the order the cids came in, so that the oldest can go.
+#[derive(Debug, Default)]
+struct Bound {
+    map: HashMap<ClientOrderId, InstrumentId>,
+    order: std::collections::VecDeque<ClientOrderId>,
+}
+
+/// How many cids [`InstrumentLocks`] remembers. The oldest are forgotten first: a cancel of such an old
+/// order is no longer serialized with the other commands of its instrument.
+pub const BOUND_CIDS: usize = 100_000;
 
 impl InstrumentLocks {
     /// Creates an empty set of locks.
@@ -85,10 +96,34 @@ impl InstrumentLocks {
 
     /// Remembers the instrument of an order we placed.
     pub fn bind(&self, cid: ClientOrderId, instrument: &InstrumentId) {
+        let mut b = self.by_cid.lock().expect("instrument locks poisoned");
+        if b.map.insert(cid, instrument.clone()).is_none() {
+            b.order.push_back(cid);
+            while b.order.len() > BOUND_CIDS {
+                if let Some(old) = b.order.pop_front() {
+                    b.map.remove(&old);
+                }
+            }
+        }
+    }
+
+    /// Forgets the instrument of a cid, for an order that is long finished. A later cancel of that cid is
+    /// no longer serialized with the other commands of its instrument.
+    pub fn forget(&self, cid: ClientOrderId) {
         self.by_cid
             .lock()
             .expect("instrument locks poisoned")
-            .insert(cid, instrument.clone());
+            .map
+            .remove(&cid);
+    }
+
+    /// How many cids are bound to an instrument. For tests and metrics.
+    pub fn bound(&self) -> usize {
+        self.by_cid
+            .lock()
+            .expect("instrument locks poisoned")
+            .map
+            .len()
     }
 
     /// The instrument of a cid, if this process placed (or replaced) it.
@@ -96,6 +131,7 @@ impl InstrumentLocks {
         self.by_cid
             .lock()
             .expect("instrument locks poisoned")
+            .map
             .get(&cid)
             .cloned()
     }
