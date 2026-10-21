@@ -317,14 +317,23 @@ hr { border: 0; border-top: 1px solid var(--bk-line); }
 @media (max-width: 560px) { .stub { padding: 1.5rem 1.4rem; } }
 
 /* Code in several languages (Rust, Python, gRPC): the group of fences is wrapped in <div class="lang-tabs">, see
-   docs/README.md. Until there is a script that makes tabs, the blocks stand one under another with a caption of the
-   language. The script (later) reads the same markup: a fence is `pre > code.language-NAME`. */
+   docs/README.md. The script docs/lang-tabs.js turns the group into tabs (class is-tabbed). Without the script the
+   blocks stand one under another with a caption of the language. A fence is `pre > code.language-NAME`. */
 .lang-tabs { margin: 1.6rem 0; }
 .lang-tabs pre { margin: 0.4rem 0 1rem; }
 .lang-tabs pre::before {
   display: block; padding: 0.9rem 1.6rem 0; font-family: var(--mono-font); font-size: 1.1rem; letter-spacing: 0.12em;
   text-transform: uppercase; color: var(--bk-code-muted);
 }
+.lang-tabs.is-tabbed pre::before { content: none !important; }
+.lang-tabs-bar { display: flex; gap: 0.4rem; margin: 0 0 -0.2rem; border-bottom: 1px solid var(--bk-line); }
+.lang-tabs-bar button {
+  appearance: none; background: none; border: 0; border-bottom: 2px solid transparent; margin: 0 0 -1px;
+  padding: 0.4rem 0.9rem; cursor: pointer; font-family: var(--mono-font); font-size: 1.15rem; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--bk-muted);
+}
+.lang-tabs-bar button:hover { color: var(--fg); }
+.lang-tabs-bar button.is-on { color: var(--fg); border-bottom-color: var(--bk-accent); }
 .lang-tabs pre:has(> code.language-rust)::before { content: "Rust"; }
 .lang-tabs pre:has(> code.language-python)::before { content: "Python"; }
 .lang-tabs pre:has(> code.language-proto)::before, .lang-tabs pre:has(> code.language-protobuf)::before { content: "gRPC"; }

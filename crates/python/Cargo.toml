@@ -1,0 +1,46 @@
+[package]
+name = "brokapi-python"
+description = "Python bindings of brokapi: the native module behind `pip install brokapi` (PyO3)."
+version = "0.1.0-alpha.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["The brokapi Authors"]
+homepage = "https://brokapi.ru/docs/"
+publish = false
+
+# A workspace of its own: the extension needs a Python interpreter to build, and the Rust workspace of the
+# library (cargo test --workspace, clippy, rustdoc) must build on a machine without one.
+# `tools/check` builds it with maturin; it shares the target directory of the main workspace.
+[workspace]
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+# The module is tested from Python (pytest), not by cargo: a test binary of a PyO3 extension cannot link.
+test = false
+doctest = false
+
+[features]
+default = ["testing"]
+# Python `brokapi.testing`: imitations of the brokers in the wheel, so that a user can test a bot without a broker.
+testing = ["dep:brokapi-mocks"]
+# Set by maturin (pyproject.toml): the module is loaded by Python, so it must not link libpython.
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+brokapi = { path = "../..", features = ["bcs", "tbank", "finam"] }
+brokapi-mocks = { path = "../mocks", optional = true }
+dotenv = "0.15"
+pyo3 = { version = "0.30", features = ["abi3-py310"] }
+pyo3-async-runtimes = { version = "0.30", features = ["tokio-runtime"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+rust_decimal = { version = "1", default-features = false, features = ["std", "serde"] }
+chrono = "0.4"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true

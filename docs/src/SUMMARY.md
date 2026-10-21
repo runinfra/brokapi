@@ -35,6 +35,12 @@
 # Python
 
 - [brokapi для Python](python/index.md)
+  - [Быстрый старт](python/quickstart.md)
+  - [Торговый бот на событиях](python/howto-trading-bot.md)
+  - [Несколько брокеров и счетов](python/howto-infrastructure.md)
+  - [История свечей](python/howto-history.md)
+  - [Тесты против имитаций](python/testing.md)
+  - [Как Python связан с ядром](python/design.md)
 
 # Gateway
 

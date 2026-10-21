@@ -4,3 +4,9 @@ CLAUDE.md
 AGENTS.md
 .claude/
 .serena/
+__pycache__/
+*.pyc
+*.so
+*.pyd
+.pytest_cache/
+dist/

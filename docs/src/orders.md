@@ -120,6 +120,41 @@ sequenceDiagram
   `cid` не тратятся. Идентификатор инструмента другого брокера (например `SymbolMic` Финама у Т-Банка) это `Config`, без
   сети. Как округлить цену точно и как передать шаг - [Деньги, цены и количества](numbers.md).
 
+### Как это выглядит в коде
+
+Номер придумывает бот и записывает в журнал до вызова. Вкладка выбирает язык, выбор запоминается для всей книги.
+
+<div class="lang-tabs">
+
+```rust,ignore
+{{#include ../../examples/contract.rs:cid_first}}
+```
+
+```python
+{{#include ../../crates/python/examples/rules.py:cid_first}}
+```
+
+</div>
+
+Исходы разбираются так, что «заявки точно нет» и «заявка могла встать» никогда не путаются. На `Unknown` и `Transport` повтора нет,
+есть вопрос брокеру по тому же `cid`:
+
+<div class="lang-tabs">
+
+```rust,ignore
+{{#include ../../examples/contract.rs:unknown}}
+```
+
+```python
+{{#include ../../crates/python/examples/rules.py:unknown}}
+```
+
+</div>
+
+В Python это исключения `brokapi.Rejected`, `brokapi.Unknown` и `brokapi.Transport` из `brokapi.errors`: те же имена и тот же текст, что у
+`Error` в Rust. Если задачу, которая ждет `place`, отменить в Python, команда все равно доходит до конца: после этого тоже
+спрашивайте `order_state`.
+
 ## Почему нет автоповтора
 
 Заявка, которая ушла к брокеру и осталась без ответа, может находиться в трех состояниях: брокер ее не получил,

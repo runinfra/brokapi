@@ -54,6 +54,39 @@ stateDiagram-v2
 выглядит как UUID, но выдан библиотекой из номера брокера, а не вами. Почему `foreign` нельзя трогать: бот не
 знает, зачем человек поставил эту заявку, и снятие может сломать чужую стратегию или защитный стоп.
 
+В коде порядок такой. Подписка идет до сверки, сверка принимает список из журнала, три списка разбираются каждый по-своему:
+
+<div class="lang-tabs">
+
+```rust,ignore
+{{#include ../../examples/lifecycle.rs:start}}
+
+{{#include ../../examples/lifecycle.rs:reconcile}}
+```
+
+```python
+{{#include ../../crates/python/examples/rules.py:start}}
+
+{{#include ../../crates/python/examples/rules.py:reconcile}}
+```
+
+</div>
+
+Первая торговая команда идет только после этого. Сначала подписка, потом сверка, потом заявка, а до сверки заявка получает
+`NotReconciled`:
+
+<div class="lang-tabs">
+
+```rust,ignore
+{{#include ../../examples/contract.rs:reconcile_first}}
+```
+
+```python
+{{#include ../../crates/python/examples/rules.py:reconcile_first}}
+```
+
+</div>
+
 Порядок на схеме такой: бот поднимает UD (шлюз закрыт), подписывается на статусы, берет из журнала `cid` живых
 заявок, зовет `reconcile`, получает три списка, шлюз открывается, итоги идут в журнал.
 

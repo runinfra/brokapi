@@ -1,0 +1,59 @@
+/* The Python API reference in the brokapi style: paper #f5f4ef, ink #121212, accent #ff5b1f, Golos Text and JetBrains Mono.
+   pdoc puts this file into every page. The fonts are at /docs/api/python/fonts/ (docs/build.sh copies them there). */
+@font-face { font-family: 'Golos Text'; font-weight: 400 900; font-display: swap;
+  src: url('/docs/api/python/fonts/golos-text-cyrillic-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'Golos Text'; font-weight: 400 900; font-display: swap;
+  src: url('/docs/api/python/fonts/golos-text-latin-wght-normal.woff2') format('woff2-variations'); }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 100 800; font-display: swap;
+  src: url('/docs/api/python/fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2-variations'); }
+
+:root {
+  --pdoc-background: #f5f4ef;
+  --text: #121212;
+  --muted: #5c5a55;
+  --link: #c23c00;
+  --link-hover: #ff5b1f;
+  --code: #ebe9e1;
+  --active: #ffd2bf;
+  --accent: #ebe9e1;
+  --accent2: #dcd9d0;
+  --nav-hover: rgba(255, 91, 31, 0.08);
+  --name: #c23c00;
+  --def: #c23c00;
+  --annotation: #5c5a55;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pdoc-background: #161615;
+    --text: #ecebe6;
+    --muted: #a19e94;
+    --link: #ff8a5c;
+    --link-hover: #ffb79b;
+    --accent: #232321;
+    --accent2: #3a3935;
+    --active: #5a2a15;
+    --nav-hover: rgba(255, 138, 92, 0.12);
+    --name: #ff8a5c;
+    --code: #232321;
+    --def: #ff8a5c;
+    --annotation: #a19e94;
+  }
+}
+html, body { background: var(--pdoc-background); color: var(--text); font-family: 'Golos Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+code, pre, .pdoc-code, .signature { font-family: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; font-variant-ligatures: none; }
+pre { background: #121212; color: #ecebe6; border-radius: 4px; }
+pre code, .pdoc-code { color: #ecebe6; background: transparent; }
+.pdoc-code .n, .pdoc-code .nn, .pdoc-code .nc, .pdoc-code .nf, .pdoc-code .p, .pdoc-code .o { color: #ecebe6; }
+.pdoc-code .k, .pdoc-code .kn, .pdoc-code .kd, .pdoc-code .ow { color: #ff8a5c; }
+.pdoc-code .s, .pdoc-code .s1, .pdoc-code .s2, .pdoc-code .mi, .pdoc-code .kc { color: #9fd8a8; }
+.pdoc-code .c, .pdoc-code .c1, .pdoc-code .ch { color: #8f8d86; }
+nav.pdoc { background: var(--accent); border-right: 1px solid var(--accent2); }
+nav.pdoc a { color: var(--text); }
+nav.pdoc a:hover { color: var(--link-hover); }
+h1, h2, h3 { font-weight: 650; }
+.pdoc-button { border-color: var(--accent2); }
+.attribution { display: none; }
+footer { color: var(--muted); }
+body::before { content: "brokapi for Python - closed alpha, checked on imitations"; display: block;
+  background: #ff5b1f; color: #121212; font-size: 0.78rem; padding: 0.25rem 1rem; letter-spacing: 0.02em; }

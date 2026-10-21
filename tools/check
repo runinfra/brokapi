@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full check before a push. Eight steps, in order, stops at the first failure:
+# Full check before a push. Ten steps, in order, stops at the first failure:
 #   1. cargo fmt --all --check
 #   2. cargo clippy --workspace --all-targets -- -D warnings, then cargo check of the live tests (integration-live)
 #   3. cargo test --workspace
@@ -9,6 +9,13 @@
 #   6. cargo build --examples
 #   7. mdbook build docs
 #   8. docs/llms.py: the files for AI agents (llms.txt, llms-full.txt, page.md), every page of the book described
+#   9. Python: build the extension (maturin develop, crates/python) into a virtualenv
+#  10. Python: pytest (tests/, the examples of the book run against the imitations), the doctests of the package, and the
+#      reference of the package made by pdoc (docs/pydoc.py) without errors
+#
+# The Python extension has a workspace of its own (crates/python), so steps 1-8 do not need a Python interpreter. Steps 9 and 10
+# use a virtualenv (BROKAPI_PY_VENV, default $XDG_CACHE_HOME/brokapi/venv): made on the first run, with maturin, pytest,
+# pytest-asyncio and pdoc from PyPI (network on that run).
 #
 # Every example in the documentation is a doctest or a program in examples/, and all of them run
 # against the in-process broker imitations (crate brokapi-mocks): no network, no money.
@@ -21,34 +28,52 @@ export PATH="$HOME/.local/bin:$PATH" # mdbook lives here on the build machines
 start=$(date +%s)
 step() { printf '\n==> %s\n' "$*"; }
 
-step "1/8 cargo fmt --all --check"
+step "1/10 cargo fmt --all --check"
 cargo fmt --all --check
 
-step "2/8 cargo clippy --workspace --all-targets -- -D warnings, and the live tests still compile"
+step "2/10 cargo clippy --workspace --all-targets -- -D warnings, and the live tests still compile"
 cargo clippy --workspace --all-targets -- -D warnings
 # The live tests (tests/live*.rs, feature integration-live) are never run here, they need tokens. Without this
 # line nothing would notice when a change of the library breaks them.
 cargo check --workspace --all-targets \
     --features brokapi-bcs/integration-live,brokapi-tbank/integration-live,brokapi-finam/integration-live,brokapi-bcs-protocol/integration-live
 
-step "3/8 cargo test --workspace"
+step "3/10 cargo test --workspace"
 cargo test --workspace
 
-step "4/8 cargo test --doc --workspace"
+step "4/10 cargo test --doc --workspace"
 cargo test --doc --workspace
 
-step "5/8 cargo doc --no-deps --workspace (warnings are errors, no font preload left)"
+step "5/10 cargo doc --no-deps --workspace (warnings are errors, no font preload left)"
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam
 python3 docs/rustdoc_nofonts.py --selftest
 python3 docs/rustdoc_nofonts.py "${CARGO_TARGET_DIR:-target}/doc"
 
-step "6/8 cargo build --examples"
+step "6/10 cargo build --examples"
 cargo build --examples --workspace
 
-step "7/8 mdbook build docs"
+step "7/10 mdbook build docs"
 mdbook build docs
 
-step "8/8 files for AI agents (docs/llms.py)"
+step "8/10 files for AI agents (docs/llms.py)"
 python3 docs/llms.py docs docs/book
+
+step "9/10 Python: build the extension (maturin develop)"
+VENV="${BROKAPI_PY_VENV:-${XDG_CACHE_HOME:-$HOME/.cache}/brokapi/venv}"
+if [ ! -x "$VENV/bin/maturin" ] || ! "$VENV/bin/python" -c 'import pytest, pytest_asyncio, pdoc' 2>/dev/null; then
+    python3 -m venv "$VENV"
+    "$VENV/bin/pip" install --quiet 'maturin>=1.7,<2' pytest pytest-asyncio 'pdoc==16.0.0'
+fi
+# The extension shares the target directory of the workspace, so the dependencies that both need are built once.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$(pwd)/target}"
+cargo fmt --manifest-path crates/python/Cargo.toml --check
+(cd crates/python && VIRTUAL_ENV="$VENV" PATH="$VENV/bin:$PATH" cargo clippy -- -D warnings)
+(cd crates/python && VIRTUAL_ENV="$VENV" PATH="$VENV/bin:$PATH" maturin develop)
+
+step "10/10 Python: pytest, doctests, the reference (pdoc)"
+(cd crates/python && "$VENV/bin/python" -m pytest tests -q && "$VENV/bin/python" -m pytest --doctest-modules python/brokapi -q -p no:cacheprovider)
+PYDOC_OUT=$(mktemp -d)
+"$VENV/bin/python" docs/pydoc.py "$PYDOC_OUT" "$PYDOC_OUT/api-reference.md"
+rm -rf "$PYDOC_OUT"
 
 printf '\nAll checks passed in %ss.\n' "$(( $(date +%s) - start ))"
