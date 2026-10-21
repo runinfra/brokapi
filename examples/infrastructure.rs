@@ -2,7 +2,7 @@
 //! that reconciles every account against that journal.
 //!
 //! The code of the page "Как собрать инфраструктуру на несколько брокеров и счетов" of the book
-//! (docs/src/howto-infrastructure.md). The accounts are BCS (one), T-Bank (two, one token) and Finam (one). `run` plays
+//! (docs/src/rust/howto-infrastructure.md). The accounts are BCS (one), T-Bank (two, one token) and Finam (one). `run` plays
 //! two lives of the process against the in-process imitations: the first places an order on every account and goes away
 //! without cancelling (and leaves a journal line for an order that was never sent), while the process is down one order
 //! is filled, the second life reconciles every account with the journal and finds out what became of everything.

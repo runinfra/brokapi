@@ -1,6 +1,6 @@
 //! Quick start on BCS: read first, then one order far from the market, cancelled at once.
 //!
-//! This program is the code of the page "Быстрый старт" of the book (docs/src/quickstart.md). The book
+//! This program is the code of the page "Быстрый старт" of the book (docs/src/rust/quickstart.md). The book
 //! includes the marked parts below, so the text and the code that is tested cannot drift apart.
 //!
 //! By default it runs against the in-process imitation of BCS (`brokapi-mocks`): no network, no account,

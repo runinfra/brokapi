@@ -1,6 +1,6 @@
 //! An event-driven trading bot: order book in, signal, order, statuses, a way out of `Unknown`, a clean stop.
 //!
-//! The code of the page "Как сделать торгового бота на событиях" of the book (docs/src/howto-trading-bot.md).
+//! The code of the page "Как сделать торгового бота на событиях" of the book (docs/src/rust/howto-trading-bot.md).
 //! The bot is written against the traits of `brokapi::core`, so the same `TradingBot` runs on every broker.
 //! `run_bcs` plays it on the BCS imitation (the order is filled, or the bot stops and cancels it), `run_tbank_unknown`
 //! plays it on the T-Bank imitation where the answer to `place` is lost, so the bot has to leave `Unknown`.

@@ -2,7 +2,7 @@
 
 Инструкция. Цель: выгрузить длинную историю свечей и сделок по нескольким бумагам у нескольких брокеров, не нарушая лимитов,
 записать поток событий в файл и проиграть его из файла столько раз, сколько нужно для разбора. Правила: [Контракт для
-агентов](agent-contract.md). Код ниже - куски программы `examples/research.rs`. Она запускается тестом против имитаций трех
+агентов](../agent-contract.md). Код ниже - куски программы `examples/research.rs`. Она запускается тестом против имитаций трех
 брокеров: имитации, как настоящие брокеры, отклоняют запрос длиннее предела и отдают ряд под заданный период.
 
 ## Что получится
@@ -39,7 +39,7 @@ tokio   = { version = "1", features = ["full"] }
 ```
 
 ```rust,ignore
-{{#include ../../examples/research.rs:imports}}
+{{#include ../../../examples/research.rs:imports}}
 ```
 
 ## Как библиотека читает длинную историю
@@ -69,7 +69,7 @@ tokio   = { version = "1", features = ["full"] }
 продолжается выгрузка. Состояние не может разойтись с данными, потому что отдельного состояния нет.
 
 ```rust,ignore
-{{#include ../../examples/research.rs:files}}
+{{#include ../../../examples/research.rs:files}}
 ```
 
 ## Выгрузка
@@ -81,7 +81,7 @@ tokio   = { version = "1", features = ["full"] }
 страница пишется одним `write_all` и сразу `sync_data`, и только потом просится следующая.
 
 ```rust,ignore
-{{#include ../../examples/research.rs:download}}
+{{#include ../../../examples/research.rs:download}}
 ```
 
 Что делает `download` с ошибками, по классу ошибки (`error.class()`):
@@ -107,7 +107,7 @@ tokio   = { version = "1", features = ["full"] }
 с версией формата. Цены и количества записываются строками, поэтому возвращаются точно (`244.30` остается `244.30`).
 
 ```rust,ignore
-{{#include ../../examples/research.rs:record}}
+{{#include ../../../examples/research.rs:record}}
 ```
 
 Чего файл не хранит: монотонные часы `rx_mono`. После чтения в нем время чтения. Для порядка и замеров в проигрыше используйте
@@ -128,7 +128,7 @@ tokio   = { version = "1", features = ["full"] }
 ## Разбор, один для живого потока и для файла
 
 ```rust,ignore
-{{#include ../../examples/research.rs:stats}}
+{{#include ../../../examples/research.rs:stats}}
 ```
 
 Тест записывает 30 событий живого потока, проигрывает файл и проверяет, что число записанных равно числу проигранных и что
@@ -140,7 +140,7 @@ tokio   = { version = "1", features = ["full"] }
 <summary>Текст программы examples/research.rs</summary>
 
 ```rust,ignore
-{{#include ../../examples/research.rs}}
+{{#include ../../../examples/research.rs}}
 ```
 
 </details>
@@ -173,4 +173,4 @@ NautilusTrader хранит данные в каталоге Parquet с запр
 - **Бумаги:** список в `Venue`. В боевом коде идентификаторы берутся из `find`.
 - **Куда писать:** вместо файлов любая база. Условие то же: страница на диске до следующего запроса.
 - **Лимиты:** `HistoryOpts` (`max_rate_waits`, `max_rate_wait`, `transport_retries`) и сами лимиты брокера
-  (`limits_from_toml_path`, [Лимиты запросов](limits.md#откуда-числа)).
+  (`limits_from_toml_path`, [Лимиты запросов](../limits.md#откуда-числа)).

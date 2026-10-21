@@ -2,7 +2,7 @@
 
 Инструкция. Цель: один процесс держит три брокера и четыре счета (БКС один, Т-Банк два на одном токене, Финам один), все события
 идут в один канал, заявки пишутся в журнал в файле, а после рестарта каждый счет сверяется с журналом. Правила: [Контракт для
-агентов](agent-contract.md), устройство: [Несколько счетов и брокеров](accounts.md). Код ниже - куски программы
+агентов](../agent-contract.md), устройство: [Несколько счетов и брокеров](accounts.md). Код ниже - куски программы
 `examples/infrastructure.rs`. Она запускается тестом против имитаций всех трех брокеров, и тест проходит две жизни процесса.
 
 ## Что получится
@@ -48,7 +48,7 @@ dotenv  = "0.15"
 ```
 
 ```rust,ignore
-{{#include ../../examples/infrastructure.rs:imports}}
+{{#include ../../../examples/infrastructure.rs:imports}}
 ```
 
 ## Настройки
@@ -57,13 +57,13 @@ dotenv  = "0.15"
 `TBANK_TOKEN`, `TBANK_ACCOUNT_ID`, `TBANK_ACCOUNT_ID_2`, `FINAM_SECRET`, `FINAM_ACCOUNT_ID`), в примере - из имитаций.
 
 ```rust,ignore
-{{#include ../../examples/infrastructure.rs:settings}}
+{{#include ../../../examples/infrastructure.rs:settings}}
 ```
 
 Для пробного запуска без брокеров те же настройки собираются из имитаций (запуск имитаций и их константы: [Тесты против имитаций](mocks.md)):
 
 ```rust,ignore
-{{#include ../../examples/infrastructure.rs:mock_settings}}
+{{#include ../../../examples/infrastructure.rs:mock_settings}}
 ```
 
 MD Т-Банка не привязан к счету: его конфиг без `account_id`. Счета выбирают конфиги UD.
@@ -75,7 +75,7 @@ MD Т-Банка не привязан к счету: его конфиг без
 пропускается при чтении.
 
 ```rust,ignore
-{{#include ../../examples/infrastructure.rs:journal}}
+{{#include ../../../examples/infrastructure.rs:journal}}
 ```
 
 ## Что нужно процессу от счета
@@ -85,7 +85,7 @@ MD Т-Банка не привязан к счету: его конфиг без
 счет Т-Банка вместо двух, уберите его UD из `Infra`, из `accounts()` и из `ACCOUNTS`.
 
 ```rust,ignore
-{{#include ../../examples/infrastructure.rs:account}}
+{{#include ../../../examples/infrastructure.rs:account}}
 ```
 
 ## Запуск всех коннекторов
@@ -94,7 +94,7 @@ MD Т-Банка не привязан к счету: его конфиг без
 счета со своей частью журнала. У Финама один JWT на MD и UD (`shared_tokens`).
 
 ```rust,ignore
-{{#include ../../examples/infrastructure.rs:infra}}
+{{#include ../../../examples/infrastructure.rs:infra}}
 ```
 
 ## Вспомогательные функции
@@ -104,7 +104,7 @@ MD Т-Банка не привязан к счету: его конфиг без
 Терпение `NOT_FOUND_PATIENCE` в примере полсекунды для имитаций. Сколько нужно настоящему брокеру, не измерено, берите секунды.
 
 ```rust,ignore
-{{#include ../../examples/infrastructure.rs:helpers}}
+{{#include ../../../examples/infrastructure.rs:helpers}}
 ```
 
 ## Сверка при старте и после сбоя
@@ -115,7 +115,7 @@ MD Т-Банка не привязан к счету: его конфиг без
 «не дошла». `foreign` показывается, но не трогается.
 
 ```rust,ignore
-{{#include ../../examples/infrastructure.rs:reconcile}}
+{{#include ../../../examples/infrastructure.rs:reconcile}}
 ```
 
 Сверка при старте идет через `reconcile_retry`: лимит или сбой сети не убивают процесс, а повторяются с паузой, остальные ошибки
@@ -123,13 +123,13 @@ MD Т-Банка не привязан к счету: его конфиг без
 сверка.
 
 ```rust,ignore
-{{#include ../../examples/infrastructure.rs:recover}}
+{{#include ../../../examples/infrastructure.rs:recover}}
 ```
 
 ## Заявка: журнал, вызов, журнал
 
 ```rust,ignore
-{{#include ../../examples/infrastructure.rs:place}}
+{{#include ../../../examples/infrastructure.rs:place}}
 ```
 
 Вариант `NotSent` покрывает все ошибки, при которых ничего не ушло: закрытый шлюз, остановка, локальный лимит, неверная
@@ -141,7 +141,7 @@ MD Т-Банка не привязан к счету: его конфиг без
 ## Разбор общего канала
 
 ```rust,ignore
-{{#include ../../examples/infrastructure.rs:route}}
+{{#include ../../../examples/infrastructure.rs:route}}
 ```
 
 Журнал не зависит от событий для правильности: `place` записывает `Working` по ответу, а сверка при старте исправит все остальное.
@@ -154,7 +154,7 @@ MD Т-Банка не привязан к счету: его конфиг без
 ## Остановка
 
 ```rust,ignore
-{{#include ../../examples/infrastructure.rs:stop}}
+{{#include ../../../examples/infrastructure.rs:stop}}
 ```
 
 В отчете `shutdown` у БКС `unsubscribed` всегда 0: сессии WebSocket отписываются не отдельными сообщениями. У Т-Банка и Финама
@@ -166,7 +166,7 @@ MD Т-Банка не привязан к счету: его конфиг без
 <summary>Текст программы examples/infrastructure.rs</summary>
 
 ```rust,ignore
-{{#include ../../examples/infrastructure.rs}}
+{{#include ../../../examples/infrastructure.rs}}
 ```
 
 </details>

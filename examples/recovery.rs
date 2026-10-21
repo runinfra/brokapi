@@ -1,7 +1,7 @@
 //! What a bot does when something went wrong: an order with no answer (`Unknown`) and a channel that
 //! overflowed (`Overflow`, `Degraded`).
 //!
-//! The code of the page "Если что-то пошло не так" of the book (docs/src/recovery.md). `run` makes a real
+//! The code of the page "Если что-то пошло не так" of the book (docs/src/rust/recovery.md). `run` makes a real
 //! `Unknown` on the T-Bank mock (the mock answers 1.5 s late, the connector gives up after 200 ms) and
 //! resolves it with `order_state`. It runs against the in-process imitation: no network, no money.
 //!

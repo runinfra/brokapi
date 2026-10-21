@@ -26,3 +26,23 @@ runnable = false
 
 [preprocessor.mermaid]
 command = "mdbook-mermaid"
+
+# Страницы раздела Rust переехали в rust/ (21.10.2026). Старые адреса остаются рабочими: mdBook кладет на их место
+# страницу с переадресацией. Переадресация и для markdown-копий агентов: docs/llms.py читает эту таблицу и пишет
+# старый page.md с адресом нового. Три последние строки - не переезд: mdBook пишет ссылки на README.md как README.html,
+# а страница лежит в index.html, и api-reference.md собирается уже после mdBook (docs/apidigest.py), поэтому ссылки на
+# них идут через переадресацию.
+[output.html.redirect]
+"/quickstart.html" = "rust/quickstart.html"
+"/howto-trading-bot.html" = "rust/howto-trading-bot.html"
+"/howto-infrastructure.html" = "rust/howto-infrastructure.html"
+"/howto-research.html" = "rust/howto-research.html"
+"/lifecycle.html" = "rust/lifecycle.html"
+"/recovery.html" = "rust/recovery.html"
+"/accounts.html" = "rust/accounts.html"
+"/stop-orders.html" = "rust/stop-orders.html"
+"/raw.html" = "rust/raw.html"
+"/mocks.html" = "rust/mocks.html"
+"/README.html" = "index.html"
+"/brokers/README.html" = "index.html"
+"/api-reference.html" = "api-reference.md"

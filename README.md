@@ -19,7 +19,7 @@ brokapi = { version = "0.1.0-alpha.1", features = ["bcs"] }   # или "tbank", 
 ```
 
 В crates.io крейт пока не опубликован. Быстрый старт с пошаговым примером для БКС и Т-Банка:
-[книга](https://brokapi.ru/docs/quickstart.html).
+[книга](https://brokapi.ru/docs/rust/quickstart.html).
 
 ## Состав
 

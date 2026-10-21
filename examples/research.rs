@@ -1,7 +1,7 @@
 //! A research engine: a year of candles from three brokers within their limits, written to disk and resumable, a live
 //! event stream recorded to a file, and the same stream played back from that file.
 //!
-//! The code of the page "Как собрать исследовательский движок" of the book (docs/src/howto-research.md). `run` works on
+//! The code of the page "Как собрать исследовательский движок" of the book (docs/src/rust/howto-research.md). `run` works on
 //! the in-process imitations of the three brokers, which, like the real ones, refuse a candle request over their span
 //! and answer a series for the range asked. Nothing here touches the network or money.
 //!

@@ -5,6 +5,8 @@
                   links with one line about each link
   llms-full.txt   the whole book as one markdown file, in the order of SUMMARY.md
   <page>.md       the markdown of every page next to its <page>.html, with {{#include}} lines replaced by the code
+  <old>.md        for every page moved by [output.html.redirect] in book.toml: a short note with the new address, so the
+                  old markdown address of a page does not end in 404 either
 
 usage: llms.py <docs dir> <book dir>
        <docs dir> holds book.toml and src/, <book dir> is the output of `mdbook build` (it gets the files).
@@ -16,53 +18,75 @@ import os
 import re
 import sys
 
+try:
+    import tomllib  # python 3.11+
+except ImportError:  # pragma: no cover
+    tomllib = None
+
 BASE_URL = os.environ.get("BROKAPI_DOCS_URL", "https://brokapi.ru/docs").rstrip("/")
 
 TITLE = "brokapi"
 SUMMARY_LINE = (
     "brokapi - единый интерфейс к торговым API: один и тот же код бота работает с любым брокером. Начинаем с API брокеров "
-    "российского рынка (БКС, Т-Банк, Финам), дальше другие брокеры и биржевые протоколы. Сейчас это библиотека на Rust "
-    "(рыночные данные, заявки, сверка со счетом, лимиты запросов). Стадия: закрытая альфа, проверено на имитациях, "
-    "вживую пока нет. Документация: %s/" % BASE_URL
+    "российского рынка (БКС, Т-Банк, Финам), дальше другие брокеры и биржевые протоколы. Сейчас работает только ядро на "
+    "Rust (рыночные данные, заявки, сверка со счетом, лимиты запросов). Python, gateway и MCP еще не вышли, их разделы - "
+    "заглушки. Стадия: закрытая альфа, проверено на имитациях, вживую пока нет. Документация: %s/" % BASE_URL
 )
-INTRO = """Как пользоваться этим набором. Книга написана по задачам. Если нужно написать код: прочитайте "Контракт для \
-агентов" (все обязательные правила на одной странице), затем инструкцию, ближайшую к задаче (торговый бот, несколько \
+INTRO = """Как пользоваться этим набором. Книга написана по задачам и состоит из общей части (как устроено, брокеры, \
+ошибки, события, контракт для агентов) и разделов продуктов: Rust, Python, gateway, MCP. Работает сейчас только Rust. \
+Страницы с пометкой "еще нет" (Python, gateway, MCP) - заглушки: кода и пакетов там нет, не пытайтесь писать на Python \
+или обращаться к службе gateway, пишите на Rust. Если нужно написать код: прочитайте "Контракт для агентов" (все \
+обязательные правила на одной странице), затем инструкцию из раздела Rust, ближайшую к задаче (торговый бот, несколько \
 брокеров и счетов, исследовательский движок), и копируйте код оттуда: каждый пример - рабочий тест против имитаций. \
-Точные объявления типов и сигнатуры методов - в api-reference.md (справочник API одним файлом, собран из rustdoc) и в самом rustdoc. Весь текст книги одним \
-файлом: llms-full.txt. У каждой страницы есть markdown-исходник рядом с HTML (замените .html на .md). Все адреса ниже - \
-на https://brokapi.ru/docs/, справочник API - на https://brokapi.ru/docs/api/."""
+Точные объявления типов и сигнатуры методов - в api-reference.md (справочник API одним файлом, собран из rustdoc) и в \
+самом rustdoc. Весь текст книги одним файлом: llms-full.txt. У каждой страницы есть markdown-исходник рядом с HTML \
+(замените .html на .md). Все адреса ниже - на https://brokapi.ru/docs/, справочник API Rust - на \
+https://brokapi.ru/docs/api/."""
+
+# part titles of SUMMARY.md that are not ready, with the note added to the section title in llms.txt
+SECTION_NOTES = {
+    "Python": "еще нет, заглушка",
+    "Gateway": "еще нет, заглушка",
+    "MCP": "еще нет, заглушка, возможно",
+}
 
 # path of the page in src/ -> one line for llms.txt
 DESCRIPTIONS = {
-    "README.md": "Что такое brokapi, три главных правила, что библиотека не делает, честный статус",
-    "quickstart.md": "От нуля до первой заявки на БКС, Т-Банке и Финаме: подключение, сверка, подписки, заявка, отмена",
+    "README.md": "Что такое brokapi, выбор пути (Rust, Python, gateway, MCP) и статус каждого, три главных правила, честный статус",
     "architecture.md": "Карта: коннекторы MD и UD, счетчик лимитов, канал событий и три круга механики со схемами",
     "streams.md": "Круг событий: подписки, режимы буфера (Conflate, DropNewest, Lossless), Overflow, Resync, обрывы",
     "orders.md": "Круг команд: cid, порядок проверок place, исходы команды, почему нет автоповтора, машина состояний заявки",
     "reconcile.md": "Круг жизни: шлюз торговых команд и сверка reconcile, три списка отчета, что хранит бот",
     "limits.md": "Лимиты запросов: BrokerLimiter, ведра, RateLimited, почему отмена в отдельном ведре",
     "numbers.md": "Price, Qty, Money на Decimal, округление до шага цены, PriceGrid, перевод форматов брокеров",
-    "lifecycle.md": "Как запустить, перезапустить и остановить бота: порядок start, подписка, reconcile, shutdown",
-    "recovery.md": "Что делать при Unknown, Overflow, Degraded и долгом обрыве связи, с кодом",
-    "accounts.md": "Несколько счетов и брокеров: UD на счет, MD на брокера, один счетчик лимитов на область квоты",
-    "stop-orders.md": "Стоп-лосс, тейк-профит и стоп-лимит: place_stop, cancel_stop, active_stop_orders",
-    "raw.md": "Любой метод брокера через raw(): те же токен, адрес и счетчик лимитов",
-    "howto-trading-bot.md": "Как написать торгового бота на событиях: стакан, сигнал, заявка, статусы, выход из Unknown, остановка",
-    "howto-infrastructure.md": "Как собрать один процесс на три брокера и несколько счетов: журнал заявок в файле, рестарт со сверкой",
-    "howto-research.md": "Как собрать исследовательский движок: выгрузка длинной истории свечей по лимитам, запись и воспроизведение событий",
-    "mocks.md": "Как тестировать код против имитаций брокеров brokapi-mocks: запуск, настройка, подтверждение исхода",
-    "agent-contract.md": "Контракт для агентов: обязательные правила с причинами, последствиями и кодом, частые ошибки",
-    "errors.md": "Ошибки и состояния: что значат, почему бывают, что делать (Unknown, Rejected, RateLimited, Degraded...)",
-    "events.md": "Конверт Envelope, события Event, возможности коннекторов caps()",
     "brokers/README.md": "Сравнение трех брокеров: идентификаторы инструментов, единицы, особенности",
     "brokers/bcs.md": "БКС: токены, идентификаторы, единицы количества, ограничения",
     "brokers/tbank.md": "Т-Банк: песочница, счета, лоты, uid инструмента, ограничения",
     "brokers/finam.md": "Финам: секрет и JWT, символ SBER@MISX, количество в штуках, нет replace",
-    "api.md": "Справочник API (rustdoc): список крейтов и ссылки на страницы справочника",
+    "rust/index.md": "Раздел Rust (работает сейчас, альфа): как подключить крейт и таблица инструкций по задачам",
+    "rust/quickstart.md": "Rust: от нуля до первой заявки на БКС, Т-Банке и Финаме: подключение, сверка, подписки, заявка, отмена",
+    "rust/howto-trading-bot.md": "Rust: как написать торгового бота на событиях: стакан, сигнал, заявка, статусы, выход из Unknown, остановка",
+    "rust/howto-infrastructure.md": "Rust: как собрать один процесс на три брокера и несколько счетов: журнал заявок в файле, рестарт со сверкой",
+    "rust/howto-research.md": "Rust: как собрать исследовательский движок: выгрузка длинной истории свечей по лимитам, запись и воспроизведение событий",
+    "rust/lifecycle.md": "Rust: как запустить, перезапустить и остановить бота: порядок start, подписка, reconcile, shutdown",
+    "rust/recovery.md": "Rust: что делать при Unknown, Overflow, Degraded и долгом обрыве связи, с кодом",
+    "rust/accounts.md": "Rust: несколько счетов и брокеров: UD на счет, MD на брокера, один счетчик лимитов на область квоты",
+    "rust/stop-orders.md": "Rust: стоп-лосс, тейк-профит и стоп-лимит: place_stop, cancel_stop, active_stop_orders",
+    "rust/raw.md": "Rust: любой метод брокера через raw(): те же токен, адрес и счетчик лимитов",
+    "rust/mocks.md": "Rust: как тестировать код против имитаций брокеров brokapi-mocks: запуск, настройка, подтверждение исхода",
+    "python/index.md": "ЕЩЕ НЕТ, заглушка: brokapi для Python (pip install brokapi, async for, Decimal), стадия к бете. Писать на Python пока нельзя",
+    "gateway/index.md": "ЕЩЕ НЕТ, заглушка: brokapi gateway, служба с gRPC для любого языка и командная строка brokapi, стадия к бете",
+    "mcp/index.md": "ЕЩЕ НЕТ, заглушка, возможно: brokapi MCP для ИИ-ассистентов, сначала только чтение, не утверждено",
+    "agent-contract.md": "Контракт для агентов: обязательные правила с причинами, последствиями и кодом, частые ошибки",
+    "errors.md": "Ошибки и состояния: что значат, почему бывают, что делать (Unknown, Rejected, RateLimited, Degraded...)",
+    "events.md": "Конверт Envelope, события Event, возможности коннекторов caps()",
     "coverage.md": "Какие методы API каждого брокера закрыты общим интерфейсом, а какие только через raw()",
+    "api.md": "Справочник API Rust (rustdoc): список крейтов и ссылки на страницы справочника",
+    "api-python.md": "ЕЩЕ НЕТ, заглушка: справочник API пакета для Python, появится вместе с пакетом",
+    "api-gateway.md": "ЕЩЕ НЕТ, заглушка: справочник gRPC-интерфейса gateway (из .proto), появится вместе со службой",
     "readiness.md": "Готовность: что проверено в коде, на имитации и вживую",
     "live.md": "Живые прогоны: вопросы, на которые ответит только настоящий счет",
-    "changelog.md": "Журнал изменений для пользователей",
+    "changelog.md": "Журнал изменений для пользователей, в том числе когда появятся Python, gateway и MCP",
 }
 
 # the reference (rustdoc) pages for the "Справочник API" section of llms.txt
@@ -139,6 +163,27 @@ def html_name(path):
     return path[:-3] + ".html"
 
 
+def read_redirects(docs):
+    """Returns {old markdown path: new markdown path} from [output.html.redirect] of book.toml.
+
+    Only moves of one html page to another are taken (the target is a relative .html). Entries that point to index.html
+    from README.html or to a file that is not a page are not moves: the markdown of a README.md is the page itself."""
+    if tomllib is None:
+        return {}
+    with open(os.path.join(docs, "book.toml"), "rb") as f:
+        table = tomllib.load(f).get("output", {}).get("html", {}).get("redirect", {})
+    result = {}
+    for old, new in table.items():
+        if not old.endswith(".html") or not new.endswith(".html") or "://" in new or new.startswith("/"):
+            continue
+        if os.path.basename(old) == "README.html":
+            continue
+        old = old.lstrip("/")
+        new = os.path.normpath(os.path.join(os.path.dirname(old), new))
+        result[old[: -len(".html")] + ".md"] = new[: -len(".html")] + ".md"
+    return result
+
+
 def main():
     docs, book = sys.argv[1], sys.argv[2]
     src = os.path.join(docs, "src")
@@ -151,6 +196,12 @@ def main():
     unused = [p for p in DESCRIPTIONS if p not in {q for _, q, _ in pages}]
     if unused:
         raise SystemExit("llms.py: DESCRIPTIONS has pages that are not in SUMMARY.md: " + ", ".join(unused))
+
+    for old, new in read_redirects(docs).items():
+        if new not in {p for _, p, _ in pages}:
+            raise SystemExit("llms.py: redirect %s points to %s, which is not a page of SUMMARY.md" % (old, new))
+        with open(os.path.join(book, old), "w", encoding="utf-8") as f:
+            f.write("# Страница переехала\n\nЭта страница теперь здесь: %s/%s\n" % (BASE_URL, new))
 
     full = []
     for _, path, _ in pages:
@@ -168,7 +219,7 @@ def main():
     # llms.txt
     out = ["# %s" % TITLE, "", "> " + SUMMARY_LINE, "", INTRO, ""]
     for title, items in sections:
-        out.append("## %s" % title)
+        out.append("## %s" % (title + (" (%s)" % SECTION_NOTES[title] if title in SECTION_NOTES else "")))
         out.append("")
         for page_title, path, _ in items:
             md = "index.md" if path == "README.md" else path

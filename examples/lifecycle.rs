@@ -1,6 +1,6 @@
 //! Start, restart and stop of a bot on BCS: the order of actions and what each one returns.
 //!
-//! The code of the page "Запуск, рестарт и остановка бота" of the book (docs/src/lifecycle.md). `run` plays
+//! The code of the page "Запуск, рестарт и остановка бота" of the book (docs/src/rust/lifecycle.md). `run` plays
 //! two runs of a bot against the in-process BCS imitation: the first places an order and stops without
 //! cancelling it, the second starts, reconciles with the journal and finds the order. No network, no money.
 //!

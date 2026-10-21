@@ -266,3 +266,66 @@ hr { border: 0; border-top: 1px solid var(--bk-line); }
 .on-this-page a:hover { color: var(--bk-heading); }
 .chapter a.current-header { color: var(--sidebar-active); font-weight: 600; box-shadow: inset 2px 0 0 var(--bk-accent);
   margin-left: -16px; padding-left: 14px; }
+
+/* Fork on the first page: four cards, one per path (Rust, Python, gateway, MCP). In the markdown it is a plain loose
+   list inside <div class="paths">: the first link of an item covers the whole card, the code span is the stage tag.
+   Without this CSS the page stays a readable list (agents read the same markdown). */
+.paths ul { list-style: none; padding: 0; margin: 1.6rem 0; display: grid; grid-template-columns: 1fr; gap: 1.2rem; }
+@media (min-width: 700px) { .paths ul { grid-template-columns: 1fr 1fr; } }
+.paths li {
+  position: relative; margin: 0; padding: 1.4rem 1.6rem; background: var(--bk-box);
+  border: 1px solid var(--bk-line); border-radius: 14px;
+}
+.paths li:hover, .paths li:focus-within { border-color: var(--bk-heading); }
+.paths li > p { margin: 0; font-size: 1.4rem; line-height: 1.55; color: var(--bk-muted); }
+.paths li > p:first-child { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.7rem; }
+.paths li > p:first-child a, .paths li > p:first-child a:link, .paths li > p:first-child a:visited {
+  font-size: 2rem; text-decoration: none; color: var(--bk-heading);
+}
+.paths li > p:first-child a::after { content: ""; position: absolute; inset: 0; border-radius: 14px; }
+.paths li:hover > p:first-child a { color: var(--bk-accent-text); }
+.paths li > p:first-child a:focus-visible::after { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
+.paths li > p:first-child code, .stub-stage {
+  font-family: var(--mono-font); font-size: 1.15rem; line-height: 1; padding: 0.45rem 0.8rem; border-radius: 999px;
+  background: transparent; color: var(--bk-muted); border: 1px solid var(--bk-line); white-space: nowrap;
+}
+/* The first card is Rust, the only path that works: its tag is filled with the accent. */
+.paths li:first-child > p:first-child code { background: var(--bk-accent); border-color: var(--bk-accent); color: #121212; font-weight: 600; }
+
+/* Placeholder of a product that does not exist yet (python/, gateway/, mcp/, api-python, api-gateway): one component,
+   all placeholders look the same. Markup (blank lines between the blocks keep markdown working inside):
+     <div class="stub">  <p class="stub-stage"><span class="stub-dot"></span>К бете</p>  <p class="stub-state">...</p>
+     <div class="stub-label">Что это будет</div> text  <div class="stub-label">Что работает уже сейчас</div> list
+     <div class="stub-foot"> line with the link to the changelog </div>  </div> */
+.stub {
+  margin: 1.8rem 0; padding: 2rem 2.2rem; background: var(--bk-box); border: 1px dashed var(--bk-muted); border-radius: 14px;
+}
+.stub > p, .stub > div > p { margin: 0 0 1rem; }
+.stub .stub-stage {
+  display: inline-flex; align-items: center; gap: 0.7rem; margin: 0 0 1.2rem; color: var(--bk-heading);
+  border-color: var(--bk-heading); background: var(--bg);
+}
+.stub-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bk-accent); flex: 0 0 auto; }
+.stub .stub-state { font-weight: 600; color: var(--bk-heading); }
+.stub .stub-label {
+  font-family: var(--mono-font); font-size: 1.15rem; text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--bk-muted); margin: 2rem 0 0.6rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--bk-line);
+}
+.stub ul { margin: 0.6rem 0 0; padding-left: 2rem; }
+.stub .stub-foot { margin-top: 2.2rem; padding-top: 1.2rem; border-top: 1px solid var(--bk-line); font-size: 1.4rem; color: var(--bk-muted); }
+.stub .stub-foot p { margin: 0; }
+@media (max-width: 560px) { .stub { padding: 1.5rem 1.4rem; } }
+
+/* Code in several languages (Rust, Python, gRPC): the group of fences is wrapped in <div class="lang-tabs">, see
+   docs/README.md. Until there is a script that makes tabs, the blocks stand one under another with a caption of the
+   language. The script (later) reads the same markup: a fence is `pre > code.language-NAME`. */
+.lang-tabs { margin: 1.6rem 0; }
+.lang-tabs pre { margin: 0.4rem 0 1rem; }
+.lang-tabs pre::before {
+  display: block; padding: 0.9rem 1.6rem 0; font-family: var(--mono-font); font-size: 1.1rem; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--bk-code-muted);
+}
+.lang-tabs pre:has(> code.language-rust)::before { content: "Rust"; }
+.lang-tabs pre:has(> code.language-python)::before { content: "Python"; }
+.lang-tabs pre:has(> code.language-proto)::before, .lang-tabs pre:has(> code.language-protobuf)::before { content: "gRPC"; }
+.lang-tabs pre:has(> code.language-bash)::before, .lang-tabs pre:has(> code.language-sh)::before { content: "Shell"; }
