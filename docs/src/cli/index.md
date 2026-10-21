@@ -1,4 +1,4 @@
-# brokapi CLI
+# CLI
 
 <div class="stub">
 

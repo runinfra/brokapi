@@ -6,7 +6,7 @@
 //   - a long code block is folded into <details> with a limited height,
 //   - the copy button speaks Russian,
 //   - the menu button of the contents works from the keyboard,
-//   - the link "Сообщить об ошибке" carries the page it was clicked on.
+//   - the button "Сообщить об ошибке" opens a form that sends the report together with the page it was opened on.
 (function () {
   'use strict';
 
@@ -156,12 +156,114 @@
   }
 
   // ---- report an error ---------------------------------------------------------------------------------------------
+  // A form in a <dialog>: the reader writes what is wrong and sends it, the address it goes to is not shown (decision of
+  // 21.10.2026, context/brand.md). The page, its title and the text the reader selected before opening go along. The
+  // receiver is POST /api/report on the same host (server side, vps-agent): JSON in, 2xx when taken, 429 when too often.
+  var REPORT_URL = '/api/report';
+
   function report() {
-    each('.report-error', function (a) {
-      var subject = 'brokapi docs: ошибка на странице «' + document.title + '»';
-      var body = 'Страница: ' + window.location.href + '\n\nЧто не так:\n';
-      a.href = 'mailto:info@runinfra.ru?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+    var buttons = document.querySelectorAll('.report-error');
+    if (!buttons.length || typeof HTMLDialogElement !== 'function') return;
+    var quote = '';
+    var dialog = null;
+
+    function build() {
+      dialog = document.createElement('dialog');
+      dialog.className = 'report-dialog';
+      dialog.setAttribute('aria-labelledby', 'report-title');
+      dialog.innerHTML =
+        '<form class="report-form" novalidate>' +
+        '<h2 id="report-title" class="report-title">Сообщить об ошибке</h2>' +
+        '<p class="report-page"></p>' +
+        '<blockquote class="report-quote" hidden></blockquote>' +
+        '<label class="report-label" for="report-text">Что не так</label>' +
+        '<textarea id="report-text" name="text" rows="5" maxlength="4000" required ' +
+        'placeholder="Пример не собирается, ссылка ведет не туда, непонятно, что делать дальше"></textarea>' +
+        '<label class="report-label" for="report-contact">Как вам ответить <span>необязательно</span></label>' +
+        '<input id="report-contact" name="contact" type="text" maxlength="200" autocomplete="email" placeholder="Почта или Telegram">' +
+        // A field for robots: people do not see it, a form filler fills it, and the receiver drops such a report.
+        '<input class="report-trap" name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true">' +
+        '<p class="report-status" role="status" aria-live="polite"></p>' +
+        '<div class="report-actions">' +
+        '<button class="report-send" type="submit">Отправить</button>' +
+        '<button class="report-cancel" type="button">Закрыть</button>' +
+        '</div>' +
+        '</form>';
+      document.body.appendChild(dialog);
+      var form = dialog.querySelector('form');
+      dialog.querySelector('.report-cancel').addEventListener('click', function () { dialog.close(); });
+      dialog.addEventListener('click', function (e) { if (e.target === dialog) dialog.close(); });
+      form.addEventListener('submit', function (e) { e.preventDefault(); send(form); });
+    }
+
+    function open() {
+      if (!dialog) build();
+      var form = dialog.querySelector('form');
+      var submit = form.querySelector('.report-send');
+      form.reset();
+      submit.disabled = false;
+      submit.hidden = false;
+      form.querySelector('.report-cancel').textContent = 'Закрыть';
+      form.querySelector('.report-status').textContent = '';
+      form.querySelector('.report-page').textContent = 'Страница: ' + document.title;
+      var q = form.querySelector('.report-quote');
+      q.textContent = quote;
+      q.hidden = !quote;
+      dialog.showModal();
+      form.querySelector('textarea').focus();
+    }
+
+    function send(form) {
+      var text = form.elements.text.value.trim();
+      var status = form.querySelector('.report-status');
+      if (!text) {
+        status.textContent = 'Напишите пару слов о том, что не так.';
+        form.elements.text.focus();
+        return;
+      }
+      var button = form.querySelector('.report-send');
+      button.disabled = true;
+      status.textContent = 'Отправляем...';
+      fetch(REPORT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          page: window.location.href,
+          title: document.title,
+          quote: quote,
+          text: text,
+          contact: form.elements.contact.value.trim(),
+          website: form.elements.website.value
+        })
+      }).then(function (r) {
+        if (!r.ok) throw new Error(r.status === 429 ? 'often' : 'server');
+        status.textContent = 'Спасибо, получили. Поправим.';
+        button.hidden = true;
+        var close = form.querySelector('.report-cancel');
+        close.textContent = 'Готово';
+        close.focus();
+      }).catch(function (e) {
+        button.disabled = false;
+        status.textContent = e && e.message === 'often'
+          ? 'Слишком много сообщений подряд. Попробуйте через несколько минут.'
+          : 'Не отправилось. Текст остался в форме, попробуйте еще раз чуть позже.';
+      });
+    }
+
+    Array.prototype.forEach.call(buttons, function (b) {
+      // A click takes the selection away, so the selected text is read when the pointer goes down.
+      b.addEventListener('pointerdown', function () { quote = selected(); });
+      b.addEventListener('click', function (e) {
+        if (e.detail === 0) quote = selected(); // from the keyboard
+        open();
+      });
+      b.hidden = false;
     });
+  }
+
+  function selected() {
+    var s = window.getSelection ? String(window.getSelection()).trim() : '';
+    return s.length > 1000 ? s.slice(0, 1000) + '...' : s;
   }
 
   // ---- the first Tab ---------------------------------------------------------------------------------------------------

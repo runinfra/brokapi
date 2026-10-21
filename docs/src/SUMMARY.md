@@ -48,11 +48,11 @@
 
 # Gateway
 
-- [brokapi Gateway](gateway/index.md)
+- [Gateway](gateway/index.md)
 
 # CLI
 
-- [brokapi CLI](cli/index.md)
+- [CLI](cli/index.md)
 
 # Справочник
 

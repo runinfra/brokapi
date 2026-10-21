@@ -89,5 +89,5 @@ python -c "import brokapi; print(brokapi.__version__)"
 
 ## Gateway и CLI
 
-[brokapi Gateway](gateway/index.md) и [brokapi CLI](cli/index.md) пока не выпущены: ставить нечего. Страницы продуктов
+[Gateway](gateway/index.md) и [CLI](cli/index.md) пока не выпущены: ставить нечего. Страницы продуктов
 рассказывают, что будет и что можно использовать уже сейчас.

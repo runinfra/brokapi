@@ -1,4 +1,4 @@
-# brokapi Gateway
+# Gateway
 
 <div class="stub">
 
