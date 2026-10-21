@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import enum
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Literal, Optional, Sequence, overload
@@ -31,6 +32,10 @@ from .models import (
     Schedule,
     ShutdownReport,
     Side,
+    StopExpiry,
+    StopOrderKind,
+    StopOrderRef,
+    StopOrderSnapshot,
     Timeframe,
     TradingParams,
     TradingStatus,
@@ -92,7 +97,7 @@ class EventStream:
         text = await self._native.next_event()
         if text is None:
             raise StopAsyncIteration
-        return Envelope._from_json(_codec.loads(text))
+        return Envelope._from_text(text)
 
     async def get(self, timeout: Optional[float] = None) -> Envelope:
         """The next event. Raises ``asyncio.TimeoutError`` after ``timeout`` seconds, ``EOFError`` at the end."""
@@ -105,7 +110,7 @@ class EventStream:
 
     def drain(self, limit: int = 10_000) -> list[Envelope]:
         """The events that are already waiting, without waiting for more."""
-        return [Envelope._from_json(_codec.loads(t)) for t in self._native.drain_events(limit)]
+        return [Envelope._from_text(t) for t in self._native.drain_events(limit)]
 
 
 class CandlePager:
@@ -137,6 +142,29 @@ class CandlePager:
         page = _codec.loads(text)
         self.resume_from = _codec.from_nanos(page["resume_from"])
         return _codec.decode(list[Candle], page["bars"])
+
+
+def _raw_json(value: Any) -> Any:
+    """Arguments of ``raw`` as plain JSON: text for ``Decimal``, ``UUID`` and enums, RFC 3339 for a ``datetime``."""
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        raise TypeError("a float cannot be exact, pass a Decimal or a str")
+    if isinstance(value, Decimal):
+        return _codec.decimal_text(value)
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            raise ValueError("the datetime has no time zone: use datetime(..., tzinfo=timezone.utc)")
+        return value.isoformat().replace("+00:00", "Z")
+    if isinstance(value, enum.Enum):
+        return value.value
+    if isinstance(value, Mapping):
+        return {str(k): _raw_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_raw_json(v) for v in value]
+    raise TypeError(f"cannot send {type(value).__name__} to the broker")
 
 
 def _opts(depth: Optional[int], backpressure: Optional[Backpressure]) -> dict[str, Any]:
@@ -189,7 +217,7 @@ class Client:
         """The stream of events of this client (the same object every time)."""
         return self._events
 
-    async def _call(self, method: str, **args: Any) -> Any:
+    async def _call(self, method: str, /, **args: Any) -> Any:
         text = await self._native.call(method, _codec.dumps(args))
         return _codec.loads(text)
 
@@ -431,6 +459,111 @@ class Client:
             "price": None if price is None else _codec.decimal_text(price, "price"),
         }
         return _codec.decode(OrderAck, await self._call("replace", request=request))
+
+    # ------------------------------------------------------------------------------------------ stop orders
+
+    async def place_stop(
+        self,
+        *,
+        cid: uuid.UUID,
+        instrument: InstrumentId,
+        side: Side,
+        kind: StopOrderKind,
+        qty: Decimal | str | int,
+        stop_price: Decimal | str | int,
+        limit_price: Decimal | str | int | None = None,
+        expiry: Optional[StopExpiry] = None,
+    ) -> OrderAck:
+        """Puts a stop order: it waits at the broker until the price reaches ``stop_price``, then the broker puts an
+        exchange order (a market order, or a limit order at ``limit_price``). Until then it is not on the exchange.
+
+        The rules are those of :meth:`place`: ``cid`` is made by the bot (:func:`new_cid`) and written to its journal
+        first, it is sent at most once, ``qty`` is in units of the instrument and the gate opens after
+        :meth:`reconcile`. ``expiry`` defaults to ``StopExpiry.good_till_cancel()``. A ``STOP_LIMIT`` needs a
+        ``limit_price``, else the call raises :class:`~brokapi.Rejected` before anything is sent.
+
+        Raises :class:`~brokapi.Unsupported` where the broker has no stop orders (``caps().ud.supports_stop_orders``),
+        :class:`~brokapi.Rejected` when the request or the broker says no, :class:`~brokapi.Unknown` when the outcome
+        is not known: do not repeat, look in :meth:`active_stop_orders`. A stop order that has triggered is a plain
+        order of the broker, and the library does not link it to the stop.
+        """
+        request = {
+            "cid": _codec.cid_text(cid),
+            "instrument": instrument,
+            "side": side,
+            "kind": kind,
+            "qty": _codec.decimal_text(qty, "qty"),
+            "stop_price": _codec.decimal_text(stop_price, "stop_price"),
+            "limit_price": None if limit_price is None else _codec.decimal_text(limit_price, "limit_price"),
+            "expiry": expiry or StopExpiry.good_till_cancel(),
+        }
+        return _codec.decode(OrderAck, await self._call("place_stop", request=request))
+
+    async def cancel_stop(self, stop: StopOrderRef | uuid.UUID) -> None:
+        """Cancels a stop order that has not triggered.
+
+        Name it with ``StopOrderRef.cid(cid)`` (a ``uuid.UUID`` alone means the same) or ``StopOrderRef.broker(id)``.
+        A ``cid`` is known from what this run has seen: after a restart T-Bank cannot find it, so use the id of the
+        broker (``OrderAck.broker_id``, ``StopOrderSnapshot.broker_id``). A repeated cancel creates nothing. Raises
+        :class:`~brokapi.Rejected` when the stop is unknown or has triggered, :class:`~brokapi.Unknown` when the
+        answer is missing: look in :meth:`active_stop_orders` before you decide.
+        """
+        if isinstance(stop, uuid.UUID):
+            stop = StopOrderRef.cid(stop)
+        if not isinstance(stop, StopOrderRef):
+            raise TypeError("a stop order is named by StopOrderRef.cid(...) or StopOrderRef.broker(...)")
+        await self._call("cancel_stop", stop=stop)
+
+    async def active_stop_orders(self) -> list[StopOrderSnapshot]:
+        """The stop orders that wait for their trigger, with their parameters and :attr:`StopOrderSnapshot.state`.
+
+        Not in :meth:`active_orders` and not in :meth:`reconcile`. This list is the only way to learn that a stop
+        triggered: there is no event for it.
+        """
+        return _codec.decode(list[StopOrderSnapshot], await self._call("active_stop_orders"))
+
+    async def subscribe_stop_orders(self) -> int:
+        """A stream of stop order statuses. **No broker has one** (BCS does not document it, T-Bank's API has none,
+        Finam has none): this raises :class:`~brokapi.Unsupported` for all three. Poll :meth:`active_stop_orders`; the
+        library does not poll for you."""
+        return await self._call("subscribe_stop_orders")
+
+    # ------------------------------------------------------------------------------------------ raw
+
+    async def raw(self, method: str, args: Optional[Mapping[str, Any]] = None, *, command: bool = False) -> Any:
+        """Calls any method of the broker's API, outside the common interface. Returns the reply as ``dict``.
+
+        The call goes through the same token, address and rate limit counter as the client: the quota is taken by the
+        method name, and a call that finds none left is :class:`~brokapi.RateLimited` and is not sent.
+        Errors of the broker are the usual ones. **What ``raw`` does not do:** it does not know the orders of the
+        client. An order placed through it is not in the events, not in :meth:`reconcile` and not in the order gate,
+        and the library checks nothing in it (a price step, a lot, a stop-limit price). Place orders with
+        :meth:`place`. Use ``raw`` for what the common interface has no word for: reports, coupons and dividends,
+        favourites, new methods of the broker.
+
+        ``command=False`` is for reading: a network failure is :class:`~brokapi.Transport`, and the call may be
+        repeated. ``command=True`` is for anything that **changes the account**: a timeout or a lost reply is
+        :class:`~brokapi.Unknown` and the call is never repeated, and it runs to its end even if you stop waiting. When in
+        doubt whether a method changes the account, pass ``command=True``.
+
+        - **T-Bank, Finam** (gRPC): ``method`` is the name of the method in the description of the API
+          (``"GetLastPrices"``, ``"Clock"``), or ``"Service/Method"`` where two services have the same name.
+          ``args`` is the request message as JSON with the field names of the ``.proto``, 64 bit integers and money
+          as text. The reply is the message as a ``dict`` in the same form. The account is not added: put it in the
+          request. Streaming methods raise :class:`~brokapi.Unsupported` (``raw_streaming``).
+        - **BCS** (REST): ``method`` is a name from the rate limit file of the library (``"GetQuotes"``,
+          ``"GetPortfolio"``, ``"GetOperationHistory"``, ...) or ``"GET /path"`` / ``"POST /path"`` for any other
+          method. ``args`` has ``query`` (URL parameters), ``body`` (the JSON of a ``POST``) and, for
+          ``GetOrderStatus``, ``path`` (``{"id": ...}``). A name without a route in the rate limit file spends the
+          default quota.
+
+        Raises :class:`~brokapi.Config` for a method the broker does not have or arguments that do not fit it
+        (nothing was sent and no quota was spent).
+        """
+        if not isinstance(method, str) or not method:
+            raise TypeError("the method is the name of a method of the broker")
+        params = {} if args is None else _raw_json(dict(args))
+        return await self._call("raw", method=method, args=params, command=bool(command))
 
     async def order_state(self, cid: uuid.UUID) -> OrderSnapshot:
         """What the broker says about an order. The way out of :class:`~brokapi.Unknown`."""

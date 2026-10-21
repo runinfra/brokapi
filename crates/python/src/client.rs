@@ -10,8 +10,9 @@ use std::time::Duration;
 use brokapi::core::{
     ClientOrderId, Envelope, ExecutionSource, InstrumentId, InstrumentKey, InstrumentQuery,
     InstrumentSource, MarketDataSource, NativeId, OrderBookSource, OrderExecutor,
-    PlaceOrderRequest, PortfolioSource, ReplaceOrderRequest, ShutdownMode, SubscribeOpts,
-    SubscriptionId, TimeRange, Timeframe, UnixNanos,
+    PlaceOrderRequest, PlaceStopOrderRequest, PortfolioSource, ReplaceOrderRequest, ShutdownMode,
+    StopOrderExecutor, StopOrderRef, SubscribeOpts, SubscriptionId, TimeRange, Timeframe,
+    UnixNanos,
 };
 use brokapi::runtime::BrokerLimiter;
 use brokapi::runtime::history::{CandlePages, HistoryOpts};
@@ -29,8 +30,8 @@ trait Md: OrderBookSource + MarketDataSource + InstrumentSource {}
 impl<T: OrderBookSource + MarketDataSource + InstrumentSource> Md for T {}
 
 /// What the account side of any connector can do.
-trait Ud: OrderExecutor + ExecutionSource + PortfolioSource {}
-impl<T: OrderExecutor + ExecutionSource + PortfolioSource> Ud for T {}
+trait Ud: OrderExecutor + ExecutionSource + PortfolioSource + StopOrderExecutor {}
+impl<T: OrderExecutor + ExecutionSource + PortfolioSource + StopOrderExecutor> Ud for T {}
 
 /// The two connectors of one broker.
 enum Conn {
@@ -72,6 +73,15 @@ impl Conn {
             Conn::Bcs { ud, .. } => ud.price_grid().learn(params),
             Conn::Tbank { ud, .. } => ud.price_grid().learn(params),
             Conn::Finam { ud, .. } => ud.price_grid().learn(params),
+        }
+    }
+
+    /// Any method of the broker's API: see [`crate::raw`].
+    async fn raw(&self, method: &str, args: &Value, command: bool) -> Result<Value, CallError> {
+        match self {
+            Conn::Bcs { ud, .. } => crate::raw::bcs(ud.raw(), method, args, command).await,
+            Conn::Tbank { ud, .. } => crate::raw::tbank(ud.raw(), method, args, command).await,
+            Conn::Finam { ud, .. } => crate::raw::finam(ud.raw(), method, args, command).await,
         }
     }
 
@@ -303,7 +313,7 @@ impl NativeClient {
                 .map_err(CallError::into_pyerr)?;
             // A command runs to its end even if the caller stops waiting (a Python task cancelled, a timeout):
             // a place that is dropped half way could be at the broker already, and nobody would know.
-            let out = if is_command(&method) {
+            let out = if is_command(&method, &args) {
                 match tokio::spawn(async move { dispatch(&inner, &method, &args).await }).await {
                     Ok(out) => out,
                     Err(e) => Err(CallError::Arg(format!("the command task failed: {e}"))),
@@ -461,9 +471,16 @@ fn closed() -> PyErr {
     pyo3::exceptions::PyRuntimeError::new_err("the client is closed")
 }
 
-/// Commands that change something at the broker.
-fn is_command(method: &str) -> bool {
-    matches!(method, "place" | "cancel" | "replace" | "reconcile")
+/// Commands that change something at the broker. A `raw` call is one when the caller says so.
+fn is_command(method: &str, args: &Value) -> bool {
+    match method {
+        "place" | "cancel" | "replace" | "reconcile" | "place_stop" | "cancel_stop" => true,
+        "raw" => args
+            .get("command")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        _ => false,
+    }
 }
 
 fn get<T: DeserializeOwned>(args: &Value, key: &str) -> Result<T, CallError> {
@@ -643,6 +660,25 @@ async fn dispatch(inner: &Inner, method: &str, args: &Value) -> Result<String, C
             .await?),
         "order_state" => out(ud.order_state(get(args, "cid")?).await?),
         "active_orders" => out(ud.active_orders().await?),
+
+        // Stop orders: the same gate as plain orders.
+        "place_stop" => out(ud
+            .place_stop(get::<PlaceStopOrderRequest>(args, "request")?)
+            .await?),
+        "cancel_stop" => {
+            ud.cancel_stop(get::<StopOrderRef>(args, "stop")?).await?;
+            out(Value::Null)
+        }
+        "active_stop_orders" => out(ud.active_stop_orders().await?),
+        "subscribe_stop_orders" => out(ud.subscribe_stop_orders().await?.value()),
+
+        // Any method of the broker's API, by name.
+        "raw" => {
+            let name: String = get(args, "method")?;
+            let params = args.get("args").cloned().unwrap_or(Value::Null);
+            let command: bool = get_opt(args, "command")?.unwrap_or(false);
+            out(conn.raw(&name, &params, command).await?)
+        }
 
         other => Err(CallError::Arg(format!("unknown method {other:?}"))),
     }

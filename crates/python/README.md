@@ -21,4 +21,7 @@ async def main():
 asyncio.run(main())
 ```
 
+Stop orders, `client.raw()` (any method of a broker's API by name) and the event log with replay (`brokapi.record`) work as in
+the Rust library.
+
 Documentation: https://brokapi.ru/docs/python/. Licence: MIT or Apache-2.0.

@@ -20,13 +20,14 @@ from __future__ import annotations
 
 import enum
 from datetime import timedelta
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Optional
 
 __all__ = [
     "BrokapiError",
     "Config",
     "Degraded",
     "ErrorClass",
+    "LogError",
     "NotReconciled",
     "RateLimited",
     "Rejected",
@@ -209,6 +210,40 @@ class ShuttingDown(BrokapiError):
 
     def __init__(self) -> None:
         super().__init__("shutting down: the connector takes no new trading commands")
+
+
+class LogError(BrokapiError):
+    """The event log could not be written or read (``LogError`` of the Rust library).
+
+    ``kind`` says why: ``io`` (the file or the disk failed: check the path and the space), ``format`` (a line is not
+    what the format says, the file is damaged or is not a log: ``line`` is its number, the header is line 1) or
+    ``schema`` (the file was written by a newer version: update the package to read it). A reader never skips a bad
+    line silently: it stops with this error.
+    """
+
+    kind: str
+    """``io``, ``format`` or ``schema``."""
+    line: Optional[int]
+    """The number of the bad line (from 1), for ``format``."""
+    found: Optional[int]
+    """The format or schema the file declares, for ``schema``."""
+    supported: Optional[int]
+    """The newest this build reads, for ``schema``."""
+
+    def __init__(
+        self, kind: str, message: str, line: Optional[int] = None, found: Optional[int] = None,
+        supported: Optional[int] = None,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.line = line
+        self.found = found
+        self.supported = supported
+
+
+def _log_error(kind: str, text: str, fields: dict[str, Any]) -> LogError:
+    """Builds the exception for a failure of the log in the native layer. The text is the one that Rust printed."""
+    return LogError(kind, text, fields.get("line"), fields.get("found"), fields.get("supported"))
 
 
 def _from_native(variant: str, text: str, fields: dict[str, Any]) -> BrokapiError:

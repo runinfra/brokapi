@@ -90,7 +90,7 @@ impl NativeMock {
 
     /// The settings that connect a client to this imitation, as JSON: `endpoint` and the credentials it accepts.
     fn settings(&self) -> PyResult<String> {
-        let guard = self.server.lock().unwrap();
+        let guard = self.server.lock().unwrap_or_else(|e| e.into_inner());
         let settings = match guard.as_ref().ok_or_else(gone)? {
             Server::Bcs(s) => json!({
                 "endpoint": s.http_base,
@@ -125,7 +125,7 @@ impl NativeMock {
         let cid: ClientOrderId = cid
             .parse()
             .map_err(|_| PyValueError::new_err("cid is not a UUID"))?;
-        let guard = self.server.lock().unwrap();
+        let guard = self.server.lock().unwrap_or_else(|e| e.into_inner());
         match guard.as_ref().ok_or_else(gone)? {
             Server::Bcs(s) => {
                 let (qty, price): (Qty, Price) = (dec(qty, "qty")?, dec(price, "price")?);
@@ -133,7 +133,14 @@ impl NativeMock {
             }
             Server::Tbank(s) => {
                 let account = account.unwrap_or(tbank::ACCOUNT_A);
-                s.fill(account, &cid.hyphenated().to_string());
+                let id = cid.hyphenated().to_string();
+                // The imitation panics for an order it does not have; a stop order is not one it can execute.
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.fill(account, &id)))
+                    .map_err(|_| {
+                        PyValueError::new_err(
+                            "the T-Bank imitation has no such order to execute (it cannot trigger a stop order)",
+                        )
+                    })?;
             }
             Server::Finam(s) => {
                 let (qty, price): (Qty, Price) = (dec(qty, "qty")?, dec(price, "price")?);
@@ -145,7 +152,7 @@ impl NativeMock {
 
     /// Stops the server. A client still connected to it sees the connection drop.
     fn close(&self) {
-        self.server.lock().unwrap().take();
+        self.server.lock().unwrap_or_else(|e| e.into_inner()).take();
     }
 }
 
