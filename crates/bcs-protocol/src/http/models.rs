@@ -38,7 +38,7 @@ use uuid::Uuid;
 /// );
 /// # Ok::<(), serde_urlencoded::ser::Error>(())
 /// ```
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 pub struct TokenRequest {
     /// Always `refresh_token` here: the OAuth grant that renews a token.
     pub grant_type: String,
@@ -46,6 +46,16 @@ pub struct TokenRequest {
     pub refresh_token: String,
     /// `trade-api-read` for a read token, `trade-api-write` for a trading token.
     pub client_id: String,
+}
+
+impl std::fmt::Debug for TokenRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenRequest")
+            .field("grant_type", &self.grant_type)
+            .field("refresh_token", &"<redacted>")
+            .field("client_id", &self.client_id)
+            .finish()
+    }
 }
 
 /// The answer of the token service (OAuth style).
@@ -65,7 +75,7 @@ pub struct TokenRequest {
 /// assert_eq!(token.refresh_token.as_deref(), Some("r"));
 /// # Ok::<(), serde_json::Error>(())
 /// ```
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct TokenResponse {
     /// The access token to put in `Authorization: Bearer ...`. A secret.
     pub access_token: String,
@@ -83,6 +93,23 @@ pub struct TokenResponse {
     /// Scope granted to the token, if the token service sends one.
     #[serde(default)]
     pub scope: Option<String>,
+}
+
+impl std::fmt::Debug for TokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenResponse")
+            .field("access_token", &"<redacted>")
+            .field("expires_in", &self.expires_in)
+            .field("refresh_expires_in", &self.refresh_expires_in)
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("token_type", &self.token_type)
+            .field("session_state", &self.session_state)
+            .field("scope", &self.scope)
+            .finish()
+    }
 }
 
 // ─── common ───────────────────────────────────────────────────────────────────

@@ -51,6 +51,22 @@ impl Settings {
             .filter(|s| !s.is_empty())
     }
 
+    /// [`Self::endpoint`], but an address that comes from the environment must be `https://`. Plain
+    /// text is for a local imitation, and that address is passed as the `endpoint` argument.
+    fn checked_endpoint(&self, env: &str) -> Result<Option<String>, Error> {
+        let from_arg = self.0.get("endpoint").and_then(Value::as_str).is_some();
+        let url = self.endpoint(Some(env));
+        if let Some(u) = &url
+            && !from_arg
+            && !u.starts_with("https://")
+        {
+            return Err(config(format!(
+                "{env} must start with https:// (for a local imitation pass endpoint=...)"
+            )));
+        }
+        Ok(url)
+    }
+
     pub fn bcs(&self) -> Result<BcsConfig, Error> {
         let token = self
             .text("refresh_token", "BCS_REFRESH_TOKEN")
@@ -70,7 +86,7 @@ impl Settings {
             .text("token", "TBANK_TOKEN")
             .ok_or_else(|| config("TBANK_TOKEN is not set (pass token=... or set the variable)"))?;
         let mut cfg = TbankConfig::new(token, self.flag("sandbox", "TBANK_SANDBOX"));
-        if let Some(url) = self.endpoint(Some("TBANK_ENDPOINT")) {
+        if let Some(url) = self.checked_endpoint("TBANK_ENDPOINT")? {
             cfg.endpoint = url;
         }
         cfg.account_id = self.text("account_id", "TBANK_ACCOUNT_ID");
@@ -86,7 +102,7 @@ impl Settings {
             config("FINAM_ACCOUNT_ID is not set (pass account_id=... or set the variable)")
         })?;
         let mut cfg = FinamApiConfig::new(secret);
-        if let Some(url) = self.endpoint(Some("FINAM_API_URL")) {
+        if let Some(url) = self.checked_endpoint("FINAM_API_URL")? {
             cfg = cfg.with_endpoint(url);
         }
         Ok((cfg, account))

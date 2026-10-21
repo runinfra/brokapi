@@ -67,12 +67,48 @@ struct StopBook {
     /// `None` = sent, the broker's id is not known (yet).
     by_cid: HashMap<ClientOrderId, Option<String>>,
     by_id: HashMap<String, ClientOrderId>,
+    /// The cids in the order they were sent, for the window.
+    order: std::collections::VecDeque<ClientOrderId>,
 }
 
+/// How many stop-order cids the book remembers besides the live ones. The guarantee "a cid is sent
+/// once" holds inside this window.
+const STOP_BOOK_CAP: usize = 10_000;
+
 impl StopBook {
-    /// `false` when this cid was already sent: the library never sends the same stop order twice.
+    /// `false` when this cid was already sent: the library never sends the same stop order twice. A repeat
+    /// does not touch the record of the first send (it may already hold the broker's id).
     fn begin(&mut self, cid: ClientOrderId) -> bool {
-        self.by_cid.insert(cid, None).is_none()
+        if self.by_cid.contains_key(&cid) {
+            return false;
+        }
+        self.by_cid.insert(cid, None);
+        self.order.push_back(cid);
+        self.trim();
+        true
+    }
+
+    /// Keeps the book bounded: a cid that has no live stop order behind it (`None`, or the id of a stop
+    /// that was cancelled) is forgotten after [`STOP_BOOK_CAP`] newer ones. A stop order that is still
+    /// live is never dropped by this.
+    fn trim(&mut self) {
+        let mut checked = 0;
+        while self.order.len() > STOP_BOOK_CAP && checked < self.order.len() {
+            let Some(old) = self.order.pop_front() else {
+                break;
+            };
+            checked += 1;
+            let live = self
+                .by_cid
+                .get(&old)
+                .and_then(|id| id.as_ref())
+                .is_some_and(|id| self.by_id.contains_key(id));
+            if live {
+                self.order.push_back(old);
+            } else {
+                self.by_cid.remove(&old);
+            }
+        }
     }
 
     fn bind(&mut self, cid: ClientOrderId, id: &str) {
@@ -85,10 +121,10 @@ impl StopBook {
         self.by_cid.remove(&cid);
     }
 
+    /// The stop order is gone (cancelled, triggered). Its cid stays used: `by_cid` keeps the record, so a
+    /// repeat of the same cid is still refused, and the cid is dropped only by the window of [`trim`].
     fn forget_id(&mut self, id: &str) {
-        if let Some(cid) = self.by_id.remove(id) {
-            self.by_cid.remove(&cid);
-        }
+        self.by_id.remove(id);
     }
 
     fn id_of(&self, cid: ClientOrderId) -> Option<String> {
@@ -140,6 +176,9 @@ impl Shared {
                 {
                     let _ = tx.send(u.result);
                 }
+            }
+            for cid in core.take_forgotten() {
+                self.locks.forget(cid);
             }
             (r, core.take_reconnected())
         };
@@ -275,12 +314,27 @@ impl Shared {
     }
 
     async fn pump(self: Arc<Self>, mut rx: mpsc::Receiver<UdFrame>) {
+        // The safety net for a placement whose task ended without an answer (it normally cannot: see
+        // `place`). Every few seconds the placements that waited too long become `Unknown`.
+        let mut sweep = tokio::time::interval(Duration::from_secs(5));
+        sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             let backlog = self.emitter.has_backlog();
             tokio::select! {
                 _ = self.cancel.cancelled() => return,
+                _ = sweep.tick() => {
+                    self.with_core(|c, s| c.sweep_timeouts(brokapi_runtime::now(), s));
+                }
                 frame = rx.recv() => {
                     let Some(frame) = frame else { return };
+                    if let UdFrame::StreamFailed(kind, reason) = &frame {
+                        warn!(?kind, %reason, "stream refused for good");
+                        // A dead stream of orders or fills is a hole that never closes: no trading until the
+                        // user has looked (and reconnected with a new connector).
+                        if matches!(kind, StreamKind::OrderState | StreamKind::Trades) {
+                            self.emitter.mark_degraded();
+                        }
+                    }
                     if let Err(e) = self.prefetch_lots(&frame).await {
                         warn!(error = %e, "lot size of an instrument is not known: order events lost");
                         self.frame_lost(&frame);
@@ -297,7 +351,9 @@ impl Shared {
 
     fn start_stream(&self, kind: StreamKind) {
         let mut streams = self.streams.lock().expect("streams poisoned");
-        if streams.contains_key(&kind) {
+        // A supervisor that gave up (the broker refused the stream for good) leaves a finished handle: a
+        // new subscription tries again.
+        if streams.get(&kind).is_some_and(|(_, h)| !h.is_finished()) {
             return;
         }
         let token = self.cancel.child_token();
@@ -325,6 +381,7 @@ impl Shared {
                     open,
                     move || UdFrame::Connected(kind),
                     UdFrame::OrderState,
+                    move |reason| UdFrame::StreamFailed(kind, reason),
                     tx,
                     stale,
                     last_error,
@@ -345,6 +402,7 @@ impl Shared {
                     open,
                     move || UdFrame::Connected(kind),
                     UdFrame::Trades,
+                    move |reason| UdFrame::StreamFailed(kind, reason),
                     tx,
                     stale,
                     last_error,
@@ -367,6 +425,7 @@ impl Shared {
                     open,
                     move || UdFrame::Connected(kind),
                     UdFrame::Portfolio,
+                    move |reason| UdFrame::StreamFailed(kind, reason),
                     tx,
                     stale,
                     last_error,
@@ -390,6 +449,7 @@ impl Shared {
                     open,
                     move || UdFrame::Connected(kind),
                     UdFrame::Positions,
+                    move |reason| UdFrame::StreamFailed(kind, reason),
                     tx,
                     stale,
                     last_error,
@@ -543,6 +603,40 @@ pub struct UserDataConnector {
 }
 
 impl UserDataConnector {
+    /// How many commands are in flight: sent, and the answer has not been taken yet. Zero when all of them
+    /// are settled. A `place` runs to its end even if the caller drops its future, so this number goes back
+    /// to zero by itself. For health checks and tests.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use brokapi_core::ShutdownMode;
+    /// use brokapi_runtime::BrokerLimiter;
+    /// use brokapi_tbank::limits::default_limits;
+    /// use brokapi_tbank::{UserDataConfig, UserDataConnector};
+    /// # use brokapi_mocks::tbank::{MockServer, ACCOUNT_A, TOKEN};
+    /// # use brokapi_tbank_protocol::TbankConfig;
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let server = MockServer::start(Default::default()).await;
+    /// # let cfg = TbankConfig::for_mock(TOKEN, &server.endpoint).with_account(ACCOUNT_A);
+    /// let (events_tx, _events) = tokio::sync::mpsc::channel(16);
+    /// let ud = UserDataConnector::start(UserDataConfig::new(cfg, "tbank-ud"), BrokerLimiter::new(&default_limits()), events_tx).await?;
+    /// assert_eq!(ud.in_flight_orders(), 0);
+    /// ud.shutdown(ShutdownMode::Immediate).await;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn in_flight_orders(&self) -> usize {
+        self.inner
+            .core
+            .lock()
+            .expect("ud core poisoned")
+            .orders_mut()
+            .in_flight_count()
+    }
+
     /// Resolves the account (`cfg.tbank.account_id`, or the token's only open account) and starts.
     /// Commands are refused with `NotReconciled` until [`OrderExecutor::reconcile`] succeeds.
     ///
@@ -602,7 +696,9 @@ impl UserDataConnector {
         let (frames, rx) = mpsc::channel(1024);
         let ctl = ShutdownController::new(CommandGate::new());
         let cancel = ctl.child_token();
-        let core = UdCore::new(account.clone());
+        let mut core = UdCore::new(account.clone());
+        // A placement is given up after its request has certainly ended.
+        core.set_command_timeout(cfg.tbank.request_timeout + Duration::from_secs(10));
         let lots = Arc::clone(core.lots());
         let inner = Arc::new(Shared {
             client,
@@ -752,16 +848,16 @@ impl UserDataConnector {
     /// # }
     /// ```
     pub fn caps(&self) -> UserDataCaps {
-        UserDataCaps {
-            place_idempotency: PlaceIdempotency::LabelOnly,
-            ws_rpc: false,
-            ordered_command_channel: false,
-            supports_replace: true,
-            // StopOrdersService, through the `StopOrderExecutor` trait.
-            supports_stop_orders: true,
-            streams_executions: true,
-            sandbox: self.inner.sandbox,
-        }
+        // Stop orders: StopOrdersService, through the `StopOrderExecutor` trait.
+        UserDataCaps::new(
+            PlaceIdempotency::LabelOnly,
+            false,
+            false,
+            true,
+            true,
+            true,
+            self.inner.sandbox,
+        )
     }
 
     /// Stops the connector. Orders already at the exchange are NOT touched.
@@ -849,11 +945,7 @@ impl UserDataConnector {
         }
         inner.cancel.cancel();
         let _ = self.pump.await;
-        ShutdownReport {
-            unsubscribed,
-            unsubscribe_failed: 0,
-            inflight_abandoned: abandoned,
-        }
+        ShutdownReport::new(unsubscribed, 0, abandoned)
     }
 
     fn check_command(&self) -> Result<(), Error> {
@@ -1089,6 +1181,19 @@ async fn pick_account(client: &TbankClient, timeout: Duration) -> Result<String,
 }
 
 #[async_trait]
+impl brokapi_core::Connector for UserDataConnector {
+    type Caps = brokapi_core::UserDataCaps;
+
+    fn caps(&self) -> brokapi_core::UserDataCaps {
+        UserDataConnector::caps(self)
+    }
+
+    async fn shutdown(self, mode: brokapi_core::ShutdownMode) -> brokapi_core::ShutdownReport {
+        UserDataConnector::shutdown(self, mode).await
+    }
+}
+
+#[async_trait]
 impl OrderExecutor for UserDataConnector {
     /// Places an order (`PostOrder`). `req.cid` goes to the broker as `order_id`, its idempotency key.
     ///
@@ -1275,35 +1380,47 @@ impl OrderExecutor for UserDataConnector {
             instrument_id: instrument_ref(&req.instrument),
             ..Default::default()
         };
-        let mut c = self.inner.client.orders();
-        let outcome = command(self.inner.request_timeout, c.post_order(wire)).await;
         let cid = req.cid;
-        match outcome {
-            CommandOutcome::Done(resp) => {
-                self.core(|c, s| c.place_response(cid, &resp, now, s));
-                if resp.execution_report_status()
-                    == pb::OrderExecutionReportStatus::ExecutionReportStatusRejected
-                {
-                    return Err(Error::Rejected {
-                        code: "REJECTED".into(),
-                        message: resp.message,
-                    });
+        let inner = Arc::clone(&self.inner);
+        // From here the cid is marked and the order is in flight. The request, the answer and the update
+        // of the order run as a task of their own: if the caller drops this future (a timeout around it, a
+        // lost `select!`), the task still ends and the order does not stay in flight for ever.
+        let work = async move {
+            let _instrument = _instrument;
+            let mut c = inner.client.orders();
+            let outcome = command(inner.request_timeout, c.post_order(wire)).await;
+            match outcome {
+                CommandOutcome::Done(resp) => {
+                    inner.with_core(|c, s| c.place_response(cid, &resp, now, s));
+                    if resp.execution_report_status()
+                        == pb::OrderExecutionReportStatus::ExecutionReportStatusRejected
+                    {
+                        return Err(Error::Rejected {
+                            code: "REJECTED".into(),
+                            message: resp.message,
+                        });
+                    }
+                    Ok(OrderAck {
+                        cid,
+                        broker_id: BrokerOrderId::new(resp.order_id),
+                        ts: stamps(now, None),
+                    })
                 }
-                Ok(OrderAck {
-                    cid,
-                    broker_id: BrokerOrderId::new(resp.order_id),
-                    ts: stamps(now, None),
-                })
+                CommandOutcome::Refused(status, err) => {
+                    let reason = format!("{:?}: {}", status.code(), status.message());
+                    inner.with_core(|c, s| c.place_rejected(cid, reason, now, s));
+                    Err(err)
+                }
+                CommandOutcome::Unknown => {
+                    inner.with_core(|c, s| c.place_unknown(cid, now, s));
+                    Err(Error::Unknown)
+                }
             }
-            CommandOutcome::Refused(status, err) => {
-                let reason = format!("{:?}: {}", status.code(), status.message());
-                self.core(|c, s| c.place_rejected(cid, reason, now, s));
-                Err(err)
-            }
-            CommandOutcome::Unknown => {
-                self.core(|c, s| c.place_unknown(cid, now, s));
-                Err(Error::Unknown)
-            }
+        };
+        match brokapi_runtime::run_detached(work).await {
+            Some(result) => result,
+            // The task was torn down with the runtime: the order may exist.
+            None => Err(Error::Unknown),
         }
     }
 
@@ -1861,9 +1978,14 @@ impl ExecutionSource for UserDataConnector {
                 to: Some(nanos_to_proto(range.to)),
                 cursor: cursor.clone(),
                 limit: Some(1000),
+                // Margin-call trades and trades paid by card are trades of the account as well.
                 operation_types: vec![
                     pb::OperationType::Buy as i32,
                     pb::OperationType::Sell as i32,
+                    pb::OperationType::BuyMargin as i32,
+                    pb::OperationType::SellMargin as i32,
+                    pb::OperationType::BuyCard as i32,
+                    pb::OperationType::SellCard as i32,
                 ],
                 state: Some(pb::OperationState::Executed as i32),
                 without_trades: Some(false),
@@ -2465,5 +2587,71 @@ impl StopOrderExecutor for UserDataConnector {
         Err(Error::Unsupported {
             capability: "stop_order_stream".into(),
         })
+    }
+}
+
+#[cfg(test)]
+mod stop_book_tests {
+    use super::*;
+
+    fn cid(n: u8) -> ClientOrderId {
+        ClientOrderId::from_bytes([n; 16])
+    }
+
+    #[test]
+    fn a_repeated_cid_does_not_touch_the_record_of_the_first_send() {
+        let mut book = StopBook::default();
+        assert!(book.begin(cid(1)));
+        book.bind(cid(1), "S-1");
+        // The same cid again is refused, and the broker's id that was learned is still there.
+        assert!(!book.begin(cid(1)));
+        assert_eq!(book.id_of(cid(1)).as_deref(), Some("S-1"));
+        assert_eq!(book.cid_of("S-1"), Some(cid(1)));
+    }
+
+    #[test]
+    fn a_cancelled_stop_keeps_its_cid_used() {
+        let mut book = StopBook::default();
+        assert!(book.begin(cid(1)));
+        book.bind(cid(1), "S-1");
+        book.forget_id("S-1");
+        // The broker id no longer maps to the cid, but the cid cannot be sent again.
+        assert_eq!(book.cid_of("S-1"), None);
+        assert!(!book.begin(cid(1)));
+    }
+
+    #[test]
+    fn a_stop_the_broker_refused_for_sure_can_be_sent_again() {
+        let mut book = StopBook::default();
+        assert!(book.begin(cid(1)));
+        book.forget_cid(cid(1));
+        assert!(book.begin(cid(1)));
+        assert_eq!(book.id_of(cid(1)), None, "no broker id yet");
+    }
+
+    #[test]
+    fn the_book_is_bounded_and_keeps_the_live_stops() {
+        let mut book = StopBook::default();
+        // One live stop, then more than the window of finished ones.
+        assert!(book.begin(cid(0)));
+        book.bind(cid(0), "LIVE");
+        for n in 0..(STOP_BOOK_CAP + 50) {
+            let mut bytes = [1u8; 16];
+            bytes[..8].copy_from_slice(&(n as u64).to_be_bytes());
+            assert!(book.begin(ClientOrderId::from_bytes(bytes)));
+        }
+        assert!(
+            book.by_cid.len() <= STOP_BOOK_CAP + 1,
+            "{}",
+            book.by_cid.len()
+        );
+        // The live stop is still known, the oldest finished ones are forgotten.
+        assert_eq!(book.id_of(cid(0)).as_deref(), Some("LIVE"));
+        let mut first = [1u8; 16];
+        first[..8].copy_from_slice(&0u64.to_be_bytes());
+        assert!(
+            book.begin(ClientOrderId::from_bytes(first)),
+            "past the window the cid is free again"
+        );
     }
 }

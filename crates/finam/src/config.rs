@@ -245,12 +245,14 @@ impl UserDataConfig {
 /// Variables:
 ///
 /// - `FINAM_SECRET` (required): the API secret.
-/// - `FINAM_API_URL` (optional): another endpoint instead of the production one.
+/// - `FINAM_API_URL` (optional): another endpoint instead of the production one. It must start with
+///   `https://`: the address of a local imitation is set in code with `FinamApiConfig::with_endpoint`.
 /// - `FINAM_ACCOUNT_ID` (optional): returned as the second value, for user data connectors.
 ///
 /// # Errors
 ///
-/// [`FinamError::Config`] when `FINAM_SECRET` is not set. Nothing is sent to the network here.
+/// [`FinamError::Config`] when `FINAM_SECRET` is not set, or `FINAM_API_URL` is set and is not an
+/// `https://` address. Nothing is sent to the network here.
 ///
 /// # Examples
 ///
@@ -268,7 +270,14 @@ pub fn api_config_from_env() -> Result<(FinamApiConfig, Option<String>), FinamEr
         .map_err(|_| FinamError::Config("FINAM_SECRET is not set".into()))?;
     let mut cfg = FinamApiConfig::new(secret);
     if let Ok(url) = std::env::var("FINAM_API_URL") {
-        cfg = cfg.with_endpoint(url);
+        // A secret must not go over plain text because of a stray variable. A local imitation is set in
+        // code with `with_endpoint`.
+        if !url.trim().starts_with("https://") {
+            return Err(FinamError::Config(
+                "FINAM_API_URL must start with https://".into(),
+            ));
+        }
+        cfg = cfg.with_endpoint(url.trim().to_string());
     }
     Ok((cfg, std::env::var("FINAM_ACCOUNT_ID").ok()))
 }

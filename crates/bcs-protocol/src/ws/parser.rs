@@ -13,7 +13,7 @@ use crate::ws::models::{MarketDataMessage, WsRawMessage};
 /// 3. Otherwise the frame is read as the data type of `service`: limits, portfolio, order message
 ///    (execution and events channels), transaction message, margin indicators, or market data.
 /// 4. A frame that fits none of these comes back as [`IncomingMessage::Unknown`] with the raw text.
-///    A broken frame on the transaction channel is also logged as a warning.
+///    A broken frame on the transaction channel is also logged as a warning, without its text (it holds account data).
 ///
 /// A session calls this for every text frame. Call it yourself to test your handler on a sample frame.
 ///
@@ -82,9 +82,14 @@ pub fn parse_incoming(text: &str, service: BcsWsChannel) -> IncomingMessage {
                 return IncomingMessage::OrderTransaction(data);
             }
             Err(e) => {
+                // Only the kind and the position of the failure: the frame holds account data and the
+                // message of serde can quote a value.
                 warn!(
-                    "[WS_PARSE] OrderTransaction deserialize failed: {} | raw: {}",
-                    e, text
+                    "[WS_PARSE] OrderTransaction frame not understood: {:?} at line {} column {}, {} bytes",
+                    e.classify(),
+                    e.line(),
+                    e.column(),
+                    text.len()
                 );
             }
         },

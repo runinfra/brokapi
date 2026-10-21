@@ -37,15 +37,7 @@ const FAR_FROM_MARKET: Decimal = Decimal::from_parts(9, 0, 0, false, 1);
 
 /// The name of a state, for a short line of output.
 fn state_name(state: &OrderState) -> &'static str {
-    match state {
-        OrderState::InFlight { .. } => "InFlight",
-        OrderState::Unknown { .. } => "Unknown",
-        OrderState::Acked { .. } => "Acked",
-        OrderState::PartiallyFilled { .. } => "PartiallyFilled",
-        OrderState::Filled { .. } => "Filled",
-        OrderState::Cancelled { .. } => "Cancelled",
-        OrderState::Rejected { .. } => "Rejected",
-    }
+    state.name()
 }
 
 /// Reads the event channel until the order `cid` reaches the state called `want`, and prints every state it
@@ -83,7 +75,7 @@ pub async fn run(live: bool) -> Result<(), Box<dyn std::error::Error>> {
     // The mock server must live as long as the connectors.
     let (cfg, _mock) = if live {
         // BCS_REFRESH_TOKEN and BCS_IS_WRITE come from the environment (a .env file works)
-        dotenv::dotenv().ok();
+        dotenvy::dotenv().ok();
         (BcsConfig::from_env()?, None)
     } else {
         let server = brokapi_mocks::bcs::MockServer::start(Default::default()).await;

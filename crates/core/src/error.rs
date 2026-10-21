@@ -77,10 +77,12 @@ pub enum TransportError {
 /// assert_eq!(Error::NotReconciled.class(), ErrorClass::Fatal);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ErrorClass {
     /// The call failed for a reason that can pass: the network, a rate limit. Reading calls may be
-    /// repeated, after the delay in [`Error::RateLimited`] if there is one. For a command, first find
-    /// out what the broker has (see [`Error::Transport`]).
+    /// repeated, after the delay in [`Error::RateLimited`] if there is one. For a command this class is
+    /// **not** a licence to repeat: first find out what the broker has (see [`Error::Transport`]), and
+    /// ask [`Error::retryable_for_command`] in a retry loop of commands.
     Retryable,
     /// The same call will fail again until something else changes: a setup, a refused request, a
     /// missing capability, a gate that is closed. Do not repeat it unchanged.
@@ -123,6 +125,7 @@ pub enum ErrorClass {
 /// assert_eq!(next_step(&e), "wait and repeat");
 /// ```
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Error {
     /// The setup is wrong: a bad config value, or an input that cannot work with this broker (for
     /// example an [`InstrumentId`](crate::InstrumentId) whose [`NativeId`](crate::NativeId) is of
@@ -272,8 +275,11 @@ impl Error {
     /// | [`Error::Unknown`] | [`ErrorClass::Unknown`] |
     /// | all others | [`ErrorClass::Fatal`] |
     ///
-    /// The class says what is possible in principle. A trading command is never repeated by the
-    /// library, whatever the class.
+    /// The class says what is possible in principle, and it is the class of a **read**. A generic retry
+    /// loop must not use it for a trading command: [`Error::Transport`] is `Retryable` here, and a
+    /// command that failed with it may still have reached the broker. For a command ask
+    /// [`retryable_for_command`](Self::retryable_for_command). The library itself never repeats a
+    /// command, whatever the class.
     ///
     /// # Examples
     ///
@@ -294,6 +300,34 @@ impl Error {
             | Self::Degraded
             | Self::ShuttingDown => ErrorClass::Fatal,
         }
+    }
+
+    /// May a trading command that failed with this error be sent again, after the wait the error names?
+    ///
+    /// `true` only for [`Error::RateLimited`]: the broker (or the local limiter) refused before it acted,
+    /// so the same cancel can be sent again after `retry_after`. A place needs a **new** `cid`, because the
+    /// connector may have used the old one up. Everything else is `false`: [`Error::Transport`] and
+    /// [`Error::Unknown`] mean the command may have reached the broker, so look at the order first
+    /// ([`OrderExecutor::order_state`](crate::OrderExecutor::order_state)), and the other variants
+    /// are final until the setup, the gate or the request changes.
+    ///
+    /// Use this, not [`class`](Self::class), in the retry loop of a command.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use brokapi_core::{Error, TransportError};
+    ///
+    /// assert!(Error::RateLimited { retry_after: Duration::from_secs(1) }.retryable_for_command());
+    /// // A read may be repeated after this error, a command may not.
+    /// let cut = Error::Transport(TransportError::Message("connection reset".into()));
+    /// assert!(!cut.retryable_for_command());
+    /// assert!(!Error::Unknown.retryable_for_command());
+    /// assert!(!Error::Degraded.retryable_for_command());
+    /// ```
+    pub fn retryable_for_command(&self) -> bool {
+        matches!(self, Self::RateLimited { .. })
     }
 }
 
@@ -317,5 +351,37 @@ mod tests {
         }
         assert!(!Error::Unknown.is_not_found());
         assert!(!Error::Degraded.is_not_found());
+    }
+
+    #[test]
+    fn a_command_is_retried_only_after_a_rate_limit() {
+        use std::time::Duration;
+        let all = [
+            Error::Config(ConfigError::Message("x".into())),
+            Error::Transport(TransportError::Message("x".into())),
+            Error::RateLimited {
+                retry_after: Duration::from_secs(1),
+            },
+            Error::Rejected {
+                code: "c".into(),
+                message: "m".into(),
+            },
+            Error::Unsupported {
+                capability: "w".into(),
+            },
+            Error::NotReconciled,
+            Error::Degraded,
+            Error::ShuttingDown,
+            Error::Unknown,
+        ];
+        for e in &all {
+            assert_eq!(
+                e.retryable_for_command(),
+                matches!(e, Error::RateLimited { .. }),
+                "{e}"
+            );
+        }
+        // The class of a read stays: Transport may be repeated by a reader.
+        assert_eq!(all[1].class(), ErrorClass::Retryable);
     }
 }

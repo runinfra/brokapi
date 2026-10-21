@@ -451,16 +451,11 @@ impl MarketDataConnector {
     /// # }
     /// ```
     pub fn caps(&self) -> MarketDataCaps {
-        MarketDataCaps {
-            max_order_book_depth: market::MAX_DEPTH,
-            incremental_order_book: false,
-            streaming: StreamingCaps {
-                order_book: true,
-                market_trades: true,
-                quotes: true,
-                candles: true,
-            },
-        }
+        MarketDataCaps::new(
+            market::MAX_DEPTH,
+            false,
+            StreamingCaps::new(true, true, true, true),
+        )
     }
 
     /// Stops the connector and its stream task.
@@ -543,11 +538,7 @@ impl MarketDataConnector {
         }
         inner.cancel.cancel();
         let _ = self.pump.await;
-        ShutdownReport {
-            unsubscribed: ok,
-            unsubscribe_failed: failed,
-            inflight_abandoned: Vec::new(),
-        }
+        ShutdownReport::new(ok, failed, Vec::new())
     }
 
     fn acquire(&self, method: &str) -> Result<(), Error> {
@@ -627,6 +618,19 @@ impl MarketDataConnector {
 
     fn id_ref(id: &InstrumentId) -> String {
         instrument_ref(id)
+    }
+}
+
+#[async_trait]
+impl brokapi_core::Connector for MarketDataConnector {
+    type Caps = brokapi_core::MarketDataCaps;
+
+    fn caps(&self) -> brokapi_core::MarketDataCaps {
+        MarketDataConnector::caps(self)
+    }
+
+    async fn shutdown(self, mode: brokapi_core::ShutdownMode) -> brokapi_core::ShutdownReport {
+        MarketDataConnector::shutdown(self, mode).await
     }
 }
 

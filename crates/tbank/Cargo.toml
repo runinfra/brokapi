@@ -6,6 +6,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 homepage.workspace = true
+repository.workspace = true
+documentation.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 async-trait.workspace = true
@@ -15,7 +21,7 @@ brokapi-sansio.workspace = true
 futures-util.workspace = true
 prost-types = "0.14"
 brokapi-tbank-protocol.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
 tokio-stream = "0.1"
 tokio-util.workspace = true
 tonic = { version = "0.14", default-features = false, features = ["channel", "codegen"] }
@@ -23,7 +29,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["full", "test-util"] }
 brokapi-conformance.workspace = true
 brokapi-mocks.workspace = true
 proptest.workspace = true

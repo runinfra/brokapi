@@ -10,13 +10,13 @@
 
 ## Что понадобится
 
-Rust 1.85 или новее (редакция 2024). Подключается один крейт `brokapi`, брокеры включаются флагами, как у `tokio`:
+Rust 1.88 или новее (редакция 2024). Подключается один крейт `brokapi`, брокеры включаются флагами, как у `tokio`:
 
 ```toml
 [dependencies]
 brokapi = { version = "0.1.0-alpha.1", features = ["tbank"] }   # или "bcs", "finam", можно несколько
 tokio   = { version = "1", features = ["full"] }
-dotenv  = "0.15"
+dotenvy = "0.15"
 ```
 
 Закрытая альфа: крейт еще не опубликован на crates.io, пока его подключают по пути к клону репозитория
@@ -205,7 +205,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## БКС
 
 Счет определяет токен, поэтому `account_id` нет. Лимиты встроены в крейт: `brokapi::bcs::limits::default_limits()`, как у двух
-других брокеров (числа осторожные, брокер своих не публикует). Инструмент БКС задается тикером и классом (`SBER`, `TQBR`),
+других брокеров (числа из таблицы ограничений брокера). Инструмент БКС задается тикером и классом (`SBER`, `TQBR`),
 справочник для этого не нужен.
 
 ```rust
@@ -265,7 +265,7 @@ use brokapi::runtime::BrokerLimiter;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // api_config_from_env сам .env не читает, поэтому загружаем его вручную
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
     let (api, account) = api_config_from_env()?;
     let account = account.ok_or("FINAM_ACCOUNT_ID не задан")?;
     let price: Price = std::env::var("EXAMPLE_PRICE")?.parse()?;

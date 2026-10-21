@@ -38,10 +38,13 @@ pub const ENVELOPE_SCHEMA: u16 = 1;
 ///         Event::Resync { .. } => { /* drop the book of that instrument, wait for a snapshot */ }
 ///         Event::Overflow { .. } => { /* events were lost: read the state, call reconcile */ }
 ///         Event::Reconnected { .. } => { /* the stream was cut and reopened: read the state, call reconcile */ }
+///         // The enum is `#[non_exhaustive]`: a later version may add an event. Skip what you do not know.
+///         _ => {}
 ///     }
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Event {
     /// An order book from an order book subscription.
     OrderBook(OrderBook),
@@ -133,6 +136,7 @@ pub enum Event {
 /// assert_eq!(env.sub, Some(SubscriptionId::new(7)));
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Envelope {
     /// Format version, see [`ENVELOPE_SCHEMA`].
     pub schema: u16,
@@ -164,6 +168,14 @@ impl Envelope {
     /// Sets the subscription the envelope belongs to.
     pub fn with_sub(mut self, sub: SubscriptionId) -> Self {
         self.sub = Some(sub);
+        self
+    }
+
+    /// Like [`with_sub`](Self::with_sub) for a subscription that may be absent: `None` leaves the envelope
+    /// without one.
+    #[must_use]
+    pub fn with_sub_opt(mut self, sub: Option<SubscriptionId>) -> Self {
+        self.sub = sub;
         self
     }
 }

@@ -22,13 +22,19 @@ edition = "2024"
 version = "0.1.0-alpha.1"
 license = "MIT OR Apache-2.0"
 authors = ["The brokapi Authors"]
-homepage = "https://brokapi.ru/docs/"
+homepage = "https://brokapi.ru"
+repository = "https://github.com/runinfra/brokapi"
+documentation = "https://brokapi.ru/docs/"
+rust-version = "1.88"
+readme = "README.md"
+keywords = ["trading", "broker", "finance", "algotrading", "moex"]
+categories = ["api-bindings", "finance"]
 
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
-dotenv = "0.15"
+dotenvy = "0.15"
 futures-util = "0.3"
 kanal = "0.1"
 proptest = "1"
@@ -40,7 +46,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_urlencoded = "0.7"
 thiserror = "2"
-tokio = { version = "1", features = ["full"] }
+tokio = "1"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
@@ -68,9 +74,14 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 homepage.workspace = true
-readme = "README.md"
-keywords = ["trading", "broker", "finance", "algotrading", "api"]
-categories = ["api-bindings", "finance"]
+repository.workspace = true
+documentation.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+# The book, the tools and the Python extension have their own place; the crate is the library, its examples and tests.
+exclude = ["docs/", "tools/", "/crates/python/"]
 
 [dependencies]
 brokapi-core.workspace = true
@@ -96,8 +107,8 @@ finam = ["dep:brokapi-finam", "dep:brokapi-finam-protocol"]
 # The crate itself with all brokers: examples and tests use it as a user does (`use brokapi::...`).
 brokapi = { path = ".", features = ["bcs", "tbank", "finam"] }
 brokapi-mocks.workspace = true
-dotenv.workspace = true
-tokio = { workspace = true, features = ["test-util"] }
+dotenvy.workspace = true
+tokio = { workspace = true, features = ["full", "test-util"] }
 
 # Debug info is most of target/ size: keep line tables for backtraces, drop the rest.
 [profile.dev]

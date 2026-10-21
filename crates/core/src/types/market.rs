@@ -239,6 +239,7 @@ impl TimeRange {
 
 /// Why a stream tells you to drop what you have and start over: see [`Event::Resync`](crate::Event::Resync).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ResyncReason {
     /// An incremental update was missed (the sequence number jumped). The book you hold is wrong.
     SequenceGap,

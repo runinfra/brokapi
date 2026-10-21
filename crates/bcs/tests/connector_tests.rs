@@ -31,31 +31,22 @@ fn user_data_config_order_state_buffer() {
 
 #[test]
 fn market_data_caps_match_spec() {
-    let caps = MarketDataCaps {
-        max_order_book_depth: 20,
-        incremental_order_book: false,
-        streaming: StreamingCaps {
-            order_book: true,
-            market_trades: true,
-            quotes: true,
-            candles: true,
-        },
-    };
+    let caps = MarketDataCaps::new(20, false, StreamingCaps::new(true, true, true, true));
     assert_eq!(caps.max_order_book_depth, 20);
     assert!(caps.streaming.order_book);
 }
 
 #[test]
 fn user_data_caps_match_spec() {
-    let caps = UserDataCaps {
-        place_idempotency: PlaceIdempotency::LabelOnly,
-        ws_rpc: false,
-        ordered_command_channel: false,
-        supports_replace: true,
-        supports_stop_orders: false,
-        streams_executions: false,
-        sandbox: false,
-    };
+    let caps = UserDataCaps::new(
+        PlaceIdempotency::LabelOnly,
+        false,
+        false,
+        true,
+        false,
+        false,
+        false,
+    );
     assert!(!caps.streams_executions);
     assert!(!caps.ws_rpc);
     assert!(caps.supports_replace);

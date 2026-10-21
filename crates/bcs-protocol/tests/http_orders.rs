@@ -10,7 +10,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 fn setup() -> (BcsConfig, BcsHttpClient) {
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
     let config = BcsConfig::from_env().expect("Config error");
     let client = BcsHttpClient::new(config.clone()).expect("Client error");
     (config, client)

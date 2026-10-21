@@ -11,6 +11,7 @@
 //! | Compare the client's order ledger with the broker | [`reconcile_ledger`] |
 //! | Send events to the consumer without blocking, with a loss policy per subscription | [`Emitter`], [`BackpressureManager`], [`SubscriptionBuffer`], [`PushResult`] |
 //! | Never send the same place twice, track unanswered orders | [`OrderRuntime`] |
+//! | Finish a command even when the caller stops waiting | [`run_detached`] |
 //! | One command at a time per instrument, in order | [`InstrumentLocks`] |
 //! | Refuse an order price off the price step before sending | [`PriceGrid`] |
 //! | Decide when to resubscribe or reconnect | [`Supervisor`], [`ConnectionState`], [`ConnectionHealth`] |
@@ -66,6 +67,7 @@ mod backpressure;
 mod clock;
 mod command_gate;
 mod connection;
+mod detached;
 mod emitter;
 mod health;
 pub mod history;
@@ -83,14 +85,15 @@ pub use backpressure::{BackpressureManager, PushResult, SubscriptionBuffer};
 pub use clock::now;
 pub use command_gate::CommandGate;
 pub use connection::{ConnectionState, SubState};
+pub use detached::run_detached;
 pub use emitter::Emitter;
 pub use health::{ConnectionHealth, HealthClass};
-pub use instrument_queue::{InstrumentGuard, InstrumentLocks};
+pub use instrument_queue::{BOUND_CIDS, InstrumentGuard, InstrumentLocks};
 pub use limits::{
     BrokerLimiter, BrokerLimits, BucketCfg, BucketId, ConnQuota, DEFAULT_ROUTE, MethodId,
 };
 pub use metrics::RuntimeMetrics;
-pub use orders::OrderRuntime;
+pub use orders::{FinishedWindow, OrderRuntime, RETAINED_FINISHED, RETENTION};
 pub use price_grid::PriceGrid;
 pub use reconcile::reconcile_ledger;
 pub use shutdown::ShutdownController;

@@ -59,18 +59,20 @@ pub enum FsmError {
 /// reconcile) settles it. The command is never repeated, because a retry could create a second
 /// order.
 ///
-/// Valid signals by state (anything else is [`FsmError::InvalidTransition`]):
+/// The machine takes the order in which news really arrives. The stream of fills can be faster than the
+/// answer to the place command, so a fill or a cancel is valid in `InFlight` too.
 ///
 /// | State | Signal -> new state |
 /// |---|---|
-/// | `InFlight` | `PlaceSent` -> no change, `Ack` -> `Acked`, `Timeout` -> `Unknown`, `Rejected` -> `Rejected` |
-/// | `Unknown` | `Ack` -> `Acked`, `Rejected` -> `Rejected`, `Cancelled` -> `Cancelled`, `Filled` -> `Filled`, `Timeout` -> no change |
-/// | `Acked` | `PartialFill` -> `PartiallyFilled`, `Filled` -> `Filled`, `Cancelled` -> `Cancelled`, `Rejected` -> `Rejected` |
-/// | `PartiallyFilled` | `PartialFill` -> `PartiallyFilled` (new quantities), `Filled`, `Cancelled`, `Rejected` |
-/// | `Filled`, `Cancelled`, `Rejected` | nothing: every signal is invalid |
+/// | `InFlight` | `PlaceSent` -> no change, `Ack` -> `Acked`, `PartialFill` -> `PartiallyFilled`, `Filled`, `Cancelled`, `Rejected`, `Timeout` -> `Unknown` |
+/// | `Unknown` | `Ack` -> `Acked`, `PartialFill` -> `PartiallyFilled`, `Filled`, `Cancelled`, `Rejected`, `Timeout` -> no change |
+/// | `Acked` | `PartialFill` -> `PartiallyFilled`, `Filled`, `Cancelled`, `Rejected`, `Ack` -> no change (late repeat) |
+/// | `PartiallyFilled` | `PartialFill` -> `PartiallyFilled` (new quantities, but a smaller `filled` than known is a stale snapshot and changes nothing), `Filled`, `Cancelled`, `Rejected`, `Ack` -> no change |
+/// | `Filled`, `Cancelled`, `Rejected` | the same final state again, and a late `Ack` or `PartialFill` -> no change. A different final state (a cancel of a filled order) -> [`FsmError::InvalidTransition`] |
 ///
-/// Note that a fill or cancel signal in `InFlight` is invalid: the order must be acked first (or
-/// have timed out into `Unknown`).
+/// News that is late or repeated but agrees with what is known changes nothing (`Ok(None)`). News that
+/// contradicts it is an error and the state is left as it was (the order book of `brokapi-runtime` logs
+/// it at warn level).
 ///
 /// # Examples
 ///
@@ -96,7 +98,7 @@ pub enum FsmError {
 /// assert!(matches!(next, Some(OrderState::Acked { .. })));
 ///
 /// fsm.apply(OrderSignal::Filled, now)?;
-/// // A finished order accepts nothing more.
+/// // A finished order accepts nothing that contradicts it.
 /// assert!(matches!(
 ///     fsm.apply(OrderSignal::Cancelled, now),
 ///     Err(FsmError::InvalidTransition { from: "Filled", signal: "Cancelled" })
@@ -128,15 +130,7 @@ impl OrderFsm {
 
     /// The client order id, the same in every state.
     pub fn cid(&self) -> ClientOrderId {
-        match &self.state {
-            OrderState::InFlight { cid, .. }
-            | OrderState::Unknown { cid, .. }
-            | OrderState::Acked { cid, .. }
-            | OrderState::PartiallyFilled { cid, .. }
-            | OrderState::Filled { cid }
-            | OrderState::Cancelled { cid }
-            | OrderState::Rejected { cid, .. } => *cid,
-        }
+        self.state.cid()
     }
 
     /// Applies a signal at `now`.
@@ -171,80 +165,83 @@ fn transition(
     signal: OrderSignal,
     now: Instant,
 ) -> Result<OrderState, FsmError> {
-    let cid = match state {
-        OrderState::InFlight { cid, .. }
-        | OrderState::Unknown { cid, .. }
-        | OrderState::Acked { cid, .. }
-        | OrderState::PartiallyFilled { cid, .. }
-        | OrderState::Filled { cid }
-        | OrderState::Cancelled { cid }
-        | OrderState::Rejected { cid, .. } => *cid,
-    };
+    let cid = state.cid();
 
     let signal_label = signal_name(&signal);
 
     match (state, signal) {
         (OrderState::InFlight { .. }, OrderSignal::PlaceSent) => Ok(state.clone()),
 
-        (OrderState::InFlight { .. }, OrderSignal::Ack { broker_id }) => {
-            Ok(OrderState::Acked { cid, broker_id })
-        }
+        // The stream can be faster than the answer to the place command, and an order that is only
+        // `Unknown` may have moved on without us: a fill, a partial fill or a cancel is a fact, so it is
+        // taken from every state that has not seen it yet.
+        (
+            OrderState::InFlight { .. } | OrderState::Unknown { .. },
+            OrderSignal::Ack { broker_id },
+        ) => Ok(OrderState::Acked { cid, broker_id }),
+        (
+            OrderState::InFlight { .. } | OrderState::Unknown { .. } | OrderState::Acked { .. },
+            OrderSignal::PartialFill { filled, left },
+        ) => Ok(OrderState::PartiallyFilled { cid, filled, left }),
+        (
+            OrderState::InFlight { .. }
+            | OrderState::Unknown { .. }
+            | OrderState::Acked { .. }
+            | OrderState::PartiallyFilled { .. },
+            OrderSignal::Filled,
+        ) => Ok(OrderState::Filled { cid }),
+        (
+            OrderState::InFlight { .. }
+            | OrderState::Unknown { .. }
+            | OrderState::Acked { .. }
+            | OrderState::PartiallyFilled { .. },
+            OrderSignal::Cancelled,
+        ) => Ok(OrderState::Cancelled { cid }),
+        (
+            OrderState::InFlight { .. }
+            | OrderState::Unknown { .. }
+            | OrderState::Acked { .. }
+            | OrderState::PartiallyFilled { .. },
+            OrderSignal::Rejected { reason },
+        ) => Ok(OrderState::Rejected { cid, reason }),
 
         (OrderState::InFlight { .. }, OrderSignal::Timeout) => {
             Ok(OrderState::Unknown { cid, since: now })
         }
 
-        (OrderState::InFlight { .. }, OrderSignal::Rejected { reason }) => {
-            Ok(OrderState::Rejected { cid, reason })
+        (
+            OrderState::PartiallyFilled { filled: have, .. },
+            OrderSignal::PartialFill { filled, left },
+        ) => {
+            // An older snapshot that arrives late must not take the fill back.
+            if filled < *have {
+                Ok(state.clone())
+            } else {
+                Ok(OrderState::PartiallyFilled { cid, filled, left })
+            }
         }
 
-        (OrderState::Unknown { .. }, OrderSignal::Ack { broker_id }) => {
-            Ok(OrderState::Acked { cid, broker_id })
-        }
+        // Late, repeated or out-of-order news that agrees with what is known: nothing to change. An
+        // answer to the place command that comes after the fills, a second `Timeout`, the same final
+        // state told twice.
+        (
+            OrderState::Unknown { .. }
+            | OrderState::Acked { .. }
+            | OrderState::PartiallyFilled { .. }
+            | OrderState::Filled { .. }
+            | OrderState::Cancelled { .. }
+            | OrderState::Rejected { .. },
+            OrderSignal::Timeout | OrderSignal::PlaceSent | OrderSignal::Ack { .. },
+        )
+        | (
+            OrderState::Filled { .. } | OrderState::Cancelled { .. } | OrderState::Rejected { .. },
+            OrderSignal::PartialFill { .. },
+        )
+        | (OrderState::Filled { .. }, OrderSignal::Filled)
+        | (OrderState::Cancelled { .. }, OrderSignal::Cancelled)
+        | (OrderState::Rejected { .. }, OrderSignal::Rejected { .. }) => Ok(state.clone()),
 
-        (OrderState::Unknown { .. }, OrderSignal::Rejected { reason }) => {
-            Ok(OrderState::Rejected { cid, reason })
-        }
-
-        (OrderState::Unknown { .. }, OrderSignal::Cancelled) => Ok(OrderState::Cancelled { cid }),
-
-        (OrderState::Unknown { .. }, OrderSignal::Filled) => Ok(OrderState::Filled { cid }),
-
-        (OrderState::Unknown { .. }, OrderSignal::Timeout) => Ok(state.clone()),
-
-        (OrderState::Acked { .. }, OrderSignal::PartialFill { filled, left }) => {
-            Ok(OrderState::PartiallyFilled { cid, filled, left })
-        }
-
-        (OrderState::Acked { .. }, OrderSignal::Filled) => Ok(OrderState::Filled { cid }),
-
-        (OrderState::Acked { .. }, OrderSignal::Cancelled) => Ok(OrderState::Cancelled { cid }),
-
-        (OrderState::Acked { .. }, OrderSignal::Rejected { reason }) => {
-            Ok(OrderState::Rejected { cid, reason })
-        }
-
-        (OrderState::PartiallyFilled { .. }, OrderSignal::PartialFill { filled, left }) => {
-            Ok(OrderState::PartiallyFilled { cid, filled, left })
-        }
-
-        (OrderState::PartiallyFilled { .. }, OrderSignal::Filled) => Ok(OrderState::Filled { cid }),
-
-        (OrderState::PartiallyFilled { .. }, OrderSignal::Cancelled) => {
-            Ok(OrderState::Cancelled { cid })
-        }
-
-        (OrderState::PartiallyFilled { .. }, OrderSignal::Rejected { reason }) => {
-            Ok(OrderState::Rejected { cid, reason })
-        }
-
-        (OrderState::Filled { .. }, _)
-        | (OrderState::Cancelled { .. }, _)
-        | (OrderState::Rejected { .. }, _) => Err(FsmError::InvalidTransition {
-            from: state_name(state),
-            signal: signal_label,
-        }),
-
+        // The rest contradicts what is known (a cancel of a filled order, a fill of a cancelled one).
         (from, _) => Err(FsmError::InvalidTransition {
             from: state_name(from),
             signal: signal_label,
@@ -253,15 +250,7 @@ fn transition(
 }
 
 fn state_name(state: &OrderState) -> &'static str {
-    match state {
-        OrderState::InFlight { .. } => "InFlight",
-        OrderState::Unknown { .. } => "Unknown",
-        OrderState::Acked { .. } => "Acked",
-        OrderState::PartiallyFilled { .. } => "PartiallyFilled",
-        OrderState::Filled { .. } => "Filled",
-        OrderState::Cancelled { .. } => "Cancelled",
-        OrderState::Rejected { .. } => "Rejected",
-    }
+    state.name()
 }
 
 fn signal_name(signal: &OrderSignal) -> &'static str {
@@ -336,6 +325,26 @@ impl OrderRegistry {
     /// The state machine of `cid`, if tracked.
     pub fn get(&self, cid: ClientOrderId) -> Option<&OrderFsm> {
         self.orders.get(&cid)
+    }
+
+    /// Stops tracking `cid`, but only if its order is finished (`Filled`, `Cancelled` or `Rejected`).
+    /// Returns `true` when it was removed. A live order, or an unknown cid, is left alone.
+    pub fn forget_finished(&mut self, cid: ClientOrderId) -> bool {
+        let finished = self.orders.get(&cid).is_some_and(|f| f.state().is_final());
+        if finished {
+            self.orders.remove(&cid);
+        }
+        finished
+    }
+
+    /// How many orders are tracked, in any state.
+    pub fn len(&self) -> usize {
+        self.orders.len()
+    }
+
+    /// `true` when no order is tracked.
+    pub fn is_empty(&self) -> bool {
+        self.orders.is_empty()
     }
 
     /// The cids of all orders now in state `InFlight`, in no particular order.
@@ -455,5 +464,140 @@ mod tests {
         let changed = reg.on_global_timeout(t0 + Duration::from_secs(31), Duration::from_secs(30));
         assert_eq!(changed.len(), 1);
         assert!(matches!(changed[0].1, OrderState::Unknown { .. }));
+    }
+
+    fn ack(id: &str) -> OrderSignal {
+        OrderSignal::Ack {
+            broker_id: BrokerOrderId::new(id),
+        }
+    }
+
+    fn partial(filled: i64, left: i64) -> OrderSignal {
+        OrderSignal::PartialFill {
+            filled: Qty::from(filled),
+            left: Qty::from(left),
+        }
+    }
+
+    #[test]
+    fn news_that_is_faster_than_the_answer_is_taken() {
+        // A fill, a partial fill and a cancel can come before the answer to the place command.
+        let mut fsm = OrderFsm::new(cid(1), now());
+        assert!(matches!(
+            fsm.apply(OrderSignal::Filled, now()),
+            Ok(Some(OrderState::Filled { .. }))
+        ));
+        let mut fsm = OrderFsm::new(cid(2), now());
+        assert!(matches!(
+            fsm.apply(partial(1, 2), now()),
+            Ok(Some(OrderState::PartiallyFilled { .. }))
+        ));
+        let mut fsm = OrderFsm::new(cid(3), now());
+        assert!(matches!(
+            fsm.apply(OrderSignal::Cancelled, now()),
+            Ok(Some(OrderState::Cancelled { .. }))
+        ));
+        // And the doubt of an Unknown order is settled by a fill or a partial fill too.
+        let mut fsm = OrderFsm::from_state(OrderState::Unknown {
+            cid: cid(4),
+            since: now(),
+        });
+        assert!(matches!(
+            fsm.apply(partial(1, 2), now()),
+            Ok(Some(OrderState::PartiallyFilled { .. }))
+        ));
+    }
+
+    #[test]
+    fn a_late_answer_changes_nothing() {
+        // The answer to the place command comes after the fill: the order stays filled.
+        let mut fsm = OrderFsm::new(cid(1), now());
+        fsm.apply(OrderSignal::Filled, now()).unwrap();
+        for late in [
+            ack("42"),
+            partial(1, 1),
+            OrderSignal::Timeout,
+            OrderSignal::PlaceSent,
+        ] {
+            assert_eq!(fsm.apply(late, now()), Ok(None));
+        }
+        assert!(matches!(fsm.state(), OrderState::Filled { .. }));
+        // The same final state told twice is not an error either.
+        assert_eq!(fsm.apply(OrderSignal::Filled, now()), Ok(None));
+        let mut cancelled = OrderFsm::from_state(OrderState::Cancelled { cid: cid(2) });
+        assert_eq!(cancelled.apply(OrderSignal::Cancelled, now()), Ok(None));
+        let mut rejected = OrderFsm::from_state(OrderState::Rejected {
+            cid: cid(3),
+            reason: "no".into(),
+        });
+        assert_eq!(
+            rejected.apply(
+                OrderSignal::Rejected {
+                    reason: "no".into()
+                },
+                now()
+            ),
+            Ok(None)
+        );
+        // A repeated ack of a working order, with the order partly filled.
+        let mut working = OrderFsm::from_state(OrderState::Acked {
+            cid: cid(4),
+            broker_id: BrokerOrderId::new("1"),
+        });
+        assert_eq!(working.apply(ack("1"), now()), Ok(None));
+        let mut part = OrderFsm::from_state(OrderState::PartiallyFilled {
+            cid: cid(5),
+            filled: Qty::from(1),
+            left: Qty::from(1),
+        });
+        assert_eq!(part.apply(ack("1"), now()), Ok(None));
+    }
+
+    #[test]
+    fn an_older_snapshot_does_not_take_a_fill_back() {
+        let mut fsm = OrderFsm::from_state(OrderState::PartiallyFilled {
+            cid: cid(1),
+            filled: Qty::from(5),
+            left: Qty::from(5),
+        });
+        // A snapshot with less filled than known arrives late.
+        assert_eq!(fsm.apply(partial(3, 7), now()), Ok(None));
+        assert!(matches!(
+            fsm.state(),
+            OrderState::PartiallyFilled { filled, .. } if *filled == Qty::from(5)
+        ));
+        // More filled moves it on.
+        assert!(matches!(fsm.apply(partial(6, 4), now()), Ok(Some(_))));
+    }
+
+    #[test]
+    fn contradicting_news_is_an_error_and_leaves_the_state() {
+        let mut fsm = OrderFsm::from_state(OrderState::Filled { cid: cid(1) });
+        assert_eq!(
+            fsm.apply(OrderSignal::Cancelled, now()),
+            Err(FsmError::InvalidTransition {
+                from: "Filled",
+                signal: "Cancelled"
+            })
+        );
+        assert!(matches!(fsm.state(), OrderState::Filled { .. }));
+        let mut cancelled = OrderFsm::from_state(OrderState::Cancelled { cid: cid(2) });
+        assert!(cancelled.apply(OrderSignal::Filled, now()).is_err());
+    }
+
+    #[test]
+    fn the_registry_forgets_only_finished_orders() {
+        let mut reg = OrderRegistry::new();
+        let t0 = Instant::now();
+        reg.register_place(cid(1), t0);
+        reg.register_place(cid(2), t0);
+        reg.apply(cid(2), OrderSignal::Filled, t0).unwrap();
+        assert_eq!(reg.len(), 2);
+        assert!(!reg.is_empty());
+        assert!(!reg.forget_finished(cid(1)), "a live order stays");
+        assert!(!reg.forget_finished(cid(9)), "an unknown cid is left alone");
+        assert!(reg.forget_finished(cid(2)));
+        assert_eq!(reg.len(), 1);
+        assert!(reg.get(cid(2)).is_none());
     }
 }

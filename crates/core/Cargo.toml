@@ -6,6 +6,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 homepage.workspace = true
+repository.workspace = true
+documentation.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 async-trait.workspace = true
@@ -14,17 +20,17 @@ rust_decimal.workspace = true
 rust_decimal_macros.workspace = true
 serde = { workspace = true, features = ["rc"] }
 thiserror.workspace = true
-tokio.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
 proptest.workspace = true
 serde_json.workspace = true
 # Doctests of the traits run against the BCS connector on its mock (a dev-dependency cycle is fine for doctests).
-brokapi-bcs.workspace = true
+brokapi-bcs = { path = "../bcs" }
 brokapi-mocks.workspace = true
-brokapi-bcs-protocol.workspace = true
-brokapi-runtime.workspace = true
+brokapi-bcs-protocol = { path = "../bcs-protocol" }
+brokapi-runtime = { path = "../runtime" }
 brokapi-conformance.workspace = true
 
 [lib]

@@ -377,16 +377,16 @@ impl UserDataConnector {
     /// # }
     /// ```
     pub fn caps(&self) -> UserDataCaps {
-        UserDataCaps {
-            place_idempotency: PlaceIdempotency::LabelOnly,
-            ws_rpc: false,
-            ordered_command_channel: false,
-            supports_replace: true,
-            // Conditional orders (`orderType = 5`): see the `StopOrderExecutor` impl.
-            supports_stop_orders: true,
-            streams_executions: true,
-            sandbox: false,
-        }
+        // Conditional orders (`orderType = 5`): see the `StopOrderExecutor` impl.
+        UserDataCaps::new(
+            PlaceIdempotency::LabelOnly,
+            false,
+            false,
+            true,
+            true,
+            true,
+            false,
+        )
     }
 
     /// Stops the connector and reports what was left unfinished. Consumes the connector.
@@ -673,6 +673,19 @@ impl UserDataConnector {
 }
 
 #[async_trait]
+impl brokapi_core::Connector for UserDataConnector {
+    type Caps = brokapi_core::UserDataCaps;
+
+    fn caps(&self) -> brokapi_core::UserDataCaps {
+        UserDataConnector::caps(self)
+    }
+
+    async fn shutdown(self, mode: brokapi_core::ShutdownMode) -> brokapi_core::ShutdownReport {
+        UserDataConnector::shutdown(self, mode).await
+    }
+}
+
+#[async_trait]
 impl OrderExecutor for UserDataConnector {
     /// `POST /orders/sync`, not `POST /orders`. The synchronous method waits for the broker's decision
     /// and answers with the order's state, so (1) a refusal (`orderStatus = 8`, `rejectReason`) is
@@ -922,11 +935,7 @@ impl OrderExecutor for UserDataConnector {
     async fn reconcile(&self, ledger: &[ClientOrderId]) -> Result<ReconcileReport, Error> {
         use brokapi_core::OrderState as S;
         self.acquire("Reconcile").await?;
-        let mut report = ReconcileReport {
-            confirmed: Vec::new(),
-            closed_offline: Vec::new(),
-            foreign: Vec::new(),
-        };
+        let mut report = ReconcileReport::new(Vec::new(), Vec::new(), Vec::new());
         for cid in ledger {
             self.acquire("GetOrder").await?;
             match self

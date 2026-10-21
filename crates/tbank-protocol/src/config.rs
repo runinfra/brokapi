@@ -19,6 +19,8 @@
 use std::fmt;
 use std::time::Duration;
 
+use crate::error::ProtocolError;
+
 /// Production gRPC endpoint.
 pub const PROD_ENDPOINT: &str = "https://invest-public-api.tbank.ru:443";
 /// Sandbox gRPC endpoint (same services as production, virtual accounts).
@@ -73,6 +75,13 @@ pub struct TbankConfig {
     ///
     /// It applies to every (re)connect of the lazy channel. There is no builder method, set the field.
     pub connect_timeout: Duration,
+    /// An extra root certificate (PEM) the TLS connection trusts besides the bundled web PKI roots. `None`
+    /// by default.
+    ///
+    /// Set it when the broker's endpoint is served with a certificate of a national root (the Russian
+    /// Ministry of Digital Development one) that the bundled roots do not know. Not verified against the live
+    /// endpoint which certificate it presents. See [`with_root_certificate_pem`](Self::with_root_certificate_pem).
+    pub root_certificate_pem: Option<Vec<u8>>,
 }
 
 impl TbankConfig {
@@ -103,6 +112,7 @@ impl TbankConfig {
             app_name: None,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            root_certificate_pem: None,
         }
     }
 
@@ -157,17 +167,22 @@ impl TbankConfig {
         }
     }
 
-    /// Reads the config from the environment. Loads a `.env` file first, if there is one.
+    /// Reads the config from the environment. Loads a `.env` file of the **working directory** first, if
+    /// there is one (parent directories are not searched, see [`from_env_file`](Self::from_env_file) for
+    /// another path).
     ///
     /// Variables: `TBANK_TOKEN` (required), `TBANK_SANDBOX` (`true`, `1` or `yes`, default `false`, so
-    /// production), `TBANK_ENDPOINT` (overrides the endpoint when not empty), `TBANK_ACCOUNT_ID` and
-    /// `TBANK_APP_NAME` (both optional, empty means not set).
+    /// production), `TBANK_ENDPOINT` (overrides the endpoint when not empty, must start with
+    /// `https://`), `TBANK_ACCOUNT_ID` and `TBANK_APP_NAME` (both optional, empty means not set).
     ///
     /// Note the default: without `TBANK_SANDBOX` the config points at production.
     ///
     /// # Errors
     ///
-    /// [`std::env::VarError`] when `TBANK_TOKEN` is not set or is not valid unicode.
+    /// [`ProtocolError::Config`] when `TBANK_TOKEN` is not set or is not valid unicode, or when
+    /// `TBANK_ENDPOINT` is set and is not an `https://` address (a token must not go over plain text
+    /// because of a stray variable). The address of a local imitation is set in code, with
+    /// [`for_mock`](Self::for_mock).
     ///
     /// # Examples
     ///
@@ -186,14 +201,46 @@ impl TbankConfig {
     /// assert_eq!(cfg.endpoint, SANDBOX_ENDPOINT);
     /// assert_eq!(cfg.account_id.as_deref(), Some("acc-main"));
     ///
+    /// // A plain-text endpoint in the environment is refused.
+    /// # unsafe { std::env::set_var("TBANK_ENDPOINT", "http://evil.example:80") };
+    /// assert!(TbankConfig::from_env().is_err());
+    /// # unsafe { std::env::remove_var("TBANK_ENDPOINT") };
+    ///
     /// # unsafe { std::env::remove_var("TBANK_TOKEN") };
     /// // Without a token the call fails, it never falls back to a default.
     /// assert!(TbankConfig::from_env().is_err());
-    /// # Ok::<(), std::env::VarError>(())
+    /// # Ok::<(), brokapi_tbank_protocol::ProtocolError>(())
     /// ```
-    pub fn from_env() -> Result<Self, std::env::VarError> {
-        dotenv::dotenv().ok();
-        let token = std::env::var("TBANK_TOKEN")?;
+    pub fn from_env() -> Result<Self, ProtocolError> {
+        // Only `.env` of the working directory: `dotenvy::dotenv` would also look in every parent.
+        dotenvy::from_path(".env").ok();
+        Self::from_vars()
+    }
+
+    /// Like [`from_env`](Self::from_env), but loads the `.env` file at `path` (a file that is not there
+    /// is skipped, variables that are already set are kept).
+    ///
+    /// # Errors
+    ///
+    /// As [`from_env`](Self::from_env).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use brokapi_tbank_protocol::TbankConfig;
+    ///
+    /// // No such file: only the environment is read, and it has no token here.
+    /// # unsafe { std::env::remove_var("TBANK_TOKEN") };
+    /// assert!(TbankConfig::from_env_file("/no/such/.env").is_err());
+    /// ```
+    pub fn from_env_file(path: impl AsRef<std::path::Path>) -> Result<Self, ProtocolError> {
+        dotenvy::from_path(path.as_ref()).ok();
+        Self::from_vars()
+    }
+
+    fn from_vars() -> Result<Self, ProtocolError> {
+        let token = std::env::var("TBANK_TOKEN")
+            .map_err(|_| ProtocolError::Config("TBANK_TOKEN is not set".into()))?;
         let sandbox = std::env::var("TBANK_SANDBOX")
             .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes"))
             .unwrap_or(false);
@@ -201,7 +248,12 @@ impl TbankConfig {
         if let Ok(endpoint) = std::env::var("TBANK_ENDPOINT")
             && !endpoint.trim().is_empty()
         {
-            cfg.endpoint = endpoint;
+            if !endpoint.trim().starts_with("https://") {
+                return Err(ProtocolError::Config(
+                    "TBANK_ENDPOINT must start with https://".into(),
+                ));
+            }
+            cfg.endpoint = endpoint.trim().to_string();
         }
         cfg.account_id = std::env::var("TBANK_ACCOUNT_ID")
             .ok()
@@ -233,7 +285,7 @@ impl TbankConfig {
     ///
     /// The T-Bank convention is `<github nick>.<repo>`. The name must be a valid header value,
     /// otherwise [`TbankClient::new`](crate::TbankClient::new) returns
-    /// [`ProtocolError::Config`](crate::ProtocolError::Config).
+    /// [`ProtocolError::Config`].
     ///
     /// # Examples
     ///
@@ -243,6 +295,25 @@ impl TbankConfig {
     /// ```
     pub fn with_app_name(mut self, app_name: impl Into<String>) -> Self {
         self.app_name = Some(app_name.into());
+        self
+    }
+
+    /// Trusts one more root certificate for the TLS connection, in PEM form (the text between
+    /// `-----BEGIN CERTIFICATE-----` and `-----END CERTIFICATE-----`).
+    ///
+    /// The bundled web PKI roots stay trusted. Use it when the endpoint's certificate chains to a root
+    /// they do not contain (for example the national root certificate). [`TbankClient::new`](crate::TbankClient::new)
+    /// refuses a PEM text that holds no certificate.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cfg = brokapi_tbank_protocol::TbankConfig::production("t.token")
+    ///     .with_root_certificate_pem(b"-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n".to_vec());
+    /// assert!(cfg.root_certificate_pem.is_some());
+    /// ```
+    pub fn with_root_certificate_pem(mut self, pem: impl Into<Vec<u8>>) -> Self {
+        self.root_certificate_pem = Some(pem.into());
         self
     }
 
@@ -271,6 +342,7 @@ impl fmt::Debug for TbankConfig {
             .field("account_id", &self.account_id)
             .field("app_name", &self.app_name)
             .field("request_timeout", &self.request_timeout)
+            .field("root_certificate", &self.root_certificate_pem.is_some())
             .finish()
     }
 }

@@ -8,7 +8,7 @@
 //! Rules of a call:
 //!
 //! 1. The quota is taken first, by the operation name (`"GetOperationHistory"`), from the route in
-//!    `configs/bcs_limits.toml`. A name without a route spends the `"*"` default route, so a call is
+//!    `limits.toml`. A name without a route spends the `"*"` default route, so a call is
 //!    never free. A refusal is [`Error::RateLimited`] and the request is not sent.
 //! 2. The closure gets the connector's [`BcsHttpClient`]: it holds the access token, refreshes it and
 //!    repeats a request once after a 401. One closure is one API method.
@@ -87,7 +87,7 @@ impl BcsRaw {
 
     /// Calls a read-only API method: takes the quota for `method`, then runs `f`.
     ///
-    /// `method` is the name of the quota route, not a URL. Take a name from `configs/bcs_limits.toml`
+    /// `method` is the name of the quota route, not a URL. Take a name from `limits.toml`
     /// (for example `GetQuotes`). An unknown name spends the default route `"*"`. `f` receives the
     /// connector's [`BcsHttpClient`] and returns the future of one API call. Do not use this for
     /// anything that changes the account, use [`call_command`](Self::call_command).

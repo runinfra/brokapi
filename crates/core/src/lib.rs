@@ -78,7 +78,7 @@ pub mod types;
 pub use cid::{Charset, CidCaps, CidCodec, CidError, HexUuidCodec, NativeCid};
 pub use error::{ConfigError, Error, ErrorClass, NOT_FOUND, TransportError};
 pub use traits::{
-    ExecutionSource, InstrumentSource, MarketDataSource, OrderBookSource, OrderExecutor,
+    Connector, ExecutionSource, InstrumentSource, MarketDataSource, OrderBookSource, OrderExecutor,
     PortfolioSource, StopOrderExecutor,
 };
 pub use types::*;

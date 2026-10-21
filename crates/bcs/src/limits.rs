@@ -1,4 +1,4 @@
-//! Loads `configs/bcs_limits.toml` (section `[bcs]`) through `BrokerLimits::from_toml_section`.
+//! Loads `limits.toml` (section `[bcs]`) through `BrokerLimits::from_toml_section`.
 //!
 //! BCS publishes no numbers of its own, so the bundled values are cautious starting points, to be checked
 //! on a live account (the live runs page of the book, BCS section). One `BrokerLimiter` per token: give every
@@ -7,10 +7,10 @@
 use brokapi_core::ConfigError;
 use brokapi_runtime::BrokerLimits;
 
-/// The text of the bundled limits file `configs/bcs_limits.toml`, compiled into the crate.
+/// The text of the bundled limits file `limits.toml`, compiled into the crate.
 ///
 /// Parse it with [`limits_from_toml_str`], or take the result directly from [`default_limits`].
-pub const DEFAULT_LIMITS_TOML: &str = include_str!("../../../configs/bcs_limits.toml");
+pub const DEFAULT_LIMITS_TOML: &str = include_str!("../limits.toml");
 
 /// Reads the `[bcs]` section of a limits file given as text.
 ///
@@ -121,8 +121,12 @@ mod tests {
         }
         // A method with no route of its own spends the default route.
         assert!(!l.buckets_for("SomethingNew").is_empty());
-        // Cancel has its own bucket, separate from placing.
-        assert!(!l.route["CancelOrder"].contains(&"orders".to_string()));
+        // Placing goes through a soft gate of its own that cancel does not pass: a flood of placements cannot
+        // use up the whole budget of the orders service, a cancel still has room.
+        assert!(l.route["PlaceOrder"].contains(&"place".to_string()));
+        assert!(!l.route["CancelOrder"].contains(&"place".to_string()));
+        let (place, orders) = (&l.buckets["place"], &l.buckets["orders"]);
+        assert!(place.rate < orders.rate && place.burst < orders.burst);
     }
 
     #[test]

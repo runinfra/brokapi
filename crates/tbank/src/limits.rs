@@ -1,4 +1,4 @@
-//! Loads `configs/tbank_limits.toml` (section `[tbank]`) through `BrokerLimits::from_toml_section`.
+//! Loads `limits.toml` (section `[tbank]`) through `BrokerLimits::from_toml_section`.
 //!
 //! One `BrokerLimiter` per user (all accounts, all tokens, one IP): see the scope notes in the toml.
 //!
@@ -29,10 +29,10 @@
 use brokapi_core::ConfigError;
 use brokapi_runtime::BrokerLimits;
 
-/// The bundled default limits, as documented by T-Bank (the text of `configs/tbank_limits.toml`).
+/// The bundled default limits, as documented by T-Bank (the text of `limits.toml`).
 ///
 /// Parse it with [`limits_from_toml_str`], or call [`default_limits`].
-pub const DEFAULT_LIMITS_TOML: &str = include_str!("../../../configs/tbank_limits.toml");
+pub const DEFAULT_LIMITS_TOML: &str = include_str!("../limits.toml");
 
 /// Reads the `[tbank]` section of a limits file given as text.
 ///

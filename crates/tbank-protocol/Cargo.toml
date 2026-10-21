@@ -6,9 +6,15 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 homepage.workspace = true
+repository.workspace = true
+documentation.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
-dotenv.workspace = true
+dotenvy.workspace = true
 prost = "0.14"
 rust_decimal.workspace = true
 prost-types = "0.14"
@@ -36,4 +42,4 @@ path = "src/lib.rs"
 proptest.workspace = true
 # Doctests run against the in-process T-Bank mock (a dev-dependency cycle is fine for doctests).
 brokapi-mocks.workspace = true
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["full", "test-util"] }

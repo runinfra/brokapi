@@ -177,6 +177,20 @@ Mock БКС (`tests/mock_server/server.rs`) с состоянием: заявк�
 - Н10 БКС (`fixes.rs`): `two_fills_at_different_prices_give_two_prices`, `fills_at_different_prices_arrive_with_their_own_prices`, `a_cancel_that_is_only_started_is_not_a_cancel`, `an_order_that_fills_while_it_is_cancelling_is_filled`, `an_order_that_is_alive_by_get_but_missing_from_the_list_is_confirmed`.
 - `Resync` стакана: `order_book_resync` у всех трех.
 
+## Проверки второй волны 21.10
+
+Отдельные тесты лежат в `tests/wave2.rs` крейтов `runtime`, `bcs`, `tbank`, `finam`, в `bcs-protocol/tests/security.rs` и в модулях рядом с кодом. Все на имитациях.
+
+- В1 Токены не в `Debug`: `debug_output_hides_every_token`, `the_configs_of_the_connectors_do_not_print_the_token` (БКС), `the_jwt_header_is_sensitive_and_is_sent_bare_or_with_bearer` (Финам), токен Т-Банка скрыт и в `TbankConfig`.
+- В2 Команда БКС не повторяется после 401, чтение повторяется, токен обновляется заранее: `a_command_is_sent_once_even_after_a_401`, `a_read_is_repeated_once_after_a_401`, `a_token_that_is_about_to_expire_is_renewed_before_it_is_used`.
+- В3 `.env` только из текущего каталога или по пути, адреса из окружения только `https://`: `the_env_file_is_read_from_the_given_path_only`, `a_plain_text_endpoint_in_the_environment_is_refused_...` (Т-Банк), `the_api_url_of_the_environment_must_be_https` (Финам).
+- В4 Лимиты БКС по таблице брокера: `the_limits_follow_the_table_of_the_broker`, `a_burst_of_orders_is_stopped_before_the_broker_would_stop_it`.
+- В5 Финам: `a_rejected_token_on_a_command_starts_the_renewal_but_does_not_repeat_the_command`, `an_auth_call_that_never_answers_ends_with_a_deadline`, `the_lifetime_is_the_shorter_of_the_details_and_the_claims`, `stop_and_sltp_orders_do_not_show_up_in_the_stream_of_ordinary_orders`, `a_fill_of_a_foreign_order_keeps_no_cid_even_after_the_order_was_seen`, `a_resync_does_not_overtake_the_data_that_is_already_buffered`.
+- В6 Т-Банк: `the_history_of_trades_asks_for_margin_and_card_trades_too`, `a_trade_before_the_answer_gets_its_cid_when_the_answer_comes` (и три соседних), `a_rejected_token_on_a_stream_fails_the_subscription_at_once`, `the_limit_of_open_streams_fails_the_subscription_and_a_later_one_can_try_again`, `an_extra_root_certificate_is_accepted_only_when_it_is_a_pem`, книга стопов (`stop_book_tests` рядом с кодом).
+- В7 Ядро: `conflate_keeps_the_latest_event_of_every_kind`, автомат заявки в `sansio` (`news_that_is_faster_than_the_answer_is_taken`, `a_late_answer_changes_nothing`, `an_older_snapshot_does_not_take_a_fill_back`, `contradicting_news_is_an_error_and_leaves_the_state`), окно памяти (`finished_orders_are_forgotten_after_the_window_and_the_cid_is_free_again`, `the_count_limit_drops_the_oldest_finished_orders_first`), `place` без ожидающего (`a_place_whose_caller_gives_up_still_ends_and_leaves_nothing_in_flight`, Т-Банк и Финам), `a_command_is_retried_only_after_a_rate_limit`.
+- В8 БКС: `the_cid_is_the_order_not_the_request_that_caused_the_message`, `a_corrected_report_is_not_a_new_fill`, `an_error_that_names_a_ticker_fails_that_subscription_only` (и три соседних), `the_ids_of_orders_that_finished_long_ago_are_forgotten`.
+- В9 Пакет: `the_book_names_the_rust_version_of_the_crate` (версия Rust в книге равна `rust-version` крейта).
+
 ## Python
 
 Пакет `brokapi` для Python - тонкая обертка над тем же ядром ([раздел Python](python/index.md)). Правила, коннекторы и сверка у него те
@@ -205,37 +219,34 @@ Mock БКС (`tests/mock_server/server.rs`) с состоянием: заявк�
 
 | Крейт | Строки до | Строки после | Области до | Области после |
 |---|---|---|---|---|
-| bcs | 85,65% | 87,23% | 85,31% | 86,79% |
-| bcs-protocol | 71,60% | 71,60% | 70,64% | 70,91% |
-| core | 84,84% | 85,65% | 88,41% | 89,02% |
-| finam | 91,05% | 91,87% | 91,99% | 92,73% |
-| finam-protocol | 91,97% | 91,97% | 90,96% | 90,96% |
-| runtime | 88,22% | 88,83% | 89,26% | 89,95% |
-| sansio | 84,96% | 85,18% | 86,64% | 86,79% |
-| tbank | 91,61% | 93,75% | 90,49% | 92,82% |
-| tbank-protocol | 81,95% | 81,95% | 80,05% | 80,05% |
-| **всего** | **87,46%** | **88,77%** | **87,56%** | **88,92%** |
+| bcs | 87,23% | 90,15% | 86,79% | 89,18% |
+| bcs-protocol | 71,60% | 85,85% | 70,91% | 85,11% |
+| core | 85,65% | 89,18% | 89,02% | 90,33% |
+| finam | 91,87% | 92,49% | 92,73% | 93,31% |
+| finam-protocol | 91,97% | 93,99% | 90,96% | 93,04% |
+| runtime | 88,83% | 92,87% | 89,95% | 93,53% |
+| sansio | 85,18% | 91,51% | 86,79% | 91,92% |
+| tbank | 93,75% | 95,09% | 92,82% | 94,38% |
+| tbank-protocol | 81,95% | 89,49% | 80,05% | 88,89% |
+| **всего** | **88,77%** | **92,13%** | **88,92%** | **92,04%** |
 
-«До» это ветка до исправлений 21.10, «после» это ее конец. В этой волне покрыты все пути, которые менялись: из измененных строк кода
-библиотеки без теста остались несколько защитных веток (событие без размера лота, ответ справочника без инструмента для чтения
-исходной заявки, строка внутри самого теста).
+«До» это конец первой волны исправлений 21.10 (до разбора кода строки были 87,46%), «после» это конец второй. **Цель 95% по строкам
+не достигнута**: 92,13% (непокрытых строк 1251 из примерно 15 900). Выше 95% только `tbank`. Тесты второй волны добавлены на поведение
+(безопасность БКС, лимиты, автомат заявки, окна памяти, потоки Т-Банка, отмена `place`, чужие исполнения Финама, сообщения канала заявок БКС,
+запросы протокола БКС против записывающего сервера, WebSocket-сессия БКС против сервера из теста), не ради цифры.
 
 **Что стоит закрыть в следующей волне.** Файлы с наибольшим числом непокрытых строк. Что именно в них не покрыто, не разбиралось:
 это список для чтения отчета `tools/coverage --html`, а не вывод.
 
 | Файл | Непокрытых строк |
 |---|---|
-| `bcs-protocol/src/ws/session.rs` | 87 |
-| `tbank/src/core/ud.rs` | 74 |
-| `bcs-protocol/src/http/endpoints.rs` | 71 |
-| `bcs/src/core/ud.rs` | 70 |
-| `bcs/src/core/md.rs` | 63 |
-| `bcs-protocol/src/http/client.rs` | 59 |
-| `bcs/src/map/order.rs` | 57 |
+| `bcs/src/core/ud.rs` | 64 |
+| `bcs-protocol/src/ws/session.rs` | 57 (было 87): сторож молчания сокета на 60 секунд идет по настенным часам, без управления временем его не проверить |
 | `bcs-protocol/src/ws/client.rs` | 55 |
-| `tbank/src/ud.rs` | 48 |
-| `bcs/src/md.rs` | 40 |
-| `runtime/src/backpressure.rs` | 36 |
-| `finam/src/ud.rs` | 32 |
-| `runtime/src/metrics.rs`, `tbank/src/map/portfolio.rs`, `runtime/src/record.rs` | 31, 30, 30 |
-| `sansio/src/order_fsm.rs`, `tbank-protocol/src/config.rs`, `finam/src/stream.rs` | 27 каждый |
+| `tbank/src/ud.rs` | 53 |
+| `finam/src/ud.rs` | 51 |
+| `tbank/src/core/ud.rs` | 36 (было 76) |
+| `bcs/src/md.rs` | 36 |
+| `tbank/src/md.rs`, `runtime/src/record.rs` | 30 каждый |
+| `finam/src/stream.rs`, `bcs/src/ud.rs`, `bcs-protocol/src/http/models.rs` | 27 каждый |
+| `bcs/src/map/order.rs` | 26 (было 57) |

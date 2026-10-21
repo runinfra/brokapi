@@ -22,6 +22,9 @@ use crate::v1::{
     stop_orders_service_client::StopOrdersServiceClient, users_service_client::UsersServiceClient,
 };
 
+/// How often an HTTP/2 PING goes out while a call or a stream is open.
+const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(300);
+
 /// Adds `authorization: Bearer <token>` (and `x-app-name`) to every request.
 ///
 /// The authorization value is marked sensitive, so tonic does not print it in debug output. One
@@ -125,9 +128,11 @@ pub struct TbankClient {
 impl TbankClient {
     /// Builds the channel without touching the network (connects on first use, reconnects on failure).
     ///
-    /// An `https://` endpoint gets TLS with the bundled web PKI roots. An `http://` endpoint is plain
-    /// text and meant for a local mock. HTTP/2 keep-alive pings run every 30 s, also on an idle
-    /// channel.
+    /// An `https://` endpoint gets TLS with the bundled web PKI roots, and the extra root certificate of
+    /// [`TbankConfig::root_certificate_pem`] if there is one. An `http://` endpoint is plain text and meant
+    /// for a local mock. HTTP/2 keep-alive pings run every 5 minutes and only while a call or a stream is
+    /// open: a server counts pings on an idle connection as abuse and closes it (`too_many_pings`), so none
+    /// are sent when nothing is open. A dead stream is found by the silence limit of the connector.
     ///
     /// # Errors
     ///
@@ -157,11 +162,20 @@ impl TbankClient {
             .map_err(|e| ProtocolError::Config(format!("endpoint {}: {e}", cfg.endpoint)))?
             .connect_timeout(cfg.connect_timeout)
             .tcp_nodelay(true)
-            .http2_keep_alive_interval(Duration::from_secs(30))
-            .keep_alive_timeout(Duration::from_secs(10))
-            .keep_alive_while_idle(true);
+            .http2_keep_alive_interval(KEEP_ALIVE_INTERVAL)
+            .keep_alive_timeout(Duration::from_secs(20))
+            .keep_alive_while_idle(false);
         if cfg.endpoint.starts_with("https://") {
-            endpoint = endpoint.tls_config(ClientTlsConfig::new().with_webpki_roots())?;
+            let mut tls = ClientTlsConfig::new().with_webpki_roots();
+            if let Some(pem) = &cfg.root_certificate_pem {
+                if !pem.windows(11).any(|w| w == b"-----BEGIN ") {
+                    return Err(ProtocolError::Config(
+                        "root_certificate_pem holds no PEM certificate".into(),
+                    ));
+                }
+                tls = tls.ca_certificate(tonic::transport::Certificate::from_pem(pem));
+            }
+            endpoint = endpoint.tls_config(tls)?;
         }
         Ok(Self {
             channel: endpoint.connect_lazy(),

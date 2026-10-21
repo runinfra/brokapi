@@ -102,6 +102,7 @@ pub struct PlaceStopOrderRequest {
 
 /// Lifecycle of a stop order at the broker.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum StopOrderState {
     /// Waiting for the trigger.
     Active,

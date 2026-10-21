@@ -126,7 +126,7 @@ impl Settings {
     /// BCS_REFRESH_TOKEN, BCS_IS_WRITE, TBANK_TOKEN, TBANK_SANDBOX, TBANK_ACCOUNT_ID, TBANK_ACCOUNT_ID_2, FINAM_SECRET,
     /// FINAM_ACCOUNT_ID.
     pub fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
-        dotenv::dotenv().ok();
+        dotenvy::dotenv().ok();
         let (finam, account) = brokapi::finam::api_config_from_env()?;
         Ok(Self {
             bcs: brokapi::bcs::protocol::config::BcsConfig::from_env()?,
@@ -412,7 +412,8 @@ impl Infra {
                 Placed::NotSent(e.to_string())
             }
             // Unknown or Transport: the order may exist. Leave `Sending`: it is in the ledger of the next reconcile.
-            Err(Error::Unknown | Error::Transport(_)) => Placed::Unknown,
+            // An error a later version adds is treated the same way: the safe reading is "may exist".
+            Err(_) => Placed::Unknown,
         }
     }
     // ANCHOR_END: place
@@ -480,6 +481,7 @@ fn state_word(state: &OrderState) -> &'static str {
         OrderState::Filled { .. } => "filled",
         OrderState::Cancelled { .. } => "cancelled",
         OrderState::Rejected { .. } => "rejected",
+        _ => "unknown",
     }
 }
 

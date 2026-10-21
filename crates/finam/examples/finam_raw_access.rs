@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // The mock server must stay alive while the example runs.
     let (api, _mock): (FinamApiConfig, Option<MockServer>) = if live {
-        dotenv::dotenv().ok();
+        dotenvy::dotenv().ok();
         let (api, _account) = api_config_from_env()?;
         (api, None)
     } else {

@@ -12,7 +12,7 @@ use kanal;
 use tokio::time::Duration;
 
 fn setup() -> BcsConfig {
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
     BcsConfig::from_env().expect("Config error")
 }
 

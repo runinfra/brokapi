@@ -747,7 +747,8 @@ impl BcsHttpClient {
         &self,
         request: CreateOrderRequest,
     ) -> Result<OrderOperationResponse, BcsApiError> {
-        self.post(ORDERS_OPERATIONS_PATH, &Some(&request)).await
+        self.post_command(ORDERS_OPERATIONS_PATH, &Some(&request))
+            .await
     }
 
     /// Cancels an order, the **deprecated** form with the id in the path: `POST .../orders/{id}/cancel`.
@@ -770,7 +771,7 @@ impl BcsHttpClient {
             "{}/{}/cancel",
             ORDERS_OPERATIONS_PATH, original_client_order_id
         );
-        self.post(&url, &Some(&request)).await
+        self.post_command(&url, &Some(&request)).await
     }
 
     /// Changes an order, the **deprecated** form with the id in the path: `POST .../orders/{id}`.
@@ -788,7 +789,7 @@ impl BcsHttpClient {
         request: ModifyOrderRequest,
     ) -> Result<OrderOperationResponse, BcsApiError> {
         let url = format!("{}/{}", ORDERS_OPERATIONS_PATH, original_client_order_id);
-        self.post(&url, &Some(&request)).await
+        self.post_command(&url, &Some(&request)).await
     }
 
     /// Places an order and waits for the broker to process it: `POST .../orders/sync`.
@@ -835,7 +836,7 @@ impl BcsHttpClient {
         &self,
         request: &CreateOrderRequest,
     ) -> Result<OrderStateListResponse, BcsApiError> {
-        self.post(&format!("{}/sync", ORDERS_OPERATIONS_PATH), request)
+        self.post_command(&format!("{}/sync", ORDERS_OPERATIONS_PATH), request)
             .await
     }
 
@@ -888,7 +889,7 @@ impl BcsHttpClient {
         &self,
         request: &CancelByIdRequest,
     ) -> Result<OrderOperationResponse, BcsApiError> {
-        self.post(&format!("{}/cancel", ORDERS_OPERATIONS_PATH), request)
+        self.post_command(&format!("{}/cancel", ORDERS_OPERATIONS_PATH), request)
             .await
     }
 
@@ -932,7 +933,7 @@ impl BcsHttpClient {
         &self,
         request: &CancelByIdRequest,
     ) -> Result<OrderStateListResponse, BcsApiError> {
-        self.post(&format!("{}/cancel/sync", ORDERS_OPERATIONS_PATH), request)
+        self.post_command(&format!("{}/cancel/sync", ORDERS_OPERATIONS_PATH), request)
             .await
     }
 
@@ -991,7 +992,7 @@ impl BcsHttpClient {
         &self,
         request: &EditOrderRequest,
     ) -> Result<OrderOperationResponse, BcsApiError> {
-        self.post(&format!("{}/edit", ORDERS_OPERATIONS_PATH), request)
+        self.post_command(&format!("{}/edit", ORDERS_OPERATIONS_PATH), request)
             .await
     }
 
@@ -1043,7 +1044,7 @@ impl BcsHttpClient {
         &self,
         request: &EditOrderRequest,
     ) -> Result<OrderStateListResponse, BcsApiError> {
-        self.post(&format!("{}/edit/sync", ORDERS_OPERATIONS_PATH), request)
+        self.post_command(&format!("{}/edit/sync", ORDERS_OPERATIONS_PATH), request)
             .await
     }
 

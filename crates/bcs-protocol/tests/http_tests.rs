@@ -11,7 +11,7 @@ use brokapi_bcs_protocol::http::models::{
 use chrono::Utc;
 
 fn setup() -> (BcsConfig, BcsHttpClient) {
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
     let config = BcsConfig::from_env().expect("Config error");
     let client = BcsHttpClient::new(config.clone()).expect("Client error");
     (config, client)

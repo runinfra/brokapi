@@ -22,6 +22,7 @@ use super::order::ClientOrderId;
 /// assert_ne!(polite, ShutdownMode::Immediate);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ShutdownMode {
     /// Stop taking commands (they get [`Error::ShuttingDown`](crate::Error::ShuttingDown)),
     /// unsubscribe the way the broker's protocol wants where the connector does that, flush the
@@ -46,6 +47,7 @@ pub enum ShutdownMode {
 /// assert!(report.inflight_abandoned.is_empty());
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ShutdownReport {
     /// Subscriptions closed in the broker's protocol.
     pub unsubscribed: usize,
@@ -59,6 +61,19 @@ pub struct ShutdownReport {
 }
 
 impl ShutdownReport {
+    /// A report with the given counts. The struct is `#[non_exhaustive]`: build it with this function.
+    pub fn new(
+        unsubscribed: usize,
+        unsubscribe_failed: usize,
+        inflight_abandoned: Vec<ClientOrderId>,
+    ) -> Self {
+        Self {
+            unsubscribed,
+            unsubscribe_failed,
+            inflight_abandoned,
+        }
+    }
+
     /// A report of a shutdown that had nothing to do.
     pub fn empty() -> Self {
         Self {

@@ -9,7 +9,7 @@ use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use brokapi_core::{ENVELOPE_SCHEMA, Envelope, Event, SubscriptionId, Timestamps};
+use brokapi_core::{Envelope, Event, SubscriptionId, Timestamps};
 use brokapi_runtime::{BackpressureManager, PushResult};
 use brokapi_sansio::CoreEvent;
 use tokio::sync::mpsc;
@@ -55,7 +55,7 @@ fn event_ts(ev: &Event) -> Timestamps {
         Event::Portfolio(p) => Some(p.ts),
         Event::Positions(v) => v.first().map(|p| p.ts),
         Event::Balances(v) => v.first().map(|b| b.ts),
-        Event::Resync { .. } | Event::Overflow { .. } | Event::Reconnected { .. } => None,
+        _ => None,
     };
     ts.unwrap_or_else(|| Timestamps::new(now_nanos(), brokapi_runtime::now()))
 }
@@ -69,13 +69,7 @@ struct Egress {
 
 impl Egress {
     fn envelope(&self, sub: Option<SubscriptionId>, payload: Event) -> Envelope {
-        Envelope {
-            schema: ENVELOPE_SCHEMA,
-            source: Arc::clone(&self.source),
-            sub,
-            ts: event_ts(&payload),
-            payload,
-        }
+        Envelope::new(Arc::clone(&self.source), event_ts(&payload), payload).with_sub_opt(sub)
     }
 
     fn pending(&self) -> bool {
@@ -109,6 +103,18 @@ impl Egress {
             return;
         };
         if is_control(&payload) {
+            // A `Resync` says "drop what you hold". What is still waiting in the buffer of this
+            // subscription was produced before it, so it goes out first, or the consumer would apply
+            // stale data after it had started over. An `Overflow` is different: the buffer is full of
+            // events that are already lost for the consumer's purposes, the notice goes out at once.
+            if matches!(payload, Event::Resync { .. }) {
+                loop {
+                    let next = bp.lock().expect("backpressure poisoned").pop_ready(sub);
+                    let Some(ev) = next else { break };
+                    let env = self.envelope(Some(sub), ev);
+                    self.control.push_back(env);
+                }
+            }
             let env = self.envelope(Some(sub), payload);
             self.control.push_back(env);
             return;
@@ -144,7 +150,8 @@ impl Egress {
 /// overflows. The user data connector uses it to mark itself degraded.
 ///
 /// Delivery order: control events (`Resync`, `Overflow`) first, then buffered data, one
-/// subscription after another. The pump never waits for a slow consumer inside the core: events wait
+/// subscription after another. A `Resync` does not overtake the data of its own subscription that is
+/// already buffered: that data goes out just before it. The pump never waits for a slow consumer inside the core: events wait
 /// in the subscription's buffer, and what the buffer's policy says happens when it is full (merge for
 /// `Conflate`, overflow for `Lossless`).
 ///

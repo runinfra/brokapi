@@ -55,22 +55,22 @@ fn round_trip<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(val
 #[test]
 fn envelope_with_every_kind_of_money_keeps_digits_times_and_cid() {
     let cid: ClientOrderId = "1c6f7e2a-6b2d-4c51-9a55-6f6a1d8e2b11".parse().unwrap();
-    let order = OrderSnapshot {
+    let order = OrderSnapshot::new(
         cid,
-        broker_id: Some(BrokerOrderId::new("98765")),
-        instrument: sber(),
-        state: OrderState::PartiallyFilled {
+        sber(),
+        OrderState::PartiallyFilled {
             cid,
             filled: qty("3"),
             left: qty("7"),
         },
-        side: Side::Buy,
-        order_type: OrderType::Limit,
-        qty: qty("10"),
-        filled: qty("3"),
-        price: Some(price("244.30")),
-        ts: ts(),
-    };
+        Side::Buy,
+        OrderType::Limit,
+        qty("10"),
+        ts(),
+    )
+    .with_broker_id(Some(BrokerOrderId::new("98765")))
+    .with_filled(qty("3"))
+    .with_price(Some(price("244.30")));
     let events = [
         Event::Order(order),
         Event::Execution(Execution {

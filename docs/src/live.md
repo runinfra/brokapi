@@ -233,7 +233,7 @@ cargo test -p brokapi-bcs --features integration-live --test live live_stop_orde
    статус 5)? Мы считаем ответ об успехе, если нет `orderStatus = 8`, и берем `orderId` из ответа как номер брокера. Что значит
    `orderQuantity` при правке частично исполненной заявки (весь объем или остаток): при неуказанном количестве мы такую
    заявку отказываем (`qty_required`). Нужен ли `orderType` в теле правки лимитной заявки (мы не шлем).
-8. **Лимиты.** Совпадают ли значения `configs/bcs_limits.toml` с тем, что отвечает сервер (сценарий 15,
+8. **Лимиты.** Совпадают ли значения `crates/bcs/limits.toml` с тем, что отвечает сервер (сценарий 15,
    `RateLimited` и `retry_after`). Появились маршруты `PlaceStopOrder`, `CancelStopOrder`, `GetOrder`, `SearchOrders`,
    `SearchTrades`, `GetLastTrades`, `GetCandles`, `GetDailySchedule`, `GetTradingStatus`, `GetInstrumentsBy*`.
 9. **Реконнект WS и повтор подписок** (сценарий 5): восстанавливаются ли MD и UD потоки без потери подписок. Что приходит

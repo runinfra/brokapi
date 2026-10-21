@@ -551,11 +551,6 @@ impl WsSession {
                     frame = read.next() => {
                         match frame {
                             Some(Ok(Message::Text(text))) => {
-                                // RAW лог для OrderTransaction
-                                if channel == BcsWsChannel::OrderTransaction {
-                                    info!("[WS_SESSION] OrderTransaction received: {}", text);
-                                }
-
                                 let incoming = parse_incoming(&text, channel);
                                 match event_tx.try_send(incoming) {
                                     Ok(true) => {}

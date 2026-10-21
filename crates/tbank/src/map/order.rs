@@ -148,18 +148,18 @@ pub fn state(p: &OrderParts, cid: ClientOrderId, now: Instant) -> OrderState {
 /// `price` is per one instrument. The cid is [`OrderParts::cid`].
 pub fn snapshot(p: &OrderParts, now: Instant) -> OrderSnapshot {
     let cid = p.cid();
-    OrderSnapshot {
+    OrderSnapshot::new(
         cid,
-        broker_id: (!p.exchange_id.is_empty()).then(|| BrokerOrderId::new(p.exchange_id.clone())),
-        instrument: p.instrument.clone(),
-        state: state(p, cid, now),
-        side: side(p.direction),
-        order_type: order_type(p.order_type),
-        qty: p.qty_requested(),
-        filled: p.qty_executed(),
-        price: p.unit_price,
-        ts: stamps(now, p.broker_ts.as_ref()),
-    }
+        p.instrument.clone(),
+        state(p, cid, now),
+        side(p.direction),
+        order_type(p.order_type),
+        p.qty_requested(),
+        stamps(now, p.broker_ts.as_ref()),
+    )
+    .with_broker_id((!p.exchange_id.is_empty()).then(|| BrokerOrderId::new(p.exchange_id.clone())))
+    .with_filled(p.qty_executed())
+    .with_price(p.unit_price)
 }
 
 fn price_of(m: &Option<pb::MoneyValue>) -> Option<Price> {

@@ -301,25 +301,55 @@ impl MdCore {
         None
     }
 
+    /// Fails the pending subscriptions the error frame is about. The frame names no subscription, only a
+    /// code and a text. So: if exactly one subscription is pending, it is that one. If several are, the
+    /// ones whose ticker the text mentions. If the text names none of them (or there is no text to read),
+    /// the error cannot be placed and all pending subscriptions fail, as the safe reading.
     fn fail_pending(&mut self, reason: &str) {
-        for (id, state) in &mut self.actual {
-            if *state == SubState::Pending {
-                *state = SubState::Failed;
-                let _ = reason; // reason stored at runtime layer in P4
-                let _ = id;
-            }
+        let pending: Vec<SubscriptionId> = self
+            .actual
+            .iter()
+            .filter(|(_, st)| **st == SubState::Pending)
+            .map(|(id, _)| *id)
+            .collect();
+        let text = reason.to_uppercase();
+        let mentioned: Vec<SubscriptionId> = self
+            .desired
+            .subs()
+            .iter()
+            .filter(|s| pending.contains(&s.id))
+            .filter(|s| {
+                let symbol = match &s.kind {
+                    SubscriptionKind::OrderBook { instrument, .. }
+                    | SubscriptionKind::Quotes { instrument }
+                    | SubscriptionKind::LastTrades { instrument }
+                    | SubscriptionKind::LastCandle { instrument, .. } => &instrument.key.symbol,
+                    _ => return false,
+                };
+                !symbol.is_empty() && text.contains(&symbol.to_uppercase())
+            })
+            .map(|s| s.id)
+            .collect();
+        let failed: Vec<SubscriptionId> = if pending.len() == 1 || mentioned.is_empty() {
+            pending
+        } else {
+            mentioned
+        };
+        for id in failed {
+            self.actual.insert(id, SubState::Failed);
         }
     }
 
     /// Feeds one raw text frame of the market data WebSocket.
     ///
-    /// A frame with an `errors` array is a subscribe error: every pending subscription becomes
-    /// [`SubState::Failed`] and no event is pushed. Any other frame is parsed and handled like
+    /// A frame with an `errors` array is a subscribe error: the pending subscription it is about becomes
+    /// [`SubState::Failed`] (all pending ones if the frame does not say which, see `fail_pending`) and no
+    /// event is pushed. Any other frame is parsed and handled like
     /// [`on_frame`](BrokerCore::on_frame) does. A frame that cannot be parsed is skipped, there is
     /// no error to return.
     pub fn feed_raw(&mut self, text: &str, now: Instant, out: &mut EventSink) {
-        if let Some(_err) = parse_subscribe_error(text) {
-            self.fail_pending("subscribe error");
+        if let Some(reason) = parse_subscribe_error(text) {
+            self.fail_pending(&reason);
             return;
         }
         let frame = parse_incoming(text, BcsWsChannel::MarketData);

@@ -87,6 +87,17 @@ impl OrderIndex {
         i.cid_by_order.insert(order_id.to_string(), cid);
     }
 
+    /// Forgets everything kept for `cid`: the pair with its Finam order id and its tag. For an order that
+    /// finished long ago. A later echo of that order resolves through its comment again, or to a made-up cid.
+    pub fn forget(&self, cid: ClientOrderId) {
+        let tag = FinamCidCodec.client_order_id(cid);
+        let mut i = self.inner.lock().expect("index poisoned");
+        if let Some(order_id) = i.order_by_cid.remove(&cid) {
+            i.cid_by_order.remove(&order_id);
+        }
+        i.cid_by_tag.remove(&tag);
+    }
+
     /// Finam order id of `cid`, if this process has seen the pair. `None` does not mean the order
     /// does not exist: after a restart call `reconcile` first.
     pub fn order_id(&self, cid: ClientOrderId) -> Option<String> {
@@ -116,9 +127,26 @@ impl OrderIndex {
                 .or_else(|| i.cid_by_tag.get(client_order_id))
                 .copied()
         });
-        let cid = found.unwrap_or_else(|| foreign_cid(order_id));
-        self.bind(cid, order_id);
-        cid
+        match found {
+            Some(cid) => {
+                self.bind(cid, order_id);
+                cid
+            }
+            None => {
+                // Not ours. The made-up cid is remembered one way only (cid -> order id, so that the
+                // order can be cancelled by it). The order id does not map back to it, so `lookup` keeps
+                // saying "not ours" and the fills of foreign orders carry no cid.
+                let cid = foreign_cid(order_id);
+                if !order_id.is_empty() {
+                    self.inner
+                        .lock()
+                        .expect("index poisoned")
+                        .order_by_cid
+                        .insert(cid, order_id.to_string());
+                }
+                cid
+            }
+        }
     }
 }
 

@@ -44,6 +44,37 @@ use brokapi_sansio::OrderSignal;
 
 type UdWrap<M> = Arc<dyn Fn(StreamEvent<M>) -> UdFrame + Send + Sync>;
 
+/// The cids of stop orders already sent, bounded: the oldest are forgotten after [`SENT_CIDS_CAP`] newer
+/// ones, so the guarantee "a cid is sent once" holds inside that window.
+#[derive(Default)]
+struct SentCids {
+    set: std::collections::HashSet<ClientOrderId>,
+    order: std::collections::VecDeque<ClientOrderId>,
+}
+
+/// How many stop-order cids the connector remembers as sent.
+const SENT_CIDS_CAP: usize = 10_000;
+
+impl SentCids {
+    /// `false` when the cid is there already.
+    fn insert(&mut self, cid: ClientOrderId) -> bool {
+        if !self.set.insert(cid) {
+            return false;
+        }
+        self.order.push_back(cid);
+        while self.order.len() > SENT_CIDS_CAP {
+            if let Some(old) = self.order.pop_front() {
+                self.set.remove(&old);
+            }
+        }
+        true
+    }
+
+    fn remove(&mut self, cid: &ClientOrderId) {
+        self.set.remove(cid);
+    }
+}
+
 struct UdShared {
     rpc: Rpc,
     account_id: String,
@@ -53,7 +84,7 @@ struct UdShared {
     locks: InstrumentLocks,
     price_grid: PriceGrid,
     /// Cids of stop orders already sent: the library never sends the same one twice.
-    stops_sent: Mutex<std::collections::HashSet<ClientOrderId>>,
+    stops_sent: Mutex<SentCids>,
     backpressure: SharedBackpressure,
     streams: Arc<Mutex<HashMap<SubscriptionId, StreamHandle>>>,
     frames: mpsc::Sender<UdFrame>,
@@ -62,6 +93,34 @@ struct UdShared {
     order_state_buffer: usize,
     executions_limit: i32,
     ack_timeout: Duration,
+}
+
+impl UdShared {
+    fn signal(&self, cid: ClientOrderId, signal: OrderSignal) {
+        self.core
+            .lock()
+            .expect("core poisoned")
+            .orders()
+            .apply_signal(cid, signal, brokapi_runtime::now());
+    }
+
+    /// Folds a failed command into the public error and the local order lifecycle.
+    fn command_failed(&self, cid: ClientOrderId, e: &FinamError) -> Error {
+        let err = map_command_err(e);
+        match &err {
+            Error::Unknown => self.signal(cid, OrderSignal::Timeout),
+            other => self.signal(
+                cid,
+                OrderSignal::Rejected {
+                    reason: other.to_string(),
+                },
+            ),
+        }
+        if matches!(err, Error::Unknown) {
+            warn!(?cid, error = %e, "place outcome unknown");
+        }
+        err
+    }
 }
 
 /// Finam user data connector for ONE account: orders, stop orders, own trades and the portfolio.
@@ -316,6 +375,11 @@ impl UserDataConnector {
         let (frames, rx) = mpsc::channel::<UdFrame>(1024);
         let index = Arc::new(OrderIndex::new());
         let core = Arc::new(Mutex::new(UdCore::new(Arc::clone(&index))));
+        // A placement is given up after its request has certainly ended.
+        core.lock()
+            .expect("core poisoned")
+            .orders()
+            .set_command_timeout(cfg.api.request_timeout + Duration::from_secs(10));
         let backpressure: SharedBackpressure = Arc::new(Mutex::new(BackpressureManager::new()));
         let shutdown = Arc::new(Mutex::new(ShutdownController::new(CommandGate::new())));
         let streams: Arc<Mutex<HashMap<SubscriptionId, StreamHandle>>> = Arc::default();
@@ -391,7 +455,72 @@ impl UserDataConnector {
             executions_limit: cfg.executions_limit,
             ack_timeout: cfg.subscribe_ack_timeout,
         });
+        // The safety net for a placement whose task ended without an answer (it normally cannot: see
+        // `place`), and the pruning of what is kept for orders that finished long ago.
+        {
+            let (weak, cancel) = (
+                Arc::downgrade(&inner),
+                inner
+                    .shutdown
+                    .lock()
+                    .expect("shutdown poisoned")
+                    .child_token(),
+            );
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(Duration::from_secs(5));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                loop {
+                    tokio::select! {
+                        _ = cancel.cancelled() => return,
+                        _ = tick.tick() => {}
+                    }
+                    let Some(inner) = weak.upgrade() else { return };
+                    let now = brokapi_runtime::now();
+                    let forgotten = {
+                        let mut core = inner.core.lock().expect("core poisoned");
+                        core.orders().sweep_timeouts(now);
+                        core.take_forgotten()
+                    };
+                    for cid in forgotten {
+                        inner.locks.forget(cid);
+                    }
+                }
+            });
+        }
         Ok(Self { inner, pump })
+    }
+
+    /// How many commands are in flight: sent, and the answer has not been taken yet. Zero when all of them
+    /// are settled. A `place` runs to its end even if the caller drops its future, so this number goes back
+    /// to zero by itself. For health checks and tests.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use brokapi_finam::limits::default_limits;
+    /// use brokapi_finam::{FinamApiConfig, UserDataConfig, UserDataConnector};
+    /// use brokapi_core::ShutdownMode;
+    /// use brokapi_runtime::BrokerLimiter;
+    /// # use brokapi_mocks::finam::{MockServer, SECRET};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let server = MockServer::start().await;
+    /// # let api = FinamApiConfig::new(SECRET).with_endpoint(server.url.clone());
+    /// let (events_tx, _events) = tokio::sync::mpsc::channel(16);
+    /// let ud = UserDataConnector::start(UserDataConfig::new(api, "ACC1", "finam-ud"), BrokerLimiter::new(&default_limits()), events_tx).await?;
+    /// assert_eq!(ud.in_flight_orders(), 0);
+    /// ud.shutdown(ShutdownMode::Immediate).await;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn in_flight_orders(&self) -> usize {
+        self.inner
+            .core
+            .lock()
+            .expect("core poisoned")
+            .orders()
+            .in_flight_count()
     }
 
     /// Account this connector trades and reads.
@@ -477,17 +606,18 @@ impl UserDataConnector {
     /// # }
     /// ```
     pub fn caps(&self) -> UserDataCaps {
-        UserDataCaps {
-            place_idempotency: PlaceIdempotency::LabelOnly,
-            ws_rpc: false,
-            ordered_command_channel: false,
-            // Finam has no amend call. Cancel + new order is not an emulation we offer: it is not
-            // atomic (the old order can fill between the two, or the new one be refused after the cancel).
-            supports_replace: false,
-            supports_stop_orders: true,
-            streams_executions: true,
-            sandbox: false,
-        }
+        // `supports_replace` is false: Finam has no amend call. Cancel + new order is not an emulation we
+        // offer: it is not atomic (the old order can fill between the two, or the new one be refused
+        // after the cancel).
+        UserDataCaps::new(
+            PlaceIdempotency::LabelOnly,
+            false,
+            false,
+            false,
+            true,
+            true,
+            false,
+        )
     }
 
     /// State of a subscription's stream (connecting, active, reconnecting, failed).
@@ -599,7 +729,7 @@ impl UserDataConnector {
                     }
                 }
             }
-            ShutdownMode::Immediate => handles.into_iter().for_each(StreamHandle::abort),
+            _ => handles.into_iter().for_each(StreamHandle::abort),
         }
         // Step 4-6: abandon in-flight commands (exchange orders stay), cancel the root token.
         let report = {
@@ -763,14 +893,18 @@ impl UserDataConnector {
             depth: None,
         }
     }
+}
 
-    fn signal(&self, cid: ClientOrderId, signal: OrderSignal) {
-        self.inner
-            .core
-            .lock()
-            .expect("core poisoned")
-            .orders()
-            .apply_signal(cid, signal, brokapi_runtime::now());
+#[async_trait]
+impl brokapi_core::Connector for UserDataConnector {
+    type Caps = brokapi_core::UserDataCaps;
+
+    fn caps(&self) -> brokapi_core::UserDataCaps {
+        UserDataConnector::caps(self)
+    }
+
+    async fn shutdown(self, mode: brokapi_core::ShutdownMode) -> brokapi_core::ShutdownReport {
+        UserDataConnector::shutdown(self, mode).await
     }
 }
 
@@ -832,47 +966,59 @@ impl OrderExecutor for UserDataConnector {
         }
         self.inner.index.know(req.cid);
 
-        let sent = self
-            .inner
-            .rpc
-            .send_command(|api| {
-                let body = body.clone();
-                async move { api.orders().place_order(body).await }
-            })
-            .await;
-        match sent {
-            Ok(os) => {
-                if let Some(rej) = rejection_of(&os) {
-                    self.signal(
-                        req.cid,
-                        OrderSignal::Rejected {
-                            reason: rej.to_string(),
+        let cid = req.cid;
+        let inner = Arc::clone(&self.inner);
+        // From here the cid is marked and the order is in flight. The request, the answer and the update of
+        // the order run as a task of their own: if the caller drops this future, the task still ends and
+        // the order does not stay in flight for ever.
+        let work = async move {
+            let _instrument = _instrument;
+            let sent = inner
+                .rpc
+                .send_command(|api| {
+                    let body = body.clone();
+                    async move { api.orders().place_order(body).await }
+                })
+                .await;
+            match sent {
+                Ok(os) => {
+                    if let Some(rej) = rejection_of(&os) {
+                        inner.signal(
+                            cid,
+                            OrderSignal::Rejected {
+                                reason: rej.to_string(),
+                            },
+                        );
+                        return Err(rej);
+                    }
+                    if os.order_id.is_empty() {
+                        inner.signal(cid, OrderSignal::Timeout);
+                        return Err(Error::Unknown);
+                    }
+                    inner.index.bind(cid, &os.order_id);
+                    let broker_id = brokapi_core::BrokerOrderId::new(os.order_id.clone());
+                    inner.signal(
+                        cid,
+                        OrderSignal::Ack {
+                            broker_id: broker_id.clone(),
                         },
                     );
-                    return Err(rej);
+                    Ok(OrderAck {
+                        cid,
+                        broker_id,
+                        ts: timestamps(
+                            os.accept_at.as_ref().or(os.transact_at.as_ref()),
+                            brokapi_runtime::now(),
+                        ),
+                    })
                 }
-                if os.order_id.is_empty() {
-                    self.signal(req.cid, OrderSignal::Timeout);
-                    return Err(Error::Unknown);
-                }
-                self.inner.index.bind(req.cid, &os.order_id);
-                let broker_id = brokapi_core::BrokerOrderId::new(os.order_id.clone());
-                self.signal(
-                    req.cid,
-                    OrderSignal::Ack {
-                        broker_id: broker_id.clone(),
-                    },
-                );
-                Ok(OrderAck {
-                    cid: req.cid,
-                    broker_id,
-                    ts: timestamps(
-                        os.accept_at.as_ref().or(os.transact_at.as_ref()),
-                        brokapi_runtime::now(),
-                    ),
-                })
+                Err(e) => Err(inner.command_failed(cid, &e)),
             }
-            Err(e) => Err(self.command_failed(req.cid, &e)),
+        };
+        match brokapi_runtime::run_detached(work).await {
+            Some(result) => result,
+            // The task was torn down with the runtime: the order may exist.
+            None => Err(Error::Unknown),
         }
     }
 
@@ -1090,24 +1236,6 @@ impl UserDataConnector {
             .map(|t| map_trade(t, index.lookup(&t.order_id, &t.comment), now))
             .collect()
     }
-
-    /// Folds a failed command into the public error and the local order lifecycle.
-    fn command_failed(&self, cid: ClientOrderId, e: &FinamError) -> Error {
-        let err = map_command_err(e);
-        match &err {
-            Error::Unknown => self.signal(cid, OrderSignal::Timeout),
-            other => self.signal(
-                cid,
-                OrderSignal::Rejected {
-                    reason: other.to_string(),
-                },
-            ),
-        }
-        if matches!(err, Error::Unknown) {
-            warn!(?cid, error = %e, "place outcome unknown");
-        }
-        err
-    }
 }
 
 #[async_trait]
@@ -1224,6 +1352,15 @@ impl PortfolioSource for UserDataConnector {
     ///
     /// Quantity is signed (short is negative). Finam reports no blocked amount per currency, so
     /// `blocked` is 0. The average price is missing for futures positions.
+    ///
+    /// **Theoretical positions.** The broker's list of positions holds the open ones **plus the
+    /// theoretical ones** that active orders would create ("открытые, плюс теоретические (по неисполненным
+    /// активным заявкам)" in its description of `GetAccount`). The answer has no field that tells the two
+    /// apart, so the connector cannot filter them out or mark them. A working buy order for 10 shares you do
+    /// not hold can show as a position of 10. Do not size an order from this list while orders are
+    /// working: take the position from your own fills ([`ExecutionSource`]) or look at it when
+    /// [`active_orders`](OrderExecutor::active_orders) is empty. Not verified against the live API how the
+    /// broker prices and prints such a position.
     ///
     /// # Errors
     ///

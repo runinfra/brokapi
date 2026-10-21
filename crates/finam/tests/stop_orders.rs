@@ -174,6 +174,7 @@ async fn plain_lists_and_reconcile_do_not_show_stop_orders() {
         confirmed,
         closed_offline,
         foreign,
+        ..
     } = ud.reconcile(&[]).await.unwrap();
     assert!(
         confirmed.is_empty() && closed_offline.is_empty() && foreign.is_empty(),

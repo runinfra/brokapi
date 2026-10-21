@@ -1001,7 +1001,9 @@ fn stop_request(
 /// # let server = brokapi_mocks::bcs::MockServer::start(std::sync::Arc::clone(&opts)).await;
 /// # let cfg = brokapi_bcs_protocol::config::BcsConfig::for_mock("mock-refresh-token", &server.http_base).with_write(true);
 /// # let (tx, mut rx) = tokio::sync::mpsc::channel(256);
-/// # let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), BrokerLimiter::new(&default_limits()), tx).await?;
+/// # let mut limits = default_limits();
+/// # for bucket in limits.buckets.values_mut() { bucket.burst = 100; } // the scenario is quick, it tests the connector and not the budget
+/// # let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), BrokerLimiter::new(&limits), tx).await?;
 /// # let sber = InstrumentId::new(InstrumentKey::new("SBER", "TQBR"), NativeId::TickerClass { ticker: "SBER".into(), class_code: "TQBR".into() });
 /// brokapi_conformance::reconcile(&ud).await;
 /// assert!(ud.caps().supports_stop_orders);

@@ -78,6 +78,7 @@ impl BrokerOrderId {
 /// assert!(!is_final(&part));
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum OrderState {
     /// The command was sent and the answer has not come yet. Local state of the connector's order
     /// tracking, so a snapshot read from the broker normally does not have it.
@@ -133,6 +134,163 @@ pub enum OrderState {
         /// The broker's reason, for a human.
         reason: String,
     },
+}
+
+impl OrderState {
+    /// The client order id, the same in every state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use brokapi_core::{ClientOrderId, OrderState};
+    ///
+    /// let cid = ClientOrderId::new_v4();
+    /// assert_eq!(OrderState::Filled { cid }.cid(), cid);
+    /// ```
+    pub fn cid(&self) -> ClientOrderId {
+        match self {
+            Self::InFlight { cid, .. }
+            | Self::Unknown { cid, .. }
+            | Self::Acked { cid, .. }
+            | Self::PartiallyFilled { cid, .. }
+            | Self::Filled { cid }
+            | Self::Cancelled { cid }
+            | Self::Rejected { cid, .. } => *cid,
+        }
+    }
+
+    /// The name of the state, for logs and error texts (`"Filled"`, `"PartiallyFilled"`, ...).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use brokapi_core::{ClientOrderId, OrderState};
+    ///
+    /// assert_eq!(OrderState::Cancelled { cid: ClientOrderId::new_v4() }.name(), "Cancelled");
+    /// ```
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::InFlight { .. } => "InFlight",
+            Self::Unknown { .. } => "Unknown",
+            Self::Acked { .. } => "Acked",
+            Self::PartiallyFilled { .. } => "PartiallyFilled",
+            Self::Filled { .. } => "Filled",
+            Self::Cancelled { .. } => "Cancelled",
+            Self::Rejected { .. } => "Rejected",
+        }
+    }
+
+    /// `true` for the states that never change again: `Filled`, `Cancelled`, `Rejected`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use brokapi_core::{ClientOrderId, OrderState};
+    ///
+    /// let cid = ClientOrderId::new_v4();
+    /// assert!(OrderState::Filled { cid }.is_final());
+    /// assert!(!OrderState::Acked { cid, broker_id: brokapi_core::BrokerOrderId::new("1") }.is_final());
+    /// ```
+    pub fn is_final(&self) -> bool {
+        matches!(
+            self,
+            Self::Filled { .. } | Self::Cancelled { .. } | Self::Rejected { .. }
+        )
+    }
+}
+
+impl OrderSnapshot {
+    /// A snapshot with the required fields: the order, its instrument, state, side, type, quantity and
+    /// time. `broker_id` and `price` are `None`, `filled` is zero. Set them with
+    /// [`with_broker_id`](Self::with_broker_id), [`with_filled`](Self::with_filled) and
+    /// [`with_price`](Self::with_price). The struct is `#[non_exhaustive]`: it gets new fields, so build
+    /// it with this function and not with a struct literal.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use brokapi_core::{
+    ///     BrokerOrderId, ClientOrderId, InstrumentId, InstrumentKey, NativeId, OrderSnapshot, OrderState,
+    ///     OrderType, Price, Qty, Side, Timestamps, UnixNanos,
+    /// };
+    ///
+    /// let cid = ClientOrderId::new_v4();
+    /// let sber = InstrumentId::new(
+    ///     InstrumentKey::new("SBER", "TQBR"),
+    ///     NativeId::TickerClass { ticker: "SBER".into(), class_code: "TQBR".into() },
+    /// );
+    /// let snap = OrderSnapshot::new(
+    ///     cid,
+    ///     sber,
+    ///     OrderState::Acked { cid, broker_id: BrokerOrderId::new("42") },
+    ///     Side::Buy,
+    ///     OrderType::Limit,
+    ///     Qty::from(10),
+    ///     Timestamps::new(UnixNanos::ZERO, std::time::Instant::now()),
+    /// )
+    /// .with_broker_id(Some(BrokerOrderId::new("42")))
+    /// .with_price(Some(Price::from(250)));
+    /// assert_eq!(snap.price, Some(Price::from(250)));
+    /// assert!(snap.filled.is_zero());
+    /// ```
+    pub fn new(
+        cid: ClientOrderId,
+        instrument: InstrumentId,
+        state: OrderState,
+        side: Side,
+        order_type: OrderType,
+        qty: Qty,
+        ts: Timestamps,
+    ) -> Self {
+        Self {
+            cid,
+            broker_id: None,
+            instrument,
+            state,
+            side,
+            order_type,
+            qty,
+            filled: Qty::ZERO,
+            price: None,
+            ts,
+        }
+    }
+
+    /// Sets the broker's id of the order.
+    #[must_use]
+    pub fn with_broker_id(mut self, broker_id: Option<BrokerOrderId>) -> Self {
+        self.broker_id = broker_id;
+        self
+    }
+
+    /// Sets the executed quantity.
+    #[must_use]
+    pub fn with_filled(mut self, filled: Qty) -> Self {
+        self.filled = filled;
+        self
+    }
+
+    /// Sets the limit price.
+    #[must_use]
+    pub fn with_price(mut self, price: Option<Price>) -> Self {
+        self.price = price;
+        self
+    }
+}
+
+impl ReconcileReport {
+    /// A report of the three lists. The struct is `#[non_exhaustive]`: build it with this function.
+    pub fn new(
+        confirmed: Vec<OrderSnapshot>,
+        closed_offline: Vec<ClientOrderId>,
+        foreign: Vec<OrderSnapshot>,
+    ) -> Self {
+        Self {
+            confirmed,
+            closed_offline,
+            foreign,
+        }
+    }
 }
 
 /// A request to put a new order: see [`OrderExecutor::place`](crate::OrderExecutor::place).
@@ -217,6 +375,7 @@ pub struct OrderAck {
 /// [`OrderExecutor::active_orders`](crate::OrderExecutor::active_orders), and sent as
 /// [`Event::Order`](crate::Event::Order) on every change.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct OrderSnapshot {
     /// The cid of the order. For an order that was not placed through this connector and whose cid
     /// the broker does not give, the BCS connector makes a stable cid of its own from the broker id,
@@ -248,6 +407,7 @@ pub struct OrderSnapshot {
 /// Every order of the ledger is in `confirmed` or in `closed_offline`. Every active order that is
 /// not in the ledger is in `foreign`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ReconcileReport {
     /// In the ledger and active at the broker. The snapshot is the broker's current view.
     pub confirmed: Vec<OrderSnapshot>,
