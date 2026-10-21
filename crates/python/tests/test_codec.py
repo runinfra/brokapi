@@ -77,10 +77,17 @@ def test_backpressure_form_is_serde() -> None:
 
 
 def test_an_event_of_an_unknown_kind_does_not_break_the_stream() -> None:
-    event = models._decode_event({"Reconnected": {"sub": 3}})
+    event = models._decode_event({"BrandNew": {"sub": 3}})
     assert isinstance(event, models.UnknownEvent)
-    assert event.kind == "Reconnected"
+    assert event.kind == "BrandNew"
     assert event.data == {"sub": 3}
+
+
+def test_a_reconnect_of_the_order_stream_is_a_typed_event() -> None:
+    event = models._decode_event({"Reconnected": {"sub": 3, "gap_from": 1_700_000_000_000_000_000}})
+    assert isinstance(event, models.Reconnected)
+    assert event.sub == 3
+    assert event.gap_from.year == 2023
 
 
 def test_an_error_variant_from_a_newer_core_is_still_a_brokapi_error() -> None:

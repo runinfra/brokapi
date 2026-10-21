@@ -57,7 +57,7 @@ class Infra:
     def __init__(self, clients: dict[str, brokapi.Client], journal: Journal) -> None:
         self.clients = clients
         self.journal = journal
-        self.degraded: set[str] = set()  # accounts that lost events (Overflow): reconcile them before trading
+        self.degraded: set[str] = set()  # accounts that lost events (Overflow, Reconnected): reconcile them before trading
 
     @classmethod
     async def start(cls, settings: dict[str, dict], journal_path: Path) -> "Infra":
@@ -137,8 +137,9 @@ async def watch(infra: Infra) -> None:
         name = envelope.source.removesuffix("-ud").removesuffix("-md")
         if isinstance(event, brokapi.OrderSnapshot) and event.state.is_final:
             infra.journal.set(name, event.cid, "done", event.state.kind.value)
-        elif isinstance(event, brokapi.Overflow):
-            # Read the stream to the end, then reconcile. The loop does both: it reads, and marks the account.
+        elif isinstance(event, (brokapi.Overflow, brokapi.Reconnected)):
+            # Events were lost (a full buffer, or a stream of the orders that was cut and opened again). Read the
+            # stream to the end, then reconcile. The loop does both: it reads, and marks the account.
             infra.degraded.add(name)
 # ANCHOR_END: events
 

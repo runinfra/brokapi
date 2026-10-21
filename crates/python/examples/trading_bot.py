@@ -2,7 +2,7 @@
 
 The code of the page "Как написать торгового бота на событиях" of the Python section of the book. The strategy is a
 stub: when a book arrives and the bot has no order, buy the minimal quantity 1% below the best bid. Everything else
-(the journal, the reconcile, the outcome of every command, `Resync`, `Overflow`, the stop) any real bot needs.
+(the journal, the reconcile, the outcome of every command, `Resync`, `Overflow`, `Reconnected`, the stop) any real bot needs.
 
 The tests run it against the imitation of BCS.
 """
@@ -106,9 +106,12 @@ class TradingBot:
                 self.book_sub = await self.client.subscribe_order_book(self.instrument, depth=1)
             else:
                 self.need_reconcile = True  # the orders may have a hole: read the stream to the end, then reconcile
+        elif isinstance(event, brokapi.Reconnected):
+            # The stream of the orders or of the fills was cut and opened again: what happened in the gap never
+            # reached the bot. The gate is closed until the reconcile, so read the stream to the end, then reconcile.
+            self.need_reconcile = True
         elif isinstance(event, brokapi.UnknownEvent):
-            # A kind this package does not know. If it is about the order streams (a reconnect), the orders may
-            # have changed in the gap: reconcile.
+            # A kind this package does not know. It may be about lost data, like the two above: reconcile.
             self.need_reconcile = True
 
     def on_order(self, snapshot: brokapi.OrderSnapshot) -> None:
