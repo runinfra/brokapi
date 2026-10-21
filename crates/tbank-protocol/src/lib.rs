@@ -59,6 +59,11 @@ pub mod v1 {
     tonic::include_proto!("tinkoff.public.invest.api.contract.v1");
 }
 
+/// The descriptors of every service and message of the API, as a serialized `FileDescriptorSet` (the
+/// `.proto` files this crate is built from, with their imports). Load it into a descriptor pool to call a
+/// method by its name, see [`TbankClient::grpc`].
+pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/descriptor.bin"));
+
 pub use client::{AuthInterceptor, Authed, TbankClient};
 pub use config::{PROD_ENDPOINT, SANDBOX_ENDPOINT, TbankConfig};
 pub use error::ProtocolError;

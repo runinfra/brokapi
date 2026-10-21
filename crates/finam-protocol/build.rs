@@ -22,6 +22,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     compiler.include_imports(true);
     compiler.open_files(SERVICES)?;
     let mut fds = compiler.file_descriptor_set();
+    // The whole set with its imports, for code that calls a method by its name (`FILE_DESCRIPTOR_SET`).
+    // Taken before the filter below: a descriptor pool needs every file that a file imports.
+    let all = fds.clone();
 
     // Keep only what is needed to resolve types: the Trade API, google.type (Decimal, Money...) and
     // the well-known types (mapped to `prost_types`, no code generated). google.api / gateway options
@@ -32,6 +35,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             || name.starts_with("google/type/")
             || name.starts_with("google/protobuf/")
     });
+
+    let out = PathBuf::from(std::env::var("OUT_DIR")?);
+    std::fs::write(out.join("descriptor.bin"), prost::Message::encode_to_vec(&all))?;
 
     let mut config = tonic_prost_build::Config::new();
     config.include_file("all.rs");

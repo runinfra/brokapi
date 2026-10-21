@@ -23,6 +23,7 @@ tonic = { version = "0.14", default-features = false, features = ["channel", "co
 tonic-prost = "0.14"
 
 [build-dependencies]
+prost = "0.14"
 protox = "0.10"
 tonic-prost-build = { version = "0.14", default-features = false }
 

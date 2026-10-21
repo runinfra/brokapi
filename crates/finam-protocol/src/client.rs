@@ -309,6 +309,14 @@ impl FinamApi {
         )
     }
 
+    /// A generic gRPC client over the same channel and token, for a call that is not made through a
+    /// generated client: the method is named by a path (`/package.Service/Method`) and the messages are
+    /// whatever codec you give it. With [`FILE_DESCRIPTOR_SET`](crate::FILE_DESCRIPTOR_SET) it calls any
+    /// method of the API by name.
+    pub fn grpc(&self) -> tonic::client::Grpc<Authorized> {
+        tonic::client::Grpc::new(self.svc())
+    }
+
     /// `OrdersService`: place, cancel and read orders, order and trade streams.
     pub fn orders(&self) -> OrdersServiceClient<Authorized> {
         OrdersServiceClient::new(self.svc())
