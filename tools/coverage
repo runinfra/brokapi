@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Test coverage of the library code, per crate. Needs cargo-llvm-cov (a release binary goes to
+# ~/.cargo/bin) and the rustup component llvm-tools-preview.
+#
+#   tools/coverage            run all tests of the workspace, print a table per crate
+#   tools/coverage --html     the same, plus an HTML report in target/llvm-cov/html
+#   tools/coverage --uncovered  the same, plus the files with the most uncovered lines
+#
+# What is measured: the code of crates/*/src and src/. Not measured: the tests themselves, the broker
+# imitations (crates/mocks), the shared scenarios (crates/conformance), the examples, build scripts.
+# Doctests are run by tools/check but are not part of this number (llvm-cov counts them only on
+# nightly Rust). Line coverage is the headline number, regions are stricter (every branch of a match).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
+export PATH="$HOME/.cargo/bin:$PATH"
+
+mode="${1:-}"
+json="${CARGO_TARGET_DIR:-target}/llvm-cov.json"
+ignore='(/tests/|/examples/|crates/(mocks|conformance)/|/build\.rs$)'
+
+cargo llvm-cov --workspace --no-fail-fast --json --summary-only --ignore-filename-regex "$ignore" --output-path "$json"
+if [ "$mode" = "--html" ]; then
+    cargo llvm-cov report --html --ignore-filename-regex "$ignore"
+fi
+
+python3 - "$json" "$mode" <<'PY'
+import collections
+import json
+import re
+import sys
+
+data = json.load(open(sys.argv[1]))["data"][0]
+want_files = sys.argv[2] == "--uncovered"
+crates = collections.OrderedDict()
+files = []
+for f in data["files"]:
+    m = re.search(r"/crates/([^/]+)/", f["filename"])
+    name = m.group(1) if m else "brokapi (root)"
+    c = crates.setdefault(name, {"lines": [0, 0], "regions": [0, 0], "functions": [0, 0]})
+    for k in c:
+        c[k][0] += f["summary"][k]["covered"]
+        c[k][1] += f["summary"][k]["count"]
+    files.append((f["summary"]["lines"]["count"] - f["summary"]["lines"]["covered"], f["filename"]))
+
+def pct(a):
+    return "%6.2f%%" % (100.0 * a[0] / a[1]) if a[1] else "   n/a "
+
+print("%-18s %10s %10s %10s %8s" % ("crate", "lines", "regions", "functions", "missed"))
+tot = {"lines": [0, 0], "regions": [0, 0], "functions": [0, 0]}
+for name, c in sorted(crates.items()):
+    for k in tot:
+        tot[k][0] += c[k][0]
+        tot[k][1] += c[k][1]
+    print("%-18s %10s %10s %10s %8d" % (name, pct(c["lines"]), pct(c["regions"]), pct(c["functions"]), c["lines"][1] - c["lines"][0]))
+print("%-18s %10s %10s %10s %8d" % ("total", pct(tot["lines"]), pct(tot["regions"]), pct(tot["functions"]), tot["lines"][1] - tot["lines"][0]))
+if want_files:
+    print("\nfiles with the most uncovered lines:")
+    for missed, name in sorted(files, reverse=True)[:25]:
+        print("%6d  %s" % (missed, name.split("/out/")[-1]))
+PY

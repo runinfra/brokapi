@@ -273,6 +273,14 @@ supports_multiplex = false
     BrokerLimiter::new(&BrokerLimits::from_toml_str(raw).expect("valid limits"))
 }
 
+/// Spends the burst of a budget as of 20 ms from now. The reads that follow are refused until the real clock
+/// is past that moment, so the download has to wait for the limiter whatever the speed of the machine. (A
+/// budget that only refills fast would make the waits depend on how quick the imitation answers.)
+fn hold(budget: &BrokerLimiter) {
+    let later = brokapi::runtime::now() + Duration::from_millis(20);
+    while budget.acquire("GetCandles", later).is_ok() {}
+}
+
 /// What the test looks at.
 #[derive(Debug)]
 pub struct Result3 {
@@ -312,6 +320,9 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
         .synthetic_candles
         .store(true, Ordering::SeqCst);
 
+    // The small budgets of the three brokers, kept here so that the download can start with them spent.
+    let budgets = [small_budget(), small_budget(), small_budget()];
+
     // One channel for the live events of all three market data connectors.
     let (tx, live) = mpsc::channel::<Envelope>(4096);
     let finam_api =
@@ -321,7 +332,7 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
             bcs::protocol::config::BcsConfig::for_mock("mock-refresh-token", &bcs_server.http_base),
             "bcs-md",
         ),
-        small_budget(),
+        Arc::clone(&budgets[0]),
         tx.clone(),
     )
     .await?;
@@ -330,13 +341,13 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
             tbank::protocol::TbankConfig::for_mock(mtbank::TOKEN, &tbank_server.endpoint),
             "tbank-md",
         ),
-        small_budget(),
+        Arc::clone(&budgets[1]),
         tx.clone(),
     )
     .await?;
     let finam_md = finam::MarketDataConnector::start(
         finam::MarketDataConfig::new(finam_api, "finam-md"),
-        small_budget(),
+        Arc::clone(&budgets[2]),
         tx,
     )
     .await?;
@@ -397,6 +408,7 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
         UnixNanos::from_nanos(1_767_225_600_000_000_000), // 2026-01-01
         UnixNanos::from_nanos(1_798_761_600_000_000_000), // 2027-01-01
     );
+    budgets.iter().for_each(|b| hold(b));
     let (r_bcs, r_tbank, r_finam) = tokio::try_join!(
         download(&venues[0], Timeframe::H1, year, dir),
         download(&venues[1], Timeframe::H1, year, dir),

@@ -112,7 +112,7 @@ use tokio::time::timeout;
 ///         instrument: sber,
 ///         side: Side::Buy,
 ///         order_type: OrderType::Limit,
-///         qty: Qty::from(1),
+///         qty: lots(1),
 ///         price: Some(REJECT_PRICE),
 ///     })
 ///     .await;
@@ -140,6 +140,17 @@ pub const EVENT_TIMEOUT: Duration = Duration::from_secs(8);
 
 fn fail(scenario: &str, why: impl std::fmt::Display) -> ! {
     panic!("[conformance:{scenario}] {why}")
+}
+
+/// One lot of the instruments the mocks serve, in units: 10. The scenarios order whole lots, because an
+/// order of units that is not a whole number of lots is refused (`invalid_qty`) by the connectors that
+/// know the lot. A connector that does not look the lot up itself (BCS, Finam) is told the lot of the
+/// test instrument with `price_grid().set_lot(..)` in the test.
+pub const LOT: i64 = 10;
+
+/// `n` lots of the test instruments, in units.
+pub fn lots(n: i64) -> Qty {
+    Qty::from(n * LOT)
 }
 
 /// Reads envelopes from `rx` until `pred` accepts one, and returns that one.
@@ -562,7 +573,7 @@ pub async fn instrument_lookup<M: InstrumentSource + ?Sized>(
 /// Places a far-from-market limit order, reads its state by cid, cancels it.
 ///
 /// Steps and checks:
-/// 1. `place` a buy limit order, quantity 1, at `price`, with a fresh cid. The ack must carry the same
+/// 1. `place` a buy limit order, one lot, at `price`, with a fresh cid. The ack must carry the same
 ///    cid and a non-empty broker order id.
 /// 2. `order_state(cid)` must return a snapshot for that cid that is not `Rejected`.
 /// 3. `cancel(cid)` must succeed.
@@ -609,7 +620,7 @@ pub async fn place_and_cancel<U: OrderExecutor + ?Sized>(ud: &U, id: &Instrument
             instrument: id.clone(),
             side: Side::Buy,
             order_type: OrderType::Limit,
-            qty: Qty::from(1),
+            qty: lots(1),
             price: Some(price),
         })
         .await
@@ -636,7 +647,7 @@ pub async fn place_and_cancel<U: OrderExecutor + ?Sized>(ud: &U, id: &Instrument
 }
 
 /// `order_state` of a `cid` the broker has never seen is a refusal: [`Error::Rejected`] with code
-/// `not_found` (T-Bank spells it `NOT_FOUND`, the case does not matter).
+/// `not_found` ([`brokapi_core::NOT_FOUND`]), spelled the same at every broker.
 ///
 /// The same answer at every broker, so a bot that recovers from [`Error::Unknown`] with `order_state`
 /// needs one branch for "the broker does not know the order (yet)". Not `Transport`, not `Ok`.
@@ -666,7 +677,7 @@ pub async fn place_and_cancel<U: OrderExecutor + ?Sized>(ud: &U, id: &Instrument
 pub async fn order_state_unknown_cid<U: OrderExecutor + ?Sized>(ud: &U) {
     const S: &str = "order_state_unknown_cid";
     match ud.order_state(ClientOrderId::new_v4()).await {
-        Err(Error::Rejected { code, .. }) if code.eq_ignore_ascii_case("not_found") => {}
+        Err(e) if e.is_not_found() => {}
         other => fail(
             S,
             format!("order_state of an unknown cid must be Rejected(not_found), got {other:?}"),
@@ -680,7 +691,7 @@ fn limit_buy(id: &InstrumentId, price: Price) -> PlaceOrderRequest {
         instrument: id.clone(),
         side: Side::Buy,
         order_type: OrderType::Limit,
-        qty: Qty::from(1),
+        qty: lots(1),
         price: Some(price),
     }
 }
@@ -946,7 +957,7 @@ fn stop_request(
         instrument: id.clone(),
         side: Side::Sell,
         kind,
-        qty: Qty::from(1),
+        qty: lots(1),
         stop_price: stop,
         limit_price: limit,
         expiry: StopExpiry::GoodTillCancel,
@@ -956,7 +967,7 @@ fn stop_request(
 /// Stop orders, the common path: place, list, cancel by cid, then a stop-limit cancelled by broker id.
 ///
 /// Steps and checks:
-/// 1. A stop-loss SELL, quantity 1, at `stop_price`. The ack carries the same cid and a non-empty broker
+/// 1. A stop-loss SELL, one lot, at `stop_price`. The ack carries the same cid and a non-empty broker
 ///    id. The order is then in `active_stop_orders()` with the same cid, kind `StopLoss`, side `Sell`,
 ///    the stop price and quantity we sent, no limit price, and state `Active`. `cancel_stop` by
 ///    [`brokapi_core::StopOrderRef::Cid`] succeeds and the order leaves the list.
@@ -1044,7 +1055,7 @@ pub async fn stop_order_far_from_market<U: StopOrderExecutor + ?Sized>(
             format!("kind/side lost: {:?} {:?}", snap.kind, snap.side),
         );
     }
-    if snap.stop_price != stop_price || snap.qty != Qty::from(1) {
+    if snap.stop_price != stop_price || snap.qty != lots(1) {
         fail(
             S,
             format!("price/qty lost: stop {} qty {}", snap.stop_price, snap.qty),
@@ -1475,7 +1486,7 @@ async fn cancel_patient<U: OrderExecutor + ?Sized>(ud: &U, scenario: &str, cid: 
 ///
 /// Steps and checks:
 /// 1. `subscribe_order_state`.
-/// 2. Place a buy limit order, quantity 1, at `price`, under a fresh cid. A local rate-limit refusal is
+/// 2. Place a buy limit order, one lot, at `price`, under a fresh cid. A local rate-limit refusal is
 ///    waited out and retried under a fresh cid (a cid is never sent twice).
 /// 3. An [`brokapi_core::Event::Order`] for our cid arrives. Its source is `source`, its `sub` is the
 ///    subscription from step 1, and its state is not `Rejected`.
@@ -1534,7 +1545,7 @@ pub async fn order_state_events<U: OrderExecutor + ?Sized>(
         .subscribe_order_state()
         .await
         .unwrap_or_else(|e| fail(S, format!("subscribe_order_state failed: {e:?}")));
-    let cid = place_limit(ud, S, id, price, Qty::from(1)).await;
+    let cid = place_limit(ud, S, id, price, lots(1)).await;
     let env = next_matching(
         S,
         rx,
@@ -1572,9 +1583,9 @@ pub async fn order_state_events<U: OrderExecutor + ?Sized>(
 /// `active_orders` follows the order: a placed order is listed with its details, a cancelled one is gone.
 ///
 /// Steps and checks:
-/// 1. Place a buy limit order, quantity 3, at `price` (rate-limit refusals are waited out and retried
+/// 1. Place a buy limit order, three lots, at `price` (rate-limit refusals are waited out and retried
 ///    under a fresh cid).
-/// 2. `active_orders()` lists the order under its cid, with the same instrument, side `Buy`, quantity 3
+/// 2. `active_orders()` lists the order under its cid, with the same instrument, side `Buy`, three lots
 ///    and price `price`, and a state that is not `Cancelled`, `Filled` or `Rejected`.
 /// 3. Cancel it. `active_orders()` no longer lists it.
 ///
@@ -1613,7 +1624,7 @@ pub async fn active_orders_lifecycle<U: OrderExecutor + ?Sized>(
     price: Price,
 ) {
     const S: &str = "active_orders_lifecycle";
-    let cid = place_limit(ud, S, id, price, Qty::from(3)).await;
+    let cid = place_limit(ud, S, id, price, lots(3)).await;
     let active = ud
         .active_orders()
         .await
@@ -1634,7 +1645,7 @@ pub async fn active_orders_lifecycle<U: OrderExecutor + ?Sized>(
             ),
         );
     }
-    if o.qty != Qty::from(3) {
+    if o.qty != lots(3) {
         fail(S, format!("quantity lost: {}", o.qty));
     }
     if o.price != Some(price) {
@@ -1659,11 +1670,11 @@ pub async fn active_orders_lifecycle<U: OrderExecutor + ?Sized>(
 /// `replace`: where the broker has it the order moves to a new cid, where it has not, `replace` says `Unsupported`.
 ///
 /// `supports_replace` is what the adapter reports in its capabilities. The scenario places a buy
-/// limit order (quantity 2, at `price`) and then replaces it with a new cid, quantity 4 and price `new_price`.
+/// limit order (two lots, at `price`) and then replaces it with a new cid, four lots and price `new_price`.
 ///
 /// With `supports_replace == true`:
 /// - the ack carries the new cid;
-/// - `active_orders()` lists the new cid with quantity 4 and price `new_price`, and no longer lists the
+/// - `active_orders()` lists the new cid with four lots and price `new_price`, and no longer lists the
 ///   old one;
 /// - `order_state(new cid)` is not `Rejected` or `Cancelled`.
 ///
@@ -1735,12 +1746,12 @@ pub async fn replace_order<U: OrderExecutor + ?Sized>(
     new_price: Price,
 ) {
     const S: &str = "replace_order";
-    let cid = place_limit(ud, S, id, price, Qty::from(2)).await;
+    let cid = place_limit(ud, S, id, price, lots(2)).await;
     let new = ClientOrderId::new_v4();
     let req = ReplaceOrderRequest {
         cid: new,
         original_cid: cid,
-        qty: Some(Qty::from(4)),
+        qty: Some(lots(4)),
         price: Some(new_price),
     };
     if !supports_replace {
@@ -1786,7 +1797,7 @@ pub async fn replace_order<U: OrderExecutor + ?Sized>(
     let Some(o) = active.iter().find(|o| o.cid == new) else {
         fail(S, format!("the new order {new} is not active: {active:?}"));
     };
-    if o.qty != Qty::from(4) || o.price != Some(new_price) {
+    if o.qty != lots(4) || o.price != Some(new_price) {
         fail(
             S,
             format!("new quantity/price lost: {} {:?}", o.qty, o.price),
@@ -1813,7 +1824,7 @@ pub async fn replace_order<U: OrderExecutor + ?Sized>(
 /// Steps and checks:
 /// 1. `executions(range)` over a very wide range succeeds on an empty account.
 /// 2. `subscribe_executions`.
-/// 3. Place a buy limit order, quantity 2, at `price` (rate-limit refusals are waited out and retried
+/// 3. Place a buy limit order, two lots, at `price` (rate-limit refusals are waited out and retried
 ///    under a fresh cid), then call `fill(cid)`.
 /// 4. An [`brokapi_core::Event::Execution`] arrives. Its source is `source`, its `sub` is the executions
 ///    subscription, its cid is ours, price and quantity are positive, the trade id is not empty and the
@@ -1857,7 +1868,7 @@ pub async fn replace_order<U: OrderExecutor + ?Sized>(
 /// # .await?;
 /// brokapi_conformance::executions(&ud, &mut rx, "bcs-ud", &sber, Price::from(100), |cid| {
 ///     // The BCS mock executes an order when told: cid, quantity, price.
-///     let _ = server.fill(&cid.hyphenated().to_string(), brokapi_core::Qty::from(2), brokapi_core::Price::from(100));
+///     let _ = server.fill(&cid.hyphenated().to_string(), brokapi_core::Qty::from(20), brokapi_core::Price::from(100));
 ///     async {}
 /// })
 /// .await;
@@ -1890,7 +1901,7 @@ pub async fn executions<U, F, Fut>(
         .subscribe_executions()
         .await
         .unwrap_or_else(|e| fail(S, format!("subscribe_executions failed: {e:?}")));
-    let cid = place_limit(ud, S, id, price, Qty::from(2)).await;
+    let cid = place_limit(ud, S, id, price, lots(2)).await;
     fill(cid).await;
     let env = next_matching(S, rx, |e| matches!(e.payload, Event::Execution(_))).await;
     if env.source.as_ref() != source || env.sub != Some(sub) {
@@ -1931,6 +1942,452 @@ pub async fn executions<U, F, Fut>(
         fail(
             S,
             format!("a history entry without price, quantity or trade id: {hist:?}"),
+        );
+    }
+}
+
+// ─── guarantees of the command path ───────────────────────────────────────────
+
+fn order(id: &InstrumentId, price: Price, qty: Qty) -> PlaceOrderRequest {
+    PlaceOrderRequest {
+        cid: ClientOrderId::new_v4(),
+        instrument: id.clone(),
+        side: Side::Buy,
+        order_type: OrderType::Limit,
+        qty,
+        price: Some(price),
+    }
+}
+
+/// How many of the active orders are ours: the cid is among `cids`.
+async fn active_among<U: OrderExecutor + ?Sized>(
+    ud: &U,
+    scenario: &str,
+    cids: &[ClientOrderId],
+) -> usize {
+    ud.active_orders()
+        .await
+        .unwrap_or_else(|e| fail(scenario, format!("active_orders failed: {e:?}")))
+        .iter()
+        .filter(|o| cids.contains(&o.cid))
+        .count()
+}
+
+/// A `cid` is used for one place at most: the second place with it is refused locally and creates nothing.
+///
+/// Steps and checks:
+/// 1. `place` a buy limit order of one lot at `price` under a fresh cid. It succeeds.
+/// 2. `place` with the same cid again: [`Error::Rejected`] with code `duplicate_place`, not `Ok` and not
+///    `Unknown`. Nothing was sent, so the broker holds one order of that cid.
+/// 3. Cancel the order.
+///
+/// The command gate must be open, so call [`reconcile`] first.
+///
+/// # Panics
+///
+/// With `[conformance:duplicate_place] <reason>`.
+pub async fn duplicate_place<U: OrderExecutor + ?Sized>(ud: &U, id: &InstrumentId, price: Price) {
+    const S: &str = "duplicate_place";
+    let req = order(id, price, lots(1));
+    let cid = req.cid;
+    ud.place(req.clone())
+        .await
+        .unwrap_or_else(|e| fail(S, format!("the first place failed: {e:?}")));
+    match ud.place(req).await {
+        Err(Error::Rejected { code, .. }) if code == "duplicate_place" => {}
+        other => fail(
+            S,
+            format!("the same cid twice must be Rejected(duplicate_place), got {other:?}"),
+        ),
+    }
+    let live = active_among(ud, S, &[cid]).await;
+    if live != 1 {
+        fail(
+            S,
+            format!("the broker must hold one order of the cid, holds {live}"),
+        );
+    }
+    cancel_patient(ud, S, cid).await;
+}
+
+/// A quantity the broker cannot take is refused before anything is sent, and the cid stays usable.
+///
+/// The refused quantities, one after another with the same cid: zero, a negative number, a fraction of
+/// a unit (`0.5`), and a number of units that is not a whole number of lots (`LOT + 5`). Each must be
+/// [`Error::Rejected`] with code `invalid_qty`: never rounded into an order, never `Unknown`. Then the same
+/// cid with one lot goes through, which shows the refusals used no cid, and the order is cancelled.
+///
+/// The connector must know that the lot of `id` is [`LOT`]: the T-Bank connector looks it up itself, for
+/// BCS and Finam the test tells it with `price_grid().set_lot(..)`.
+///
+/// # Panics
+///
+/// With `[conformance:invalid_qty] <reason>`.
+pub async fn invalid_qty<U: OrderExecutor + ?Sized>(ud: &U, id: &InstrumentId, price: Price) {
+    const S: &str = "invalid_qty";
+    let mut req = order(id, price, lots(1));
+    let cid = req.cid;
+    let bad = [
+        ("zero", Qty::ZERO),
+        ("negative", Qty::from(-LOT)),
+        ("a fraction", Qty::new(Decimal::new(5, 1))),
+        ("not a whole number of lots", Qty::from(LOT + 5)),
+    ];
+    for (what, qty) in bad {
+        req.qty = qty;
+        match ud.place(req.clone()).await {
+            Err(Error::Rejected { code, .. }) if code == "invalid_qty" => {}
+            other => fail(
+                S,
+                format!("a quantity that is {what} must be Rejected(invalid_qty), got {other:?}"),
+            ),
+        }
+    }
+    req.qty = lots(1);
+    ud.place(req).await.unwrap_or_else(|e| {
+        fail(
+            S,
+            format!("the refusals must not use the cid, but place failed: {e:?}"),
+        )
+    });
+    cancel_patient(ud, S, cid).await;
+}
+
+/// An instrument id of another broker's kind is a configuration error, and nothing is sent.
+///
+/// `foreign` is an [`InstrumentId`] whose `NativeId` is of a kind this broker does not use. A `place` with
+/// it must be [`Error::Config`]: not `Rejected` (that would say the broker was asked), not `Unknown`.
+///
+/// # Panics
+///
+/// With `[conformance:foreign_instrument_id] <reason>`.
+pub async fn foreign_instrument_id<U: OrderExecutor + ?Sized>(
+    ud: &U,
+    foreign: &InstrumentId,
+    price: Price,
+) {
+    const S: &str = "foreign_instrument_id";
+    match ud.place(order(foreign, price, lots(1))).await {
+        Err(Error::Config(_)) => {}
+        other => fail(
+            S,
+            format!("an id of another broker must be a Config error, got {other:?}"),
+        ),
+    }
+}
+
+/// A place the broker never answers is `Unknown`: not repeated, not `Rejected`, resolved by asking.
+///
+/// `drive` receives the future of the `place` and must run it to its end while making the connector's
+/// request time out (the test holds the answer at the mock and moves the clock past the timeout of the
+/// connector). Then:
+/// 1. The outcome is [`Error::Unknown`].
+/// 2. The same cid again is `Rejected(duplicate_place)`: the library never repeats a place.
+/// 3. `release` lets the broker finish: the mock took the order after all. `order_state(cid)` then finds
+///    it (retried until it does), and the order is cancelled.
+///
+/// # Panics
+///
+/// With `[conformance:place_without_answer_is_unknown] <reason>`.
+pub async fn place_without_answer_is_unknown<'a, U, D, DFut, R, RFut>(
+    ud: &'a U,
+    id: &InstrumentId,
+    price: Price,
+    drive: D,
+    release: R,
+) where
+    U: OrderExecutor + ?Sized,
+    D: FnOnce(
+        std::pin::Pin<Box<dyn Future<Output = Result<brokapi_core::OrderAck, Error>> + 'a>>,
+    ) -> DFut,
+    DFut: Future<Output = Result<brokapi_core::OrderAck, Error>> + 'a,
+    R: FnOnce() -> RFut,
+    RFut: Future<Output = ()>,
+{
+    const S: &str = "place_without_answer_is_unknown";
+    let req = order(id, price, lots(1));
+    let cid = req.cid;
+    let call: std::pin::Pin<Box<dyn Future<Output = Result<brokapi_core::OrderAck, Error>> + 'a>> =
+        Box::pin(ud.place(req.clone()));
+    match drive(call).await {
+        Err(Error::Unknown) => {}
+        other => fail(
+            S,
+            format!("a place without an answer must be Unknown, got {other:?}"),
+        ),
+    }
+    match ud.place(req).await {
+        Err(Error::Rejected { code, .. }) if code == "duplicate_place" => {}
+        other => fail(
+            S,
+            format!("a place is never repeated: expected Rejected(duplicate_place), got {other:?}"),
+        ),
+    }
+    release().await;
+    let mut found = false;
+    for _ in 0..50 {
+        match ud.order_state(cid).await {
+            Ok(_) => {
+                found = true;
+                break;
+            }
+            Err(e) if e.is_not_found() => tokio::task::yield_now().await,
+            Err(Error::RateLimited { retry_after }) => tokio::time::sleep(retry_after).await,
+            Err(e) => fail(S, format!("order_state failed: {e:?}")),
+        }
+    }
+    if !found {
+        fail(S, "the order the broker took is not found by order_state");
+    }
+    cancel_patient(ud, S, cid).await;
+}
+
+/// The stream of own orders breaks: the bot is told, the gate closes, `reconcile` opens it.
+///
+/// `cut` breaks the order and fill streams from the broker side, and returns once the broker has done it
+/// (the connector then reopens the streams by itself). `reopened` says when the streams are open again.
+/// Steps and checks:
+/// 1. `subscribe_order_state` and `subscribe_executions`; `reopened` is awaited once for the first open.
+/// 2. `cut()`. An [`Event::Reconnected`] arrives for the order state subscription, and one for the
+///    executions subscription.
+/// 3. `place` is [`Error::Degraded`] and sends nothing (`active_orders` shows no order of ours).
+/// 4. `reconcile(&[])` succeeds and opens the gate. A place goes through and is cancelled.
+///
+/// # Panics
+///
+/// With `[conformance:stream_cut_degrades_until_reconcile] <reason>`.
+pub async fn stream_cut_degrades_until_reconcile<U, C, CFut>(
+    ud: &U,
+    rx: &mut mpsc::Receiver<Envelope>,
+    id: &InstrumentId,
+    price: Price,
+    cut: C,
+) where
+    U: OrderExecutor + ExecutionSource + ?Sized,
+    C: FnOnce() -> CFut,
+    CFut: Future<Output = ()>,
+{
+    const S: &str = "stream_cut_degrades_until_reconcile";
+    let orders_sub = ud
+        .subscribe_order_state()
+        .await
+        .unwrap_or_else(|e| fail(S, format!("subscribe_order_state failed: {e:?}")));
+    let fills_sub = ud
+        .subscribe_executions()
+        .await
+        .unwrap_or_else(|e| fail(S, format!("subscribe_executions failed: {e:?}")));
+    cut().await;
+    // One notice for each of the two subscriptions, in whatever order they come.
+    let (mut orders_told, mut fills_told) = (false, false);
+    while !(orders_told && fills_told) {
+        let env = next_matching(S, rx, |e| matches!(e.payload, Event::Reconnected { .. })).await;
+        let Event::Reconnected { sub, .. } = env.payload else {
+            unreachable!()
+        };
+        if env.sub != Some(sub) {
+            fail(
+                S,
+                format!("the Reconnected of {sub:?} carries sub {:?}", env.sub),
+            );
+        }
+        if sub == orders_sub {
+            orders_told = true;
+        } else if sub == fills_sub {
+            fills_told = true;
+        } else {
+            fail(
+                S,
+                format!("Reconnected for a subscription nobody made: {sub:?}"),
+            );
+        }
+    }
+    let req = order(id, price, lots(1));
+    let cid = req.cid;
+    match ud.place(req).await {
+        Err(Error::Degraded) => {}
+        other => fail(
+            S,
+            format!("after the cut a place must be Degraded, got {other:?}"),
+        ),
+    }
+    if active_among(ud, S, &[cid]).await != 0 {
+        fail(S, "the refused place reached the broker");
+    }
+    ud.reconcile(&[])
+        .await
+        .unwrap_or_else(|e| fail(S, format!("reconcile after the cut failed: {e:?}")));
+    let cid = place_limit(ud, S, id, price, lots(1)).await;
+    cancel_patient(ud, S, cid).await;
+}
+
+/// A command that waits in the queue of its instrument is checked against the gate again when its turn
+/// comes: a gate that closed meanwhile stops it, and nothing is sent.
+///
+/// Two places on one instrument go out together. The first is held at the broker (`in_flight` returns when
+/// the broker has it in hand), the second waits in the queue of the instrument. Then `degrade` closes the
+/// gate (it breaks the order streams) and the test waits for the `Reconnected` event, and `release` lets
+/// the broker finish the first one. Checks:
+/// - the first place is `Ok` or `Unknown` (it was sent before the gate closed);
+/// - the second is [`Error::Degraded`]: it did not go out after the queue;
+/// - after `reconcile(&[])`, of the two cids only the first is at the broker. Both are cancelled.
+///
+/// # Panics
+///
+/// With `[conformance:gate_checked_after_the_queue] <reason>`.
+pub async fn gate_checked_after_the_queue<U, A, AFut, D, DFut, R, RFut>(
+    ud: &U,
+    rx: &mut mpsc::Receiver<Envelope>,
+    id: &InstrumentId,
+    price: Price,
+    in_flight: A,
+    degrade: D,
+    release: R,
+) where
+    U: OrderExecutor + ?Sized,
+    A: FnOnce() -> AFut,
+    AFut: Future<Output = ()>,
+    D: FnOnce() -> DFut,
+    DFut: Future<Output = ()>,
+    R: FnOnce() -> RFut,
+    RFut: Future<Output = ()>,
+{
+    const S: &str = "gate_checked_after_the_queue";
+    let orders_sub = ud
+        .subscribe_order_state()
+        .await
+        .unwrap_or_else(|e| fail(S, format!("subscribe_order_state failed: {e:?}")));
+    let (first, second) = (order(id, price, lots(1)), order(id, price, lots(1)));
+    let (c1, c2) = (first.cid, second.cid);
+    let driver = async {
+        in_flight().await;
+        degrade().await;
+        next_matching(
+            S,
+            rx,
+            |e| matches!(e.payload, Event::Reconnected { sub, .. } if sub == orders_sub),
+        )
+        .await;
+        release().await;
+    };
+    let (r1, r2, ()) = tokio::join!(ud.place(first), ud.place(second), driver);
+    if !matches!(r1, Ok(_) | Err(Error::Unknown)) {
+        fail(
+            S,
+            format!("the first place was sent before the gate closed, got {r1:?}"),
+        );
+    }
+    if !matches!(r2, Err(Error::Degraded)) {
+        fail(S, format!("the queued place must be Degraded, got {r2:?}"));
+    }
+    ud.reconcile(&[c1])
+        .await
+        .unwrap_or_else(|e| fail(S, format!("reconcile failed: {e:?}")));
+    let mut at_broker = 0;
+    for _ in 0..50 {
+        at_broker = active_among(ud, S, &[c1, c2]).await;
+        if at_broker >= 1 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    if at_broker != 1 {
+        fail(
+            S,
+            format!("only the first order may be at the broker, found {at_broker}"),
+        );
+    }
+    cancel_patient(ud, S, c1).await;
+}
+
+/// The order book stream is void after a break: a [`Event::Resync`] follows, then a fresh snapshot.
+///
+/// `prepare` sets the mock so that it breaks the stream after the first snapshot (it runs before the
+/// subscribe). Steps and checks, on one subscription:
+/// 1. A [`Event::Resync`] for the subscription and the instrument arrives (books before it may or may not).
+/// 2. A book arrives after the `Resync`: the stream came back.
+///
+/// # Panics
+///
+/// With `[conformance:order_book_resync] <reason>`.
+pub async fn order_book_resync<M: OrderBookSource + ?Sized>(
+    md: &M,
+    rx: &mut mpsc::Receiver<Envelope>,
+    id: &InstrumentId,
+    prepare: impl FnOnce(),
+) {
+    const S: &str = "order_book_resync";
+    prepare();
+    let sub = md
+        .subscribe_order_book(id, SubscribeOpts::lossless(64))
+        .await
+        .unwrap_or_else(|e| fail(S, format!("subscribe_order_book failed: {e:?}")));
+    // The cut may come before or after the first book: wait for the Resync of the subscription.
+    let env = next_matching(
+        S,
+        rx,
+        |e| matches!(e.payload, Event::Resync { sub: s, .. } if s == sub),
+    )
+    .await;
+    let Event::Resync { instrument, .. } = &env.payload else {
+        unreachable!()
+    };
+    if instrument.key != id.key {
+        fail(
+            S,
+            format!("Resync for {:?}, expected {:?}", instrument.key, id.key),
+        );
+    }
+    // After it the stream is back: a book arrives.
+    next_matching(S, rx, |e| {
+        e.sub == Some(sub) && matches!(e.payload, Event::OrderBook(_))
+    })
+    .await;
+}
+
+/// A read of an instrument the broker does not know is `Rejected(not_found)`, the same at every broker.
+///
+/// Not `Transport` (that would invite a retry), not `Ok`, not a differently spelled code.
+///
+/// # Panics
+///
+/// With `[conformance:unknown_instrument] <reason>`.
+pub async fn unknown_instrument<M: OrderBookSource + ?Sized>(md: &M, unknown: &InstrumentId) {
+    const S: &str = "unknown_instrument";
+    match md.order_book(unknown, 5).await {
+        Err(e) if e.is_not_found() => {}
+        other => fail(
+            S,
+            format!("an unknown instrument must be Rejected(not_found), got {other:?}"),
+        ),
+    }
+}
+
+/// The history of own trades is complete: `expected` trades come back, none is dropped or doubled.
+///
+/// The test has put `expected` trades in the mock (more than one page of the broker's list). Checks:
+/// `executions(all time)` returns exactly `expected` entries, with `expected` different trade ids.
+///
+/// # Panics
+///
+/// With `[conformance:executions_history_is_complete] <reason>`.
+pub async fn executions_history_is_complete<U: ExecutionSource + ?Sized>(ud: &U, expected: usize) {
+    const S: &str = "executions_history_is_complete";
+    let range = TimeRange::new(UnixNanos::ZERO, UnixNanos::from_nanos(i64::MAX / 2));
+    let got = ud
+        .executions(range)
+        .await
+        .unwrap_or_else(|e| fail(S, format!("executions failed: {e:?}")));
+    let mut ids: Vec<&str> = got.iter().map(|x| x.trade_id.as_str()).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    if got.len() != expected || ids.len() != expected {
+        fail(
+            S,
+            format!(
+                "expected {expected} different trades, got {} entries with {} different ids",
+                got.len(),
+                ids.len()
+            ),
         );
     }
 }

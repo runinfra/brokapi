@@ -182,7 +182,8 @@ pub fn instrument_from_short(i: &pb::InstrumentShort) -> Instrument {
     }
 }
 
-/// `lot_size` is pieces per lot. `min_qty` is one lot: orders are sized in lots.
+/// `lot_size` is units per lot. `min_qty` is one lot: an order is a whole number of lots (and the library
+/// counts the quantity of an order in units).
 /// `price_step_value` equals the step (price is per one instrument in the settlement currency);
 /// futures need `GetFuturesMargin` for the step in money, not requested here.
 pub fn trading_params(id: &InstrumentId, i: &pb::Instrument) -> TradingParams {
@@ -194,7 +195,7 @@ pub fn trading_params(id: &InstrumentId, i: &pb::Instrument) -> TradingParams {
     TradingParams {
         instrument: id.clone(),
         lot_size: Qty::from(i.lot),
-        min_qty: Qty::from(1),
+        min_qty: Qty::from(i.lot),
         price_step: step,
         price_step_value: Money::new(step.decimal()),
         currency: i.currency.clone(),
@@ -289,7 +290,7 @@ mod tests {
                 p.price_step.decimal(),
                 p.min_qty.decimal()
             ),
-            (dec!(10.0), dec!(0.01), dec!(1.0))
+            (dec!(10.0), dec!(0.01), dec!(10.0))
         );
     }
 

@@ -16,7 +16,9 @@
 //!
 //! T-Bank specifics worth knowing before you trade:
 //!
-//! - Orders are sized in whole LOTS. Prices are per one instrument. Portfolio positions are in pieces.
+//! - Quantities are in UNITS of the instrument (shares, bonds, contracts), as at every broker. T-Bank counts in
+//!   lots, and the connectors convert both ways (see [`lots`]). An order that is not a whole number of lots is
+//!   refused before it is sent. Prices are per one instrument.
 //! - A trading command that gets no answer is never repeated. The result is `Error::Unknown` and the
 //!   caller checks the order first.
 //! - `reconcile` must succeed once before the first order. It opens the command gate.
@@ -68,6 +70,7 @@ pub mod emit;
 pub mod error;
 pub mod ids;
 pub mod limits;
+pub mod lots;
 pub mod map;
 pub mod md;
 pub mod raw;

@@ -105,6 +105,10 @@ fn envelope_with_every_kind_of_money_keeps_digits_times_and_cid() {
             sub: SubscriptionId::new(7),
             lost_from: UnixNanos::from_nanos(1),
         },
+        Event::Reconnected {
+            sub: SubscriptionId::new(7),
+            gap_from: UnixNanos::from_nanos(2),
+        },
     ];
     for event in events {
         let env = Envelope::new(Arc::from("bcs-ud"), ts(), event).with_sub(SubscriptionId::new(7));

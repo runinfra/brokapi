@@ -86,6 +86,49 @@ pub async fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
     }
 }
 
+/// Moves the clock forward by `by` again and again until `condition` holds. For waiting on something that
+/// sleeps before it acts, such as a connector that pauses 0.5 s before it reopens a broken stream.
+///
+/// The limit of [`WAIT_LIMIT`] is counted in real time, because the clock of the test is the one being moved. Call it
+/// when no request is in flight: a jump makes the timeout of a waiting request come nearer.
+///
+/// # Panics
+///
+/// When the condition does not hold within [`WAIT_LIMIT`] of real time.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+/// use std::sync::atomic::{AtomicBool, Ordering};
+/// use std::time::Duration;
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() {
+/// let done = Arc::new(AtomicBool::new(false));
+/// let flag = Arc::clone(&done);
+/// // A task that sleeps ten minutes, then sets the flag.
+/// tokio::spawn(async move {
+///     tokio::time::sleep(Duration::from_secs(600)).await;
+///     flag.store(true, Ordering::SeqCst);
+/// });
+/// brokapi_mocks::time::jump_until("the sleeper woke", Duration::from_secs(60), || done.load(Ordering::SeqCst)).await;
+/// # }
+/// ```
+pub async fn jump_until(what: &str, by: Duration, mut condition: impl FnMut() -> bool) {
+    let started = std::time::Instant::now();
+    while !condition() {
+        assert!(
+            started.elapsed() < WAIT_LIMIT,
+            "gave up after {WAIT_LIMIT:?}, still waiting for: {what}"
+        );
+        jump(by).await;
+        // The clock runs in real time again: a moment for the sockets and the other tasks to do their part,
+        // so that the next jump does not outrun them.
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+}
+
 /// Like [`wait_until`], for a condition that has to be asked with an `await`: a call to the connector
 /// whose answer changes once the background work is done.
 ///

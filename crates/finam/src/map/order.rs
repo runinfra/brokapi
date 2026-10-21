@@ -123,7 +123,10 @@ pub fn build_place_order(account_id: &str, req: &PlaceOrderRequest) -> Result<pb
     let codec = FinamCidCodec;
     let symbol = symbol_of(&req.instrument)?;
     if !req.qty.is_positive() {
-        return Err(invalid("quantity must be > 0"));
+        return Err(Error::Rejected {
+            code: "invalid_qty".into(),
+            message: format!("quantity must be positive, got {}", req.qty),
+        });
     }
     let quantity = to_decimal(req.qty.decimal());
     let (ty, limit_price) = match req.order_type {
@@ -154,13 +157,6 @@ pub fn build_place_order(account_id: &str, req: &PlaceOrderRequest) -> Result<pb
         comment: comment.0,
         ..Default::default()
     })
-}
-
-fn invalid(what: &str) -> Error {
-    Error::Rejected {
-        code: "invalid_order".into(),
-        message: format!("invalid {what}"),
-    }
 }
 
 /// Rejection coming back as an order status in the `PlaceOrder` response.

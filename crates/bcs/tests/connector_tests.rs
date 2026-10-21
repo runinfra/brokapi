@@ -68,11 +68,11 @@ fn map_rate_limit_error() {
 }
 
 #[test]
-fn map_auth_error_to_transport() {
+fn map_auth_error_to_config() {
     let err = brokapi_bcs::error::map_err(BcsApiError::AuthError {
         message: "bad token".into(),
     });
-    assert!(matches!(err, Error::Transport(_)));
+    assert!(matches!(err, Error::Config(_)));
 }
 
 #[test]

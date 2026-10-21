@@ -102,6 +102,15 @@ pub struct MockOptions {
     pub stop_get_requests: Mutex<Vec<(Option<i64>, Option<i64>)>>,
     /// `GetLastPrices` calls served (a method no connector wraps, used to test `raw()`).
     pub last_price_calls: AtomicU32,
+    /// `GetInstrumentBy` calls served: the connectors read the lot size of an instrument with it, once.
+    pub instrument_by_calls: AtomicU32,
+    /// `GetInstrumentBy` answers `UNAVAILABLE` (the lot size cannot be read).
+    pub instrument_by_fail: AtomicBool,
+    /// The order state stream messages carry no `lot_size` (0), as the unary calls never do.
+    pub omit_lot_size: AtomicBool,
+    /// How many times the order state stream and the trades stream were opened, together. A reconnect
+    /// after [`MockServer::cut_user_streams`] makes it grow.
+    pub user_stream_opens: AtomicU32,
 }
 
 #[derive(Clone)]
@@ -162,19 +171,21 @@ struct State {
     stops: Mutex<HashMap<String, (String, pb::StopOrder)>>,
     next_id: AtomicU64,
     events: broadcast::Sender<OrderEvent>,
+    /// Counts the cuts of the user streams: every stream task ends when it changes.
+    cut: tokio::sync::watch::Sender<u64>,
 }
 
 use pb::OrderExecutionReportStatus as St;
 
 impl State {
-    fn stream_state(o: &MockOrder) -> osr::OrderState {
+    fn stream_state(o: &MockOrder, omit: bool) -> osr::OrderState {
         osr::OrderState {
             order_id: o.exchange_id.clone(),
             order_request_id: Some(o.request_id.clone()),
             execution_report_status: o.status,
             ticker: o.inst.ticker.into(),
             class_code: o.inst.class.into(),
-            lot_size: o.inst.lot,
+            lot_size: if omit { 0 } else { o.inst.lot },
             direction: o.direction,
             order_type: o.order_type,
             account_id: o.account.clone(),
@@ -226,7 +237,7 @@ impl State {
     fn publish(&self, o: &MockOrder, trades: Option<pb::OrderTrades>) {
         let _ = self.events.send(OrderEvent {
             account: o.account.clone(),
-            state: Self::stream_state(o),
+            state: Self::stream_state(o, self.opts.omit_lot_size.load(Ordering::SeqCst)),
             trades,
         });
     }
@@ -814,6 +825,8 @@ impl OrdersStreamService for Mock {
     ) -> Result<Response<Out<pb::TradesStreamResponse>>, Status> {
         let account = account_of(&request.into_inner().accounts);
         let mut events = self.0.events.subscribe();
+        let mut cut = self.0.cut.subscribe();
+        self.0.opts.user_stream_opens.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = mpsc::channel(256);
         tokio::spawn(async move {
             let ack = pb::SubscriptionResponse {
@@ -826,7 +839,15 @@ impl OrdersStreamService for Mock {
                     payload: Some(pb::trades_stream_response::Payload::Subscription(ack)),
                 }))
                 .await;
-            while let Ok(ev) = events.recv().await {
+            loop {
+                let ev = tokio::select! {
+                    ev = events.recv() => match ev {
+                        Ok(ev) => ev,
+                        Err(_) => return,
+                    },
+                    // The stream is cut: the task ends and the client sees the end of the stream.
+                    _ = cut.changed() => return,
+                };
                 if ev.account != account {
                     continue;
                 }
@@ -850,6 +871,8 @@ impl OrdersStreamService for Mock {
         let accounts = request.into_inner().accounts;
         let account = account_of(&accounts);
         let mut events = self.0.events.subscribe();
+        let mut cut = self.0.cut.subscribe();
+        self.0.opts.user_stream_opens.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = mpsc::channel(256);
         tokio::spawn(async move {
             let ack = pb::SubscriptionResponse {
@@ -862,7 +885,14 @@ impl OrdersStreamService for Mock {
                     payload: Some(osr::Payload::Subscription(ack)),
                 }))
                 .await;
-            while let Ok(ev) = events.recv().await {
+            loop {
+                let ev = tokio::select! {
+                    ev = events.recv() => match ev {
+                        Ok(ev) => ev,
+                        Err(_) => return,
+                    },
+                    _ = cut.changed() => return,
+                };
                 if ev.account != account {
                     continue;
                 }
@@ -1110,6 +1140,13 @@ impl InstrumentsService for Mock {
         request: Request<pb::InstrumentRequest>,
     ) -> Result<Response<pb::InstrumentResponse>, Status> {
         let r = request.into_inner();
+        self.0
+            .opts
+            .instrument_by_calls
+            .fetch_add(1, Ordering::SeqCst);
+        if self.0.opts.instrument_by_fail.load(Ordering::SeqCst) {
+            return Err(Status::unavailable("mock: directory down"));
+        }
         let i = [SBER, GAZP]
             .into_iter()
             .find(|i| r.id == i.uid || r.id == i.figi || r.id == i.ticker)
@@ -1397,6 +1434,7 @@ impl MockServer {
             stops: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             events,
+            cut: tokio::sync::watch::channel(0).0,
         });
         let mock = Mock(Arc::clone(&state));
 
@@ -1491,7 +1529,8 @@ impl MockServer {
             trades: vec![pb::OrderTrade {
                 date_time: ts(1_700_000_100),
                 price: Some(quot(o.price)),
-                quantity: o.lots,
+                // Own trades are counted in pieces, not in lots (the order itself is in lots).
+                quantity: o.lots * i64::from(o.inst.lot),
                 trade_id: format!("TR-{}", o.exchange_id),
             }],
             account_id: o.account.clone(),
@@ -1499,6 +1538,50 @@ impl MockServer {
             ..Default::default()
         };
         self.state.publish(&o, Some(trades));
+    }
+
+    /// An order placed by someone else (the phone app, another program): it appears at the broker and its
+    /// state goes to the order stream of the account. `instrument` is the uid, the figi or `TICKER_CLASS`.
+    pub fn place_foreign(&self, account: &str, request_id: &str, instrument: &str, lots: i64) {
+        let inst = lookup(instrument).expect("a known instrument");
+        let id = self.state.next_id.fetch_add(1, Ordering::SeqCst);
+        let o = MockOrder {
+            exchange_id: format!("EX{id}"),
+            request_id: request_id.to_string(),
+            account: account.to_string(),
+            inst,
+            direction: pb::OrderDirection::Buy as i32,
+            order_type: pb::OrderType::Limit as i32,
+            lots,
+            executed: 0,
+            price: dec!(250),
+            status: St::ExecutionReportStatusNew as i32,
+        };
+        self.state
+            .orders
+            .lock()
+            .unwrap()
+            .insert(o.exchange_id.clone(), o.clone());
+        self.state.publish(&o, None);
+    }
+
+    /// Cuts every open order state and trades stream: the broker side ends them. The connector sees the end
+    /// of the stream and opens them again. For testing what a bot sees when the link to the orders breaks.
+    pub fn cut_user_streams(&self) {
+        self.state.cut.send_modify(|n| *n += 1);
+    }
+
+    /// Fills an order without telling the streams: the fill happens while the link is down. State `FILL`
+    /// at the broker, nothing is pushed.
+    pub fn fill_silently(&self, account: &str, request_id: &str) {
+        let o = self
+            .state
+            .find(account, request_id, true)
+            .expect("order exists");
+        self.state.update(&o.exchange_id, |o| {
+            o.status = St::ExecutionReportStatusFill as i32;
+            o.executed = o.lots;
+        });
     }
 
     /// Orders the mock holds for an account (any status).

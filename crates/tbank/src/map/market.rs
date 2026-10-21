@@ -45,7 +45,7 @@ pub fn levels(orders: &[pb::Order], bids: bool, depth: usize) -> Vec<BookLevel> 
 
 /// An order book snapshot from the two sides of a broker message, cut to `depth` levels.
 ///
-/// Quantities are in lots. The time is the broker's `orderbook_ts` when given.
+/// Quantities are in lots, as the broker sends them (the connector multiplies by the lot size). The time is the broker's `orderbook_ts` when given.
 pub fn book_snapshot(
     instrument: &InstrumentId,
     bids: &[pb::Order],
@@ -192,7 +192,7 @@ fn candle_times(open: &Option<prost_types::Timestamp>, tf: Timeframe) -> (UnixNa
 
 /// A candle of the candle stream to [`Candle`].
 ///
-/// Volume is in lots. `close_ts` is derived from the open time and the timeframe. The candle is the
+/// Volume is in lots, as the broker sends it (the connector multiplies by the lot size). `close_ts` is derived from the open time and the timeframe. The candle is the
 /// current state of a candle that may still be forming.
 pub fn stream_candle(
     instrument: &InstrumentId,
@@ -217,7 +217,7 @@ pub fn stream_candle(
 
 /// A candle of `GetCandles` to [`Candle`].
 ///
-/// Volume is in lots. `close_ts` is derived from the open time and the timeframe.
+/// Volume is in lots, as the broker sends it (the connector multiplies by the lot size). `close_ts` is derived from the open time and the timeframe.
 pub fn historic_candle(
     instrument: &InstrumentId,
     tf: Timeframe,

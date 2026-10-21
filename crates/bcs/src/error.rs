@@ -20,9 +20,10 @@ use brokapi_core::{ConfigError, Error, TransportError};
 /// | Protocol error | Public error |
 /// |---|---|
 /// | `RateLimitExceeded`, or `HttpError` with status 429 | [`Error::RateLimited`] with `retry_after` of 1 second (the broker does not say how long: the value is a fixed guess) |
-/// | `AuthError`, `SubscriptionError` | [`Error::Transport`] with the broker's message |
+/// | `AuthError` (the token is refused) | [`Error::Config`] with the broker's message: fix the token, a repeat will not help |
+/// | `SubscriptionError` | [`Error::Transport`] with the broker's message |
 /// | `HttpError` (any other status or no status), `WsError`, `ParseError` | [`Error::Transport`] with the message |
-/// | `NotFound` (HTTP 404, `type = "NOT_FOUND"`) | [`Error::Transport`] with the message `not found` |
+/// | `NotFound` (HTTP 404, `type = "NOT_FOUND"`) | [`Error::Rejected`] with code `not_found` (an unknown instrument or order, as at the other brokers) |
 /// | `ValidationError` (HTTP 400, `type = "VALIDATION_ERROR"`) | [`Error::Rejected`] with code `validation` and the field errors as the message |
 ///
 /// All [`Error::Transport`] results are retryable for a read. Do not use this function for a
@@ -36,7 +37,8 @@ use brokapi_core::{ConfigError, Error, TransportError};
 /// use brokapi_core::Error;
 ///
 /// assert!(matches!(map_err(BcsApiError::RateLimitExceeded), Error::RateLimited { .. }));
-/// assert!(matches!(map_err(BcsApiError::NotFound { trace_id: None }), Error::Transport(_)));
+/// assert!(map_err(BcsApiError::NotFound { trace_id: None }).is_not_found());
+/// assert!(matches!(map_err(BcsApiError::AuthError { message: "bad token".into() }), Error::Config(_)));
 /// let validation = BcsApiError::ValidationError { trace_id: None, errors: vec![] };
 /// assert!(matches!(map_err(validation), Error::Rejected { .. }));
 /// ```
@@ -45,7 +47,10 @@ pub fn map_err(err: BcsApiError) -> Error {
         BcsApiError::RateLimitExceeded => Error::RateLimited {
             retry_after: Duration::from_secs(1),
         },
-        BcsApiError::AuthError { message } | BcsApiError::SubscriptionError { message } => {
+        BcsApiError::AuthError { message } => Error::Config(ConfigError::Message(format!(
+            "authentication refused: {message}"
+        ))),
+        BcsApiError::SubscriptionError { message } => {
             Error::Transport(TransportError::Message(message))
         }
         BcsApiError::HttpError {
@@ -57,7 +62,7 @@ pub fn map_err(err: BcsApiError) -> Error {
         | BcsApiError::WsError { message, .. }
         | BcsApiError::ParseError(message) => Error::Transport(TransportError::Message(message)),
         BcsApiError::NotFound { .. } => {
-            Error::Transport(TransportError::Message("not found".into()))
+            Error::not_found("the broker does not know this order or instrument")
         }
         BcsApiError::ValidationError { errors, .. } => Error::Rejected {
             code: "validation".into(),
@@ -90,8 +95,7 @@ pub fn map_cid_err(err: brokapi_core::CidError) -> Error {
 /// | everything else (429, `AuthError`, `NotFound`, `ValidationError`, ...) | as in [`map_err`] |
 ///
 /// Note that `ValidationError` (the usual way BCS refuses an order) is [`Error::Rejected`] with code
-/// `validation`, and that `NotFound` stays [`Error::Transport`] here. For commands on an existing
-/// order use [`map_order_cmd_err`], where "not found" is a definite refusal.
+/// `validation`, and that `NotFound` is [`Error::Rejected`] with code `not_found`, as in [`map_err`].
 ///
 /// # Examples
 ///
@@ -130,11 +134,10 @@ pub fn map_command_err(err: BcsApiError) -> Error {
     }
 }
 
-/// [`map_err`] for a read of one order: "not found" is an answer (`Rejected`, code `not_found`), as
-/// at T-Bank and Finam, not a transport problem.
+/// [`map_err`] for a read of one order. Since "not found" is `Rejected` with code `not_found` in
+/// [`map_err`] already, this is the same mapping, kept for the code that calls it.
 ///
-/// Used by `order_state`. The mapping is the one of [`map_err`] except `NotFound`, which is
-/// [`Error::Rejected`] with code `not_found`. The way out of an `Unknown` is to ask again until the
+/// Used by `order_state`. The way out of an `Unknown` is to ask again until the
 /// order is found or the answer stays `not_found` long enough ([`Error::Unknown`]).
 ///
 /// # Examples
@@ -151,20 +154,13 @@ pub fn map_command_err(err: BcsApiError) -> Error {
 /// assert!(matches!(map_order_read_err(BcsApiError::RateLimitExceeded), Error::RateLimited { .. }));
 /// ```
 pub fn map_order_read_err(err: BcsApiError) -> Error {
-    match err {
-        BcsApiError::NotFound { .. } => Error::Rejected {
-            code: "not_found".into(),
-            message: "the broker does not know this order".into(),
-        },
-        other => map_err(other),
-    }
+    map_err(err)
 }
-
-/// [`map_command_err`] for commands on an existing order: "not found" is a definite refusal
-/// (`Rejected`, code `not_found`), not a transport problem.
+/// [`map_command_err`] for commands on an existing order. "Not found" is a definite refusal
+/// (`Rejected`, code `not_found`) in [`map_command_err`] already; this is the same mapping, kept for the
+/// code that calls it.
 ///
-/// Used by `cancel`, `replace` and `cancel_stop`. The mapping is the one of [`map_command_err`]
-/// except `NotFound`, which is [`Error::Rejected`] with code `not_found`.
+/// Used by `cancel`, `replace` and `cancel_stop`.
 ///
 /// # Examples
 ///
@@ -179,11 +175,5 @@ pub fn map_order_read_err(err: BcsApiError) -> Error {
 /// }
 /// ```
 pub fn map_order_cmd_err(err: BcsApiError) -> Error {
-    match err {
-        BcsApiError::NotFound { .. } => Error::Rejected {
-            code: "not_found".into(),
-            message: "the broker does not know this order".into(),
-        },
-        other => map_command_err(other),
-    }
+    map_command_err(err)
 }

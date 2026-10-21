@@ -505,10 +505,8 @@ fn cid(n: u8) -> ClientOrderId {
 fn a_cid_is_placed_once_never_retried() {
     let mut h = ud();
     let now = Instant::now();
-    h.core_mut()
-        .begin_place(&place_req(cid(1)), 3, now)
-        .unwrap();
-    let again = h.core_mut().begin_place(&place_req(cid(1)), 3, now);
+    h.core_mut().begin_place(&place_req(cid(1)), now).unwrap();
+    let again = h.core_mut().begin_place(&place_req(cid(1)), now);
     assert!(
         matches!(again, Err(brokapi_core::Error::Rejected { code, .. }) if code == "duplicate_place")
     );
@@ -520,9 +518,7 @@ fn a_cid_is_placed_once_never_retried() {
 fn timeout_on_place_is_unknown_and_the_stream_resolves_it() {
     let mut h = ud();
     let now = Instant::now();
-    h.core_mut()
-        .begin_place(&place_req(cid(1)), 3, now)
-        .unwrap();
+    h.core_mut().begin_place(&place_req(cid(1)), now).unwrap();
     let mut sink = brokapi_sansio::EventSink::new();
     h.core_mut().place_unknown(cid(1), now, &mut sink);
     let ev = sink.drain();
@@ -548,9 +544,7 @@ fn timeout_on_place_is_unknown_and_the_stream_resolves_it() {
 fn rejected_only_when_the_broker_said_so() {
     let mut h = ud();
     let now = Instant::now();
-    h.core_mut()
-        .begin_place(&place_req(cid(1)), 3, now)
-        .unwrap();
+    h.core_mut().begin_place(&place_req(cid(1)), now).unwrap();
     let mut sink = brokapi_sansio::EventSink::new();
     h.core_mut()
         .place_rejected(cid(1), "INVALID_ARGUMENT: 30016".into(), now, &mut sink);
@@ -565,9 +559,7 @@ fn lifecycle_from_the_stream_every_event_has_the_cid() {
     use pb::OrderExecutionReportStatus as S;
     let mut h = ud();
     let now = Instant::now();
-    h.core_mut()
-        .begin_place(&place_req(cid(7)), 3, now)
-        .unwrap();
+    h.core_mut().begin_place(&place_req(cid(7)), now).unwrap();
     for (st, executed) in [
         (S::ExecutionReportStatusNew, 0),
         (S::ExecutionReportStatusNew, 0), // repeat: no new event
@@ -660,9 +652,7 @@ fn order_placed_elsewhere_is_seen_with_a_stand_in_cid() {
 fn trades_are_linked_to_our_cid_through_the_exchange_order_id() {
     let mut h = ud();
     let now = Instant::now();
-    h.core_mut()
-        .begin_place(&place_req(cid(5)), 3, now)
-        .unwrap();
+    h.core_mut().begin_place(&place_req(cid(5)), now).unwrap();
     h.feed_frame(stream_state(
         cid(5),
         pb::OrderExecutionReportStatus::ExecutionReportStatusNew,
@@ -713,12 +703,8 @@ fn trades_are_linked_to_our_cid_through_the_exchange_order_id() {
 fn in_flight_orders_are_abandoned_as_unknown_at_shutdown() {
     let mut h = ud();
     let now = Instant::now();
-    h.core_mut()
-        .begin_place(&place_req(cid(1)), 3, now)
-        .unwrap();
-    h.core_mut()
-        .begin_place(&place_req(cid(2)), 3, now)
-        .unwrap();
+    h.core_mut().begin_place(&place_req(cid(1)), now).unwrap();
+    h.core_mut().begin_place(&place_req(cid(2)), now).unwrap();
     let mut sink = brokapi_sansio::EventSink::new();
     let mut abandoned = h.core_mut().abandon_inflight(now, &mut sink);
     abandoned.sort();
@@ -825,9 +811,7 @@ fn a_reopened_order_stream_asks_for_a_refresh() {
 fn refresh_after_reconnect_emits_only_what_changed() {
     let mut h = ud();
     let now = Instant::now();
-    h.core_mut()
-        .begin_place(&place_req(cid(1)), 3, now)
-        .unwrap();
+    h.core_mut().begin_place(&place_req(cid(1)), now).unwrap();
     h.feed_frame(stream_state(
         cid(1),
         pb::OrderExecutionReportStatus::ExecutionReportStatusNew,

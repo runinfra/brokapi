@@ -84,6 +84,7 @@ brokapi_mocks::time::wait_until("сокет событий подключен", 
 | Помощник | Зачем |
 |---|---|
 | `jump(d)` | сдвигает часы вперед на `d` сразу. Лимит запросов, который восстанавливается за секунду, полон после `jump(1 с)`. Таймеры, которые ждали, срабатывают |
+| `jump_until("что ждем", шаг, \|\| условие)` | сдвигает часы на шаг снова и снова, пока условие не станет истинным. Для ожидания того, что перед действием спит, например пауза 0,5 с перед переоткрытием потока. Вызывать, когда запросов в пути нет |
 | `wait_until("что ждем", \|\| условие)` | ждет, пока условие станет истинным (счетчик имитации, событие), без пауз. Через 10 секунд роняет тест и называет, чего не дождался. `wait_until_async` - то же для условия, которое спрашивают вызовом коннектора |
 | `elapse_when("что ждем", \|\| запрос дошел, d, вызов)` | выполняет вызов, а когда запрос дошел до имитации, сдвигает часы на `d`. Так проверяют `Unknown` по таймауту без ожидания таймаута: имитация держит ответ дольше (`post_delay_ms`), чем таймаут клиента, а часы перескакивают таймаут за ноль секунд |
 
@@ -121,8 +122,15 @@ brokapi_mocks::time::wait_until("сокет событий подключен", 
 |---|---|---|---|
 | Исполнить заявку | `server.fill(&cid.hyphenated().to_string(), qty, price)` | `server.fill(ACCOUNT_A, &cid.hyphenated().to_string())` | вручную: `server.state.push_order(счет, ...)` |
 | `Rejected` на постановке (цена задается в тесте, не берется из стакана) | лимитная цена `brokapi_conformance::REJECT_PRICE` (13.37), в теле ответа 200 - цена 13.38 (`mbcs::REJECT_IN_BODY_PRICE`) | `REJECT_PRICE` (13.37) | `REJECT_PRICE` (13.37) |
-| `Unknown` на постановке | **рычага нет, этот путь у БКС в тесте не воспроизвести**. Проверяйте путь бота на имитации Т-Банка: `trading_bot_leaves_unknown_through_order_state` в `tests/examples.rs` показывает, как | `opts.post_delay_ms` больше, чем `with_request_timeout(...)` клиента. Либо `opts.post_fail` с кодом gRPC | `opts.place_delay_ms` больше таймаута клиента, либо `opts.place_error` |
-| Обрыв потока | `opts.disconnect_after_data_frames` | `opts.md_cut_after` | `opts.book_drop_after` |
+| `Unknown` на постановке | `opts.order_delay_ms` больше, чем `cfg.request_timeout` клиента (имитация держит команду это время по часам теста). Пример: `a_place_without_an_answer_is_unknown` в `crates/bcs/tests/conformance.rs` | `opts.post_delay_ms` больше, чем `with_request_timeout(...)` клиента. Либо `opts.post_fail` с кодом gRPC | `opts.place_delay_ms` больше таймаута клиента, либо `opts.place_error` |
+| Обрыв потока стакана | `opts.disconnect_after_data_frames` | `opts.md_cut_after` | `opts.book_drop_after` |
+| Обрыв потоков своих заявок и исполнений (`Event::Reconnected`) | `server.cut_event_sockets()`, подключения считает `opts.ws_connections()` | `server.cut_user_streams()`, открытия считает `opts.user_stream_opens` | `server.state.cut_user_streams()`, открытия считает `server.state.order_stream_opens` |
+| Статус 6 «Отменяется» | `opts.cancel_pending`, закончить отмену `server.finish_cancel(cid)` | нет | нет |
+| Исполнения с накопленными итогами | `server.fill(cid, qty, price)` шлет `executedQuantity`, `executionValue`, `averagePrice` как брокер | нет | нет |
+| Длинная история сделок | `server.add_history_trades(n, цена, количество)` (список листается по `page` и `size`, не больше 1000 последних) | `opts.operations_pages` | `server.state.push_trade(...)`, ответ режется по `limit` и интервалу |
+| Живая заявка, которой нет в списке | `server.hide_from_list(cid)` | нет | нет |
+| Заявка, поставленная кем-то другим | `server.fill`/ручной вызов | `server.place_foreign(счет, request_id, инструмент, лоты)` | `server.state.push_order(...)` |
+| Лот инструмента нельзя прочитать | нет | `opts.instrument_by_fail`, `opts.omit_lot_size` | нет |
 | `Overflow` | канал на одно место, никто не читает, `cfg.order_state_buffer = 2` и несколько исполнений подряд | то же | то же |
 | `RateLimited` | малый бюджет: свои числа в `BrokerLimiter::new` ([формат файла](../limits.md#свои-числа-формат-файла)). «Один отказ, потом проходит»: `burst = 1`, длинный `per` | то же | то же |
 | Чтение свечей падает | не предусмотрено | `opts.candle_fail`: `1` - отказ навсегда (`Rejected`), `2` - сбой сети (`Transport`), `0` - норма. `opts.candle_network_failures`: сколько следующих чтений упадут по сети, потом снова норма. Только с `synthetic_candles` | не предусмотрено |

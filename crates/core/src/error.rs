@@ -14,6 +14,20 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// The `code` of an [`Error::Rejected`] that says "the broker does not know this": an order, a cid, an
+/// instrument. The same string at every broker, so a caller compares with `==` and needs no case folding.
+///
+/// # Examples
+///
+/// ```
+/// use brokapi_core::{Error, NOT_FOUND};
+///
+/// let e = Error::not_found("no such order");
+/// assert!(e.is_not_found());
+/// assert!(matches!(&e, Error::Rejected { code, .. } if code == NOT_FOUND));
+/// ```
+pub const NOT_FOUND: &str = "not_found";
+
 /// A configuration problem: a value that is missing, malformed, or of the wrong kind for this broker.
 ///
 /// Carried by [`Error::Config`]. The text is for a human (a log line), it is not a stable code.
@@ -114,12 +128,16 @@ pub enum Error {
     /// example an [`InstrumentId`](crate::InstrumentId) whose [`NativeId`](crate::NativeId) is of
     /// another broker's kind).
     ///
+    /// The broker refusing the credentials (a wrong or expired token, an authentication that failed) is
+    /// this variant too, at every broker: fix the token, a repeat will not help.
+    ///
     /// Nothing was sent. The call will fail the same way until the config or the input is fixed.
     #[error("configuration error: {0}")]
     Config(#[from] ConfigError),
 
     /// The network or the broker's endpoint failed in a way that is not an answer: connect, TLS,
-    /// timeout of a read, a stream cut, an authentication that failed, an unreadable reply.
+    /// timeout of a read, a stream cut, an unreadable reply. (A refused authentication is
+    /// [`Error::Config`].)
     ///
     /// For a reading call, repeat it later. For a trading command the connector returns
     /// [`Error::Unknown`] instead whenever the command might have reached the broker, so
@@ -149,9 +167,11 @@ pub enum Error {
     /// repeat it as it is.
     ///
     /// `code` is a short machine-readable label that the connector sets (for example `validation`,
-    /// `missing_price`, `not_found`, `already_filled`, `duplicate_place`, `http_400`). `message` is
+    /// `missing_price`, `invalid_qty`, `not_found`, `already_filled`, `duplicate_place`, `http_400`). `message` is
     /// the broker's text or the connector's explanation, for a human. The set of codes belongs to the
-    /// connector and is not fixed across brokers. Do not parse `message`.
+    /// connector and is not fixed across brokers, except [`NOT_FOUND`] (the same at every broker: use
+    /// [`Error::is_not_found`]) and the codes the shared set of checks relies on (`duplicate_place`,
+    /// `invalid_qty`). Do not parse `message`.
     #[error("rejected: {code}: {message}")]
     Rejected {
         /// Short label of the reason, set by the connector. Safe to compare with `==`.
@@ -220,6 +240,30 @@ pub enum Error {
 }
 
 impl Error {
+    /// A [`Error::Rejected`] with the code [`NOT_FOUND`]: the broker does not know the order, the cid or
+    /// the instrument. Every connector uses this one for "not found".
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::Rejected {
+            code: NOT_FOUND.to_string(),
+            message: message.into(),
+        }
+    }
+
+    /// Whether this is the "not found" refusal ([`Error::Rejected`] with the code [`NOT_FOUND`]).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use brokapi_core::Error;
+    ///
+    /// assert!(Error::not_found("x").is_not_found());
+    /// assert!(!Error::Unknown.is_not_found());
+    /// assert!(!Error::Rejected { code: "validation".into(), message: String::new() }.is_not_found());
+    /// ```
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::Rejected { code, .. } if code == NOT_FOUND)
+    }
+
     /// The coarse class of this error: may the call be tried again, or not.
     ///
     /// | Variant | Class |
@@ -250,5 +294,28 @@ impl Error {
             | Self::Degraded
             | Self::ShuttingDown => ErrorClass::Fatal,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn not_found_has_one_spelling() {
+        let e = Error::not_found("no such order");
+        assert!(e.is_not_found());
+        assert_eq!(e.class(), ErrorClass::Fatal);
+        assert_eq!(e.to_string(), "rejected: not_found: no such order");
+        // Other refusals and other variants are not "not found", and the old spellings are not either.
+        for other in ["NOT_FOUND", "NotFound", "validation"] {
+            let e = Error::Rejected {
+                code: other.into(),
+                message: String::new(),
+            };
+            assert!(!e.is_not_found(), "{other}");
+        }
+        assert!(!Error::Unknown.is_not_found());
+        assert!(!Error::Degraded.is_not_found());
     }
 }

@@ -11,6 +11,7 @@ use brokapi_tbank_protocol::v1::order_state_stream_response as stream;
 
 use crate::cid::{parse_request_id, synthetic_cid};
 use crate::ids::{id_from_parts, price_of_money, stamps};
+use crate::lots::lots_to_qty;
 
 /// What every order message (unary state, placement response, stream update) has in common.
 #[derive(Debug, Clone)]
@@ -26,6 +27,9 @@ pub struct OrderParts {
     pub lots_requested: i64,
     /// Lots executed so far.
     pub lots_executed: i64,
+    /// Units of the instrument in one lot. 1 until the caller sets it ([`OrderParts::with_lot`]): the
+    /// message of a unary call does not carry it, the order stream message does (`lot_size`).
+    pub lot_size: i64,
     /// Price of one instrument, if the message carries a non-zero one.
     pub unit_price: Option<Price>,
     /// Buy or sell, as the broker reports it.
@@ -42,6 +46,30 @@ pub struct OrderParts {
 }
 
 impl OrderParts {
+    /// The same parts with the lot size of the instrument set. A lot below 1 is read as 1.
+    pub fn with_lot(mut self, lot_size: i64) -> Self {
+        self.lot_size = lot_size.max(1);
+        self
+    }
+
+    /// Quantity requested, in units of the instrument.
+    pub fn qty_requested(&self) -> Qty {
+        lots_to_qty(self.lots_requested, self.lot_size)
+    }
+
+    /// Quantity executed so far, in units of the instrument.
+    pub fn qty_executed(&self) -> Qty {
+        lots_to_qty(self.lots_executed, self.lot_size)
+    }
+
+    /// Quantity not executed yet, in units of the instrument (never below zero).
+    pub fn qty_left(&self) -> Qty {
+        lots_to_qty(
+            (self.lots_requested - self.lots_executed).max(0),
+            self.lot_size,
+        )
+    }
+
     /// Our cid, or a stable stand-in for an order placed elsewhere.
     pub fn cid(&self) -> ClientOrderId {
         parse_request_id(&self.request_id).unwrap_or_else(|| synthetic_cid(&self.exchange_id))
@@ -88,7 +116,7 @@ pub fn wire_order_type(t: OrderType) -> pb::OrderType {
 /// The order state of a status report.
 ///
 /// Fill, cancel, reject, new and partial fill map to their states. Partial fill carries `filled` and
-/// `left` in lots. An unspecified status is `Unknown`, never a guess. A rejection without a reason
+/// `left` in units of the instrument. An unspecified status is `Unknown`, never a guess. A rejection without a reason
 /// gets the text `REJECTED`.
 pub fn state(p: &OrderParts, cid: ClientOrderId, now: Instant) -> OrderState {
     use pb::OrderExecutionReportStatus as S;
@@ -107,8 +135,8 @@ pub fn state(p: &OrderParts, cid: ClientOrderId, now: Instant) -> OrderState {
         S::ExecutionReportStatusNew => OrderState::Acked { cid, broker_id },
         S::ExecutionReportStatusPartiallyfill => OrderState::PartiallyFilled {
             cid,
-            filled: Qty::from(p.lots_executed),
-            left: Qty::from((p.lots_requested - p.lots_executed).max(0)),
+            filled: p.qty_executed(),
+            left: p.qty_left(),
         },
         S::ExecutionReportStatusUnspecified => OrderState::Unknown { cid, since: now },
     }
@@ -116,7 +144,8 @@ pub fn state(p: &OrderParts, cid: ClientOrderId, now: Instant) -> OrderState {
 
 /// An [`OrderSnapshot`] from the parts of any order message.
 ///
-/// `qty` and `filled` are in lots, `price` is per one instrument. The cid is [`OrderParts::cid`].
+/// `qty` and `filled` are in units of the instrument (the lot size set with [`OrderParts::with_lot`]),
+/// `price` is per one instrument. The cid is [`OrderParts::cid`].
 pub fn snapshot(p: &OrderParts, now: Instant) -> OrderSnapshot {
     let cid = p.cid();
     OrderSnapshot {
@@ -126,8 +155,8 @@ pub fn snapshot(p: &OrderParts, now: Instant) -> OrderSnapshot {
         state: state(p, cid, now),
         side: side(p.direction),
         order_type: order_type(p.order_type),
-        qty: Qty::from(p.lots_requested),
-        filled: Qty::from(p.lots_executed),
+        qty: p.qty_requested(),
+        filled: p.qty_executed(),
         price: p.unit_price,
         ts: stamps(now, p.broker_ts.as_ref()),
     }
@@ -145,6 +174,7 @@ pub fn parts_from_state(o: &pb::OrderState) -> OrderParts {
         status: o.execution_report_status(),
         lots_requested: o.lots_requested,
         lots_executed: o.lots_executed,
+        lot_size: 1,
         unit_price: price_of(&o.initial_security_price),
         direction: o.direction(),
         order_type: o.order_type(),
@@ -162,6 +192,7 @@ pub fn parts_from_post(r: &pb::PostOrderResponse) -> OrderParts {
         status: r.execution_report_status(),
         lots_requested: r.lots_requested,
         lots_executed: r.lots_executed,
+        lot_size: 1,
         unit_price: price_of(&r.initial_security_price),
         direction: r.direction(),
         order_type: r.order_type(),
@@ -185,6 +216,7 @@ pub fn parts_from_stream(o: &stream::OrderState) -> OrderParts {
         status: o.execution_report_status(),
         lots_requested: o.lots_requested,
         lots_executed: o.lots_executed,
+        lot_size: i64::from(o.lot_size).max(1),
         unit_price: price_of(&Some(o.order_price.clone().unwrap_or_default())),
         direction: o.direction(),
         order_type: o.order_type(),

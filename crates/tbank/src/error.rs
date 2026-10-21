@@ -1,6 +1,6 @@
 //! gRPC status -> public connector errors.
 //!
-//! T-Bank error codes (errors.md): `RESOURCE_EXHAUSTED` 800xx, `NOT_FOUND` 500xx, `UNAUTHENTICATED` 40003,
+//! T-Bank error codes (errors.md): `RESOURCE_EXHAUSTED` 800xx, `NOT_FOUND` 500xx (becomes `not_found`), `UNAUTHENTICATED` 40003,
 //! `PERMISSION_DENIED` 4000x, `INVALID_ARGUMENT` 300xx. The broker puts the number in the status
 //! message (and may repeat it at the start of the `message` header), see [`broker_code`].
 //!
@@ -52,8 +52,12 @@ fn retry_after(status: &Status) -> Duration {
 }
 
 fn rejected(status: &Status) -> Error {
+    let code = match status.code() {
+        Code::NotFound => brokapi_core::NOT_FOUND.to_string(),
+        other => format!("{other:?}"),
+    };
     Error::Rejected {
-        code: format!("{:?}", status.code()),
+        code,
         message: status.message().to_string(),
     }
 }
@@ -131,9 +135,11 @@ fn exhausted_wait(status: &Status) -> Duration {
 ///   `stream_lifetime` or `stop_orders_limit`, because a repeat cannot help.
 /// - `InvalidArgument` with the code 30261 (too many stop orders in the answer) gives
 ///   [`Error::Rejected`] with the code `stop_orders_response_limit`.
-/// - `InvalidArgument`, `NotFound`, `PermissionDenied`, `FailedPrecondition`, `Unimplemented`,
+/// - `NotFound` gives [`Error::Rejected`] with the code `not_found` ([`brokapi_core::NOT_FOUND`], the
+///   same at every broker).
+/// - `InvalidArgument`, `PermissionDenied`, `FailedPrecondition`, `Unimplemented`,
 ///   `AlreadyExists`, `OutOfRange` gives [`Error::Rejected`], with the status code name as `code` (for
-///   example `"NotFound"`) and the status message as `message`.
+///   example `"InvalidArgument"`) and the status message as `message`.
 /// - `Unauthenticated` gives [`Error::Config`]: the token is wrong or expired, fix it.
 /// - everything else (`Unavailable`, `DeadlineExceeded`, `Internal`, ...) gives [`Error::Transport`].
 ///
@@ -146,7 +152,7 @@ fn exhausted_wait(status: &Status) -> Duration {
 ///
 /// match map_status(&Status::not_found("50002")) {
 ///     Error::Rejected { code, message } => {
-///         assert_eq!(code, "NotFound");
+///         assert_eq!(code, "not_found");
 ///         assert_eq!(message, "50002");
 ///     }
 ///     other => panic!("unexpected {other:?}"),

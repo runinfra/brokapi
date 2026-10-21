@@ -55,6 +55,12 @@ const DAILY_SCHEDULE_PATH: &str =
 /// A limit order at this price is refused with HTTP 200 and `orderStatus = 8` (`rejectReason` set).
 pub const REJECT_IN_BODY_PRICE: Decimal = Decimal::from_parts(1338, 0, 0, false, 2);
 
+/// The ticker no mock broker knows: reads of it are answered "not found".
+pub const UNKNOWN_TICKER: &str = "NOPE";
+
+/// What the socket task takes as "close now" (never a real message).
+const CLOSE_SENTINEL: &str = "\u{0}close";
+
 /// Access token of the default account (refresh token `mock-refresh-token`).
 pub const DEFAULT_ACCESS: &str = "mock-access-token";
 
@@ -93,6 +99,18 @@ pub struct MockOptions {
     pub by_type_total: AtomicU32,
     /// Every `(page, size)` the by-type list was asked for.
     pub by_type_asked: std::sync::Mutex<Vec<(Option<u32>, Option<u32>)>>,
+    /// Requests that change an order (`POST` to the order methods) the mock has received, counted when they
+    /// arrive, before any delay.
+    pub order_commands: AtomicU32,
+    /// The mock holds every order command this many milliseconds before it acts and answers (to provoke a
+    /// timeout of the client, or to keep one command in flight while others wait). The clock is the tokio
+    /// clock of the test, so `brokapi_mocks::time::jump` ends the wait.
+    pub order_delay_ms: std::sync::atomic::AtomicU64,
+    /// A cancel is answered with status 6 ("cancelling"): the order stays alive until
+    /// [`MockServer::finish_cancel`] or a fill.
+    pub cancel_pending: AtomicBool,
+    /// Every `(page, size)` the trades list was asked for.
+    pub trades_asked: std::sync::Mutex<Vec<(Option<usize>, Option<usize>)>>,
     /// Orders, trades and open event sockets of all accounts.
     book: std::sync::Mutex<Book>,
 }
@@ -160,7 +178,10 @@ struct MockOrder {
     exec_take: Option<i64>,
     qty: Decimal,
     executed: Decimal,
-    /// `0` new, `1` partly filled, `2` filled, `4` cancelled, `5` replaced, `8` rejected.
+    /// Value of everything executed so far (price times quantity, summed over the fills). The broker
+    /// reports running totals: `executionValue` is this, `averagePrice` is this over `executed`.
+    exec_value: Decimal,
+    /// `0` new, `1` partly filled, `2` filled, `4` cancelled, `5` replaced, `6` cancelling, `8` rejected.
     status: String,
     reject_reason: Option<String>,
 }
@@ -171,13 +192,13 @@ impl MockOrder {
     }
 
     fn active(&self) -> bool {
-        matches!(self.status.as_str(), "0" | "1")
+        matches!(self.status.as_str(), "0" | "1" | "6")
     }
 
     /// `orderStatus` of the order list: 1 cancelled, 2 executed, 3 active.
     fn list_status(&self) -> i32 {
         match self.status.as_str() {
-            "0" | "1" => 3,
+            "0" | "1" | "6" => 3,
             "2" => 2,
             _ => 1,
         }
@@ -210,7 +231,10 @@ impl MockOrder {
             "classCode": self.class_code,
             "side": self.side,
             "orderType": self.order_type,
-            "averagePrice": num(self.price.unwrap_or(Decimal::ZERO)),
+            // Running totals of the order, as the broker sends them (docs sample: lastQuantity 50,
+            // executedQuantity 100, averagePrice 244.5, executionValue 24450).
+            "averagePrice": num(if self.executed.is_zero() { Decimal::ZERO } else { self.exec_value / self.executed }),
+            "executionValue": num(self.exec_value),
             "orderId": self.order_id,
             "executionId": execution_id,
             "price": num(self.price.unwrap_or(Decimal::ZERO)),
@@ -276,6 +300,8 @@ struct Book {
     next_trade: i64,
     /// Open `orders/events/ws` sockets: (access token of the account, sender).
     sockets: Vec<(String, tokio::sync::mpsc::UnboundedSender<String>)>,
+    /// Orders (by cid) the order list does not show, though `GET /orders` knows them.
+    hidden: std::collections::HashSet<String>,
 }
 
 impl Book {
@@ -392,6 +418,63 @@ impl MockServer {
 }
 
 impl MockServer {
+    /// Ends every open `orders/events/ws` socket from the broker side: the link breaks. The connector
+    /// sees the end and opens a new one. [`MockOptions::event_sockets`] counts the open ones.
+    pub fn cut_event_sockets(&self) {
+        let mut b = self.options.book.lock().unwrap();
+        b.sockets.retain(|(_, tx)| !tx.is_closed());
+        for (_, tx) in &b.sockets {
+            let _ = tx.send(CLOSE_SENTINEL.to_owned());
+        }
+    }
+
+    /// Records `n` trades of the default account in the history (no events). For the paging of the list.
+    pub fn add_history_trades(&self, n: usize, price: Price, qty: Qty) {
+        let mut b = self.options.book.lock().unwrap();
+        for _ in 0..n {
+            b.next_trade += 1;
+            let trade_no = b.next_trade;
+            b.trades.push(MockTrade {
+                owner: DEFAULT_ACCESS.to_string(),
+                order_no: 79_900_000 + trade_no,
+                trade_no,
+                ticker: "SBER".into(),
+                class_code: "TQBR".into(),
+                side: "1".into(),
+                price: price.decimal(),
+                qty: qty.decimal(),
+            });
+        }
+    }
+
+    /// The order list (`POST /orders/search`) stops showing the order `cid`, while `GET /orders` still
+    /// knows it. The list is cut at the most recent orders and by a time window, so a live order can be
+    /// missing from it.
+    pub fn hide_from_list(&self, cid: &str) {
+        self.options
+            .book
+            .lock()
+            .unwrap()
+            .hidden
+            .insert(cid.to_owned());
+    }
+
+    /// Ends a cancel that was left in status 6 ("cancelling") by [`MockOptions::cancel_pending`]: the
+    /// order is cancelled (status 4) and the event goes out.
+    pub fn finish_cancel(&self, cid: &str) {
+        let mut b = self.options.book.lock().unwrap();
+        let idx = b
+            .find(DEFAULT_ACCESS, "1", cid)
+            .expect("finish_cancel: unknown order");
+        assert_eq!(
+            b.orders[idx].status, "6",
+            "finish_cancel: the order is not cancelling"
+        );
+        b.orders[idx].status = "4".into();
+        let o = b.orders[idx].clone();
+        b.event(&o, "4", Decimal::ZERO, None);
+    }
+
     /// Pushes a raw message to every open `orders/events/ws` socket (all accounts).
     pub fn push_event(&self, text: &str) {
         let mut b = self.options.book.lock().unwrap();
@@ -418,6 +501,7 @@ impl MockServer {
         let o = &mut b.orders[idx];
         assert!(o.active(), "fill: order is not active");
         o.executed = (o.executed + qty).min(o.qty);
+        o.exec_value += qty * price;
         o.price = o.price.or(Some(price));
         o.status = if o.executed >= o.qty {
             "2".into()
@@ -496,6 +580,24 @@ async fn http_handler(
             StatusCode::OK,
             r#"{"records":[{"ticker":"SBER","classCode":"TQBR","bid":300.1,"offer":300.2,"last":300.15}]}"#,
         );
+    }
+    if method == Method::POST
+        && uri.path().starts_with(ORDERS_PATH)
+        && uri.path() != ORDERS_SEARCH_PATH
+    {
+        state.options.order_commands.fetch_add(1, Ordering::SeqCst);
+        let delay = state.options.order_delay_ms.load(Ordering::SeqCst);
+        if delay > 0 {
+            // The broker takes the order after the delay even if the client gave up waiting and closed the
+            // connection: the work runs in a task of its own, which the closed connection does not cancel.
+            let held = tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                handle_http(state, method, uri, headers, body).await
+            });
+            return held.await.unwrap_or_else(|_| {
+                json_response(StatusCode::INTERNAL_SERVER_ERROR, r#"{"type":"INTERNAL"}"#)
+            });
+        }
     }
     handle_http(state, method, uri, headers, body).await
 }
@@ -600,6 +702,10 @@ async fn handle_http(
     if path == ORDER_BOOK_PATH && method == Method::GET {
         if state.options.rate_limit_order_book.load(Ordering::Relaxed) {
             return StatusCode::TOO_MANY_REQUESTS.into_response();
+        }
+        // An instrument the broker does not know is a 404.
+        if query_param(&uri, "ticker").as_deref() == Some(UNKNOWN_TICKER) {
+            return not_found();
         }
         return json_response(StatusCode::OK, &fixture("rest/order_book.json"));
     }
@@ -882,6 +988,7 @@ fn handle_orders(
             })
             .filter(|o| wanted_types.is_empty() || wanted_types.contains(&(o.list_type() as i64)))
             .filter(|o| wanted_tickers.is_empty() || wanted_tickers.contains(&o.ticker))
+            .filter(|o| !book.hidden.contains(&o.cid))
             .collect();
         let size = query_param(uri, "size")
             .and_then(|s| s.parse::<usize>().ok())
@@ -907,10 +1014,18 @@ fn handle_orders(
             .lock()
             .unwrap()
             .push("POST /trades/search".into());
-        let records: Vec<Value> = book
-            .trades
+        // The broker lists the 1000 most recent trades, by `page` and `size` (default 50, at most 100).
+        let size = query_param(uri, "size").and_then(|s| s.parse::<usize>().ok());
+        let page = query_param(uri, "page").and_then(|s| s.parse::<usize>().ok());
+        opts.trades_asked.lock().unwrap().push((page, size));
+        let size = size.unwrap_or(50).clamp(1, 100);
+        let page = page.unwrap_or(0);
+        let mine: Vec<&MockTrade> = book.trades.iter().filter(|t| t.owner == owner).collect();
+        let listed = &mine[mine.len().saturating_sub(1000)..];
+        let records: Vec<Value> = listed
             .iter()
-            .filter(|t| t.owner == owner)
+            .skip(page * size)
+            .take(size)
             .map(|t| {
                 json!({
                     "orderNum": t.order_no, "tradeNum": t.trade_no, "ticker": t.ticker, "classCode": t.class_code,
@@ -919,10 +1034,11 @@ fn handle_orders(
                 })
             })
             .collect();
-        let n = records.len();
+        let n = listed.len();
         return Some(json_response(
             StatusCode::OK,
-            &json!({"records": records, "totalRecords": n, "totalPages": if n == 0 { 0 } else { 1 }}).to_string(),
+            &json!({"records": records, "totalRecords": n, "totalPages": n.div_ceil(size)})
+                .to_string(),
         ));
     }
 
@@ -999,6 +1115,7 @@ fn handle_orders(
             exec_take: parsed["executionTakeProfitType"].as_i64(),
             qty: dec_of(&parsed["orderQuantity"]).unwrap_or(Decimal::ONE),
             executed: Decimal::ZERO,
+            exec_value: Decimal::ZERO,
             status: "0".into(),
             reject_reason: None,
         };
@@ -1033,9 +1150,13 @@ fn handle_orders(
     }
 
     if rest.starts_with("/cancel") {
-        book.orders[idx].status = "4".into();
+        // With `cancel_pending` the broker only starts the cancel: status 6, the order is alive and may
+        // still be filled. `MockServer::finish_cancel` ends it with status 4.
+        let pending = opts.cancel_pending.load(Ordering::SeqCst);
+        let code = if pending { "6" } else { "4" };
+        book.orders[idx].status = code.into();
         let o = book.orders[idx].clone();
-        book.event(&o, "4", Decimal::ZERO, None);
+        book.event(&o, code, Decimal::ZERO, None);
         let resp = if sync {
             o.state_list(&request_id)
         } else {
@@ -1067,6 +1188,7 @@ fn handle_orders(
     );
     new.status = "0".into();
     new.executed = Decimal::ZERO;
+    new.exec_value = Decimal::ZERO;
     if let Some(p) = dec_of(&parsed["price"]) {
         new.price = Some(p);
     }
@@ -1122,6 +1244,11 @@ async fn handle_ws(socket: WebSocket, path: String, owner: String, state: MockSt
     loop {
         let msg = tokio::select! {
             Some(text) = pushes.1.recv() => {
+                if text == CLOSE_SENTINEL {
+                    // The broker side ends the socket (the test cut the link).
+                    let _ = write.send(Message::Close(None)).await;
+                    break;
+                }
                 let _ = write.send(Message::Text(text.into())).await;
                 continue;
             }

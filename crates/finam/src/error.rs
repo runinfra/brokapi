@@ -9,7 +9,9 @@
 //! | gRPC status | Query or stream | Command |
 //! |---|---|---|
 //! | `RESOURCE_EXHAUSTED` | `Error::RateLimited` | `Error::RateLimited` |
-//! | `UNAUTHENTICATED`, `PERMISSION_DENIED`, `NOT_FOUND`, `INVALID_ARGUMENT`, `FAILED_PRECONDITION`, `OUT_OF_RANGE`, `ALREADY_EXISTS`, `UNIMPLEMENTED` | `Error::Rejected` | `Error::Rejected` |
+//! | `UNAUTHENTICATED` (and a login the broker refused) | `Error::Config` | `Error::Config` |
+//! | `NOT_FOUND` | `Error::Rejected`, code `not_found` | `Error::Rejected`, code `not_found` |
+//! | `PERMISSION_DENIED`, `INVALID_ARGUMENT`, `FAILED_PRECONDITION`, `OUT_OF_RANGE`, `ALREADY_EXISTS`, `UNIMPLEMENTED` | `Error::Rejected` | `Error::Rejected` |
 //! | anything else (`UNAVAILABLE`, `DEADLINE_EXCEEDED`, `INTERNAL`, ...) | `Error::Transport` | `Error::Unknown` |
 //!
 //! # Examples
@@ -44,17 +46,17 @@ use tonic::Code;
 pub fn map_protocol_err(err: &FinamError) -> Error {
     match err {
         FinamError::Config(m) => Error::Config(ConfigError::Message(m.clone())),
-        FinamError::Auth(m) => Error::Rejected {
-            code: "unauthenticated".into(),
-            message: m.clone(),
-        },
+        // A refused login is a problem of the secret, as at the other brokers: `Config`.
+        FinamError::Auth(m) => Error::Config(ConfigError::Message(format!("unauthenticated: {m}"))),
         FinamError::Status { code, message } => match code {
             // Finam's documented quota is 200 requests per minute; the wait is a guess.
             Code::ResourceExhausted => Error::RateLimited {
                 retry_after: Duration::from_secs(1),
             },
-            Code::Unauthenticated
-            | Code::PermissionDenied
+            Code::Unauthenticated => {
+                Error::Config(ConfigError::Message(format!("unauthenticated: {message}")))
+            }
+            Code::PermissionDenied
             | Code::NotFound
             | Code::InvalidArgument
             | Code::FailedPrecondition
@@ -94,7 +96,7 @@ pub fn code_name(code: Code) -> &'static str {
         Code::Unknown => "unknown",
         Code::InvalidArgument => "invalid_argument",
         Code::DeadlineExceeded => "deadline_exceeded",
-        Code::NotFound => "not_found",
+        Code::NotFound => brokapi_core::NOT_FOUND,
         Code::AlreadyExists => "already_exists",
         Code::PermissionDenied => "permission_denied",
         Code::ResourceExhausted => "resource_exhausted",

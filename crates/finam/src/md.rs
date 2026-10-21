@@ -160,7 +160,7 @@ impl MarketDataConnector {
     /// # Errors
     ///
     /// - [`Error::Config`]: empty secret, or an invalid endpoint URL.
-    /// - [`Error::Rejected`]: the broker refused the secret (code `unauthenticated`).
+    /// - [`Error::Config`] also: the broker refused the secret (a wrong token is a configuration problem at every broker).
     /// - [`Error::RateLimited`]: the broker answered `RESOURCE_EXHAUSTED` to the login.
     /// - [`Error::Transport`]: the broker could not be reached.
     ///

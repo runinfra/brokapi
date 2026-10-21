@@ -88,11 +88,57 @@ fn map_flat_trade(record: &TradeRecord, now: Instant) -> Option<Execution> {
     })
 }
 
+/// What the broker had executed in one order after a message: the quantity and the value (price times
+/// quantity) of everything filled so far, summed over all fills of the order.
+///
+/// The `orders/events/ws` messages carry running totals (`executedQuantity`, `executionValue`,
+/// `averagePrice`), not the numbers of one fill. The docs sample: `lastQuantity` 50, `executedQuantity`
+/// 100, `averagePrice` 244.5, `executionValue` 24450. The price of one fill is the growth of the value
+/// divided by the growth of the quantity between two messages of the same order, see [`map_ws_execution`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Cumulative {
+    /// Quantity executed so far (`executedQuantity`), in pieces.
+    pub qty: Decimal,
+    /// Value executed so far, in the currency of the instrument: `executionValue`, else
+    /// `averagePrice * executedQuantity`.
+    pub value: Decimal,
+}
+
+/// The running totals of an order message, or `None` when the message does not carry enough to know
+/// them (no `executedQuantity`, or neither `executionValue` nor `averagePrice`).
+pub fn cumulative_of(
+    data: &brokapi_bcs_protocol::ws::models::OrderExecutionData,
+) -> Option<Cumulative> {
+    let qty = data.executed_quantity?;
+    let value = match (data.execution_value, data.average_price) {
+        (Some(v), _) if v > Decimal::ZERO => v,
+        (_, Some(avg)) if avg > Decimal::ZERO => avg * qty,
+        _ => return None,
+    };
+    Some(Cumulative { qty, value })
+}
+
 /// A fill from the `orders/events/ws` WebSocket. Only messages that carry a fill: `lastQuantity > 0`
-/// and an `executionId`. The price of one fill is `executionValue / lastQuantity` when the broker
-/// sends the value of the fill, else `averagePrice` (exact for a single fill), else the order price.
-/// `clientOrderId` may be empty (the sample in the docs has it empty): then `originalClientOrderId`.
-pub fn map_ws_execution(msg: &OrderMessage, now: Instant) -> Option<Execution> {
+/// and an `executionId`. `clientOrderId` may be empty (the sample in the docs has it empty): then
+/// `originalClientOrderId`.
+///
+/// **The price of the fill.** `before` is the running total of the same order from the previous message
+/// the connector saw ([`cumulative_of`]). With it the price is exact:
+///
+/// - the totals after this message minus `before` give the quantity and the value of this fill alone,
+///   and the price is value divided by quantity. A first fill of an order (`before` is `None` and
+///   `executedQuantity` equals `lastQuantity`) is the same with `before` of zero. Two fills at
+///   different prices give two different prices, not their average.
+/// - When the totals do not fit (a message was missed, so the growth of `executedQuantity` is not
+///   `lastQuantity`, or the message has no totals), the price is the best the message says:
+///   `averagePrice` of the order so far, else the price of the order. That is an average over earlier
+///   fills too, so it can be off by the difference between the fills. The price of every trade is in the
+///   history (`ExecutionSource::executions`), which is the way to settle it.
+pub fn map_ws_execution(
+    msg: &OrderMessage,
+    now: Instant,
+    before: Option<Cumulative>,
+) -> Option<Execution> {
     let data = msg.data.as_ref()?;
     let qty = data.last_quantity;
     if qty <= Decimal::ZERO {
@@ -104,11 +150,23 @@ pub fn map_ws_execution(msg: &OrderMessage, now: Instant) -> Option<Execution> {
             .as_deref()
             .and_then(|s| Uuid::parse_str(s).ok())
     });
-    let price = match (data.execution_value, data.average_price) {
-        (Some(v), _) if v > Decimal::ZERO => v / qty,
-        (_, Some(avg)) if avg > Decimal::ZERO => avg,
+    let exact = cumulative_of(data).and_then(|after| {
+        let base = match before {
+            Some(b) => b,
+            // The first message of the order: the totals are those of this fill alone.
+            None if after.qty == qty => Cumulative {
+                qty: Decimal::ZERO,
+                value: Decimal::ZERO,
+            },
+            None => return None,
+        };
+        (after.qty - base.qty == qty && after.value > base.value)
+            .then(|| (after.value - base.value) / qty)
+    });
+    let price = exact.unwrap_or_else(|| match data.average_price {
+        Some(avg) if avg > Decimal::ZERO => avg,
         _ => data.price,
-    };
+    });
     // An unknown side is not guessed: a fill with the wrong side would corrupt the position.
     let side = match data.side {
         brokapi_bcs_protocol::models::enums::OrderSide::Buy => Side::Buy,

@@ -11,9 +11,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use brokapi_core::{
     Candle, Envelope, Error, Instrument, InstrumentId, InstrumentKind, InstrumentQuery,
-    InstrumentSource, MarketDataCaps, MarketDataSource, MarketTrade, NativeId, OrderBook,
-    OrderBookSource, Schedule, ShutdownMode, ShutdownReport, StreamingCaps, SubscribeOpts,
-    SubscriptionId, TimeRange, Timeframe, TradingParams, TradingStatus, UnixNanos,
+    InstrumentSource, MarketDataCaps, MarketDataSource, MarketTrade, OrderBook, OrderBookSource,
+    Schedule, ShutdownMode, ShutdownReport, StreamingCaps, SubscribeOpts, SubscriptionId,
+    TimeRange, Timeframe, TradingParams, TradingStatus, UnixNanos,
 };
 use brokapi_runtime::BrokerLimiter;
 use brokapi_sansio::{
@@ -32,7 +32,8 @@ use crate::config::{MD_MAX_PING, MarketDataConfig, effective_ping, silence_limit
 use crate::core::md::{MdCore, MdFrame};
 use crate::emit::Emitter;
 use crate::error::{config, transport};
-use crate::ids::{instrument_ref, nanos_to_proto, stamps};
+use crate::ids::{instrument_ref, instrument_request, nanos_to_proto, require_native, stamps};
+use crate::lots::{LotBook, event_instrument, scale_book, scale_candle, scale_event, scale_trade};
 use crate::map::{instrument as map_instrument, market, schedule as map_schedule};
 use crate::raw::TbankRaw;
 use crate::stream::{LastError, backoff, sleep_or_cancel};
@@ -45,6 +46,9 @@ struct Shared {
     limiter: Arc<BrokerLimiter>,
     emitter: Arc<Emitter>,
     core: Mutex<MdCore>,
+    /// Lot sizes of the instruments met: the broker counts book levels, trades and volumes in lots, the
+    /// events count in units.
+    lots: LotBook,
     waiters: Mutex<HashMap<SubscriptionId, oneshot::Sender<Result<(), String>>>>,
     subs: Mutex<Vec<DesiredSubscription>>,
     sub_ids: SubIdGen,
@@ -75,8 +79,45 @@ impl Shared {
             }
             r
         };
-        self.emitter.emit(sink.drain());
+        let mut events = sink.drain();
+        // Lots to units. The lot of an instrument is read before its subscription is made, so it is
+        // known here. An event of an instrument without one would be in lots: it is dropped, not guessed.
+        events.retain_mut(|e| match event_instrument(&e.payload) {
+            None => true,
+            Some(id) => match self.lots.get(id) {
+                Some(lot) => {
+                    scale_event(&mut e.payload, lot);
+                    true
+                }
+                None => {
+                    warn!(instrument = %id.key.display(), "no lot size, event dropped");
+                    false
+                }
+            },
+        });
+        self.emitter.emit(events);
         r
+    }
+
+    /// The lot size of an instrument: from the book, else one `GetInstrumentBy`, remembered.
+    async fn lot_of(&self, id: &InstrumentId) -> Result<i64, Error> {
+        require_native(id)?;
+        if let Some(lot) = self.lots.get(id) {
+            return Ok(lot);
+        }
+        self.limiter
+            .acquire("GetInstrumentBy", brokapi_runtime::now())?;
+        let mut c = self.client.instruments();
+        let r = query(
+            self.request_timeout,
+            c.get_instrument_by(instrument_request(id)),
+        )
+        .await?;
+        let i = r.instrument.ok_or_else(|| {
+            Error::not_found(format!("instrument {} not found", id.key.display()))
+        })?;
+        self.lots.put_instrument(id, &i);
+        Ok(i64::from(i.lot).max(1))
     }
 
     fn forward(core: &mut MdCore, tx: &mpsc::UnboundedSender<pb::MarketDataRequest>) {
@@ -185,7 +226,9 @@ impl Shared {
 ///   and an order book subscription gets an [`Event::Resync`](brokapi_core::Event::Resync).
 /// - Every order book message is a full snapshot, there are no increments.
 /// - Quotes are the best level of the order book. T-Bank has no separate quote stream.
-/// - Quantities of the order book, trades and candles are in LOTS. Prices are per one instrument.
+/// - The broker counts the levels of the order book, trades and candle volumes in LOTS. The connector multiplies by the lot
+///   size, so the events count in units of the instrument, as at every broker (the first read or subscription on an
+///   instrument looks the lot size up, one `GetInstrumentBy`). Prices are per one instrument.
 /// - Depths the broker accepts are 1, 10, 20, 30, 40 and 50. Other depths are rounded up on the wire
 ///   and the events are cut to the depth you asked for.
 ///
@@ -300,6 +343,7 @@ impl MarketDataConnector {
             limiter,
             emitter: Emitter::new(cfg.source, out),
             core: Mutex::new(MdCore::new(ping)),
+            lots: LotBook::new(),
             waiters: Mutex::new(HashMap::new()),
             subs: Mutex::new(Vec::new()),
             sub_ids: SubIdGen::new(0),
@@ -520,6 +564,8 @@ impl MarketDataConnector {
         kind: SubscriptionKind,
         opts: SubscribeOpts,
     ) -> Result<SubscriptionId, Error> {
+        // The lot size first: the events of this subscription are scaled with it.
+        self.inner.lot_of(instrument).await?;
         self.acquire("SubscribeMarketData")?;
         let inner = &self.inner;
         let id = inner.sub_ids.next();
@@ -590,13 +636,13 @@ impl OrderBookSource for MarketDataConnector {
     ///
     /// `depth` is the number of levels you want. It is sent rounded up to a depth the broker accepts
     /// (1, 10, 20, 30, 40 or 50) and the answer is cut back to `depth` levels, best first. A depth of 0
-    /// counts as 1 and a depth above 50 is capped at 50 on the wire. Quantities are in lots.
+    /// counts as 1 and a depth above 50 is capped at 50 on the wire. Quantities are in units of the instrument (the connector converts from lots).
     ///
     /// # Errors
     ///
     /// - [`Error::ShuttingDown`] after shutdown started.
     /// - [`Error::RateLimited`] when the local limiter or the broker refuses for rate. Repeat later.
-    /// - [`Error::Rejected`] when the broker does not know the instrument (code `NotFound`).
+    /// - [`Error::Rejected`] when the broker does not know the instrument (code `not_found`).
     /// - [`Error::Transport`] on a timeout or a network failure. A read, so repeat it later.
     /// - [`Error::Config`] when the token is not accepted.
     ///
@@ -635,6 +681,7 @@ impl OrderBookSource for MarketDataConnector {
     /// # }
     /// ```
     async fn order_book(&self, id: &InstrumentId, depth: u32) -> Result<OrderBook, Error> {
+        let lot = self.inner.lot_of(id).await?;
         self.acquire("GetOrderBook")?;
         let req = pb::GetOrderBookRequest {
             depth: market::wire_depth(depth) as i32,
@@ -643,14 +690,16 @@ impl OrderBookSource for MarketDataConnector {
         };
         let mut c = self.inner.client.market_data();
         let r = query(self.inner.request_timeout, c.get_order_book(req)).await?;
-        Ok(market::book_snapshot(
+        let mut book = market::book_snapshot(
             id,
             &r.bids,
             &r.asks,
             depth.max(1) as usize,
             r.orderbook_ts.as_ref(),
             brokapi_runtime::now(),
-        ))
+        );
+        scale_book(&mut book, brokapi_core::Decimal::from(lot));
+        Ok(book)
     }
 
     /// Streams the order book as full snapshots.
@@ -756,12 +805,13 @@ impl MarketDataSource for MarketDataConnector {
     /// Anonymous market trades of the last hour, the newest `limit` of them (`GetLastTrades`).
     ///
     /// One hour is all that T-Bank guarantees, so older trades are not available here. Quantities
-    /// are in lots. Trades without a direction are skipped, so you may get fewer than `limit`.
+    /// are in units of the instrument (the connector converts from lots). Trades without a direction are skipped, so you may get fewer than `limit`.
     ///
     /// # Errors
     ///
     /// The same as [`order_book`](OrderBookSource::order_book).
     async fn last_trades(&self, id: &InstrumentId, limit: u32) -> Result<Vec<MarketTrade>, Error> {
+        let lot = self.inner.lot_of(id).await?;
         self.acquire("GetLastTrades")?;
         let now = crate::ids::wall_nanos();
         let req = pb::GetLastTradesRequest {
@@ -780,6 +830,9 @@ impl MarketDataSource for MarketDataConnector {
             .iter()
             .filter_map(|t| market::trade(id, t, rx))
             .collect();
+        trades
+            .iter_mut()
+            .for_each(|t| scale_trade(t, brokapi_core::Decimal::from(lot)));
         let keep = limit as usize;
         if trades.len() > keep {
             trades.drain(..trades.len() - keep);
@@ -789,7 +842,7 @@ impl MarketDataSource for MarketDataConnector {
 
     /// Streams anonymous market trades as they happen.
     ///
-    /// Each event is one trade. Quantities are in lots. Trades without a direction are skipped.
+    /// Each event is one trade. Quantities are in units of the instrument (the connector converts from lots). Trades without a direction are skipped.
     ///
     /// # Errors
     ///
@@ -835,7 +888,7 @@ impl MarketDataSource for MarketDataConnector {
     /// Historic candles of `range` (`GetCandles`).
     ///
     /// `close_ts` of each candle is its open time plus the length of the timeframe (a month is taken
-    /// as 30 days). Volumes are in lots. How many candles one call returns, and the maximum range per
+    /// as 30 days). Volumes are in units of the instrument (the connector converts from lots). How many candles one call returns, and the maximum range per
     /// timeframe, are broker limits that this method does not split: not verified against the live
     /// API.
     ///
@@ -886,6 +939,7 @@ impl MarketDataSource for MarketDataConnector {
         tf: Timeframe,
         range: TimeRange,
     ) -> Result<Vec<Candle>, Error> {
+        let lot = self.inner.lot_of(id).await?;
         self.acquire("GetCandles")?;
         let req = pb::GetCandlesRequest {
             from: Some(nanos_to_proto(range.from)),
@@ -897,10 +951,15 @@ impl MarketDataSource for MarketDataConnector {
         let mut c = self.inner.client.market_data();
         let r = query(self.inner.request_timeout, c.get_candles(req)).await?;
         let rx = brokapi_runtime::now();
-        Ok(r.candles
+        let mut candles: Vec<Candle> = r
+            .candles
             .iter()
             .map(|x| market::historic_candle(id, tf, x, rx))
-            .collect())
+            .collect();
+        candles
+            .iter_mut()
+            .for_each(|c| scale_candle(c, brokapi_core::Decimal::from(lot)));
+        Ok(candles)
     }
 
     /// The longest span one `GetCandles` request may cover, per timeframe, from the T-Invest
@@ -923,7 +982,7 @@ impl MarketDataSource for MarketDataConnector {
 
     /// Streams the candle that is forming, for timeframe `tf`.
     ///
-    /// Each event is the current state of the last candle, not only closed ones. Volumes are in lots.
+    /// Each event is the current state of the last candle, not only closed ones. Volumes are in units of the instrument (the connector converts from lots).
     ///
     /// # Errors
     ///
@@ -943,31 +1002,6 @@ impl MarketDataSource for MarketDataConnector {
             opts,
         )
         .await
-    }
-}
-
-fn instrument_request(id: &InstrumentId) -> pb::InstrumentRequest {
-    match &id.native {
-        NativeId::Uid(u) => pb::InstrumentRequest {
-            id_type: pb::InstrumentIdType::Uid as i32,
-            id: u.clone(),
-            class_code: None,
-        },
-        NativeId::Figi(f) => pb::InstrumentRequest {
-            id_type: pb::InstrumentIdType::Figi as i32,
-            id: f.clone(),
-            class_code: None,
-        },
-        NativeId::TickerClass { ticker, class_code } => pb::InstrumentRequest {
-            id_type: pb::InstrumentIdType::Ticker as i32,
-            id: ticker.clone(),
-            class_code: Some(class_code.clone()),
-        },
-        NativeId::SymbolMic { symbol, mic } => pb::InstrumentRequest {
-            id_type: pb::InstrumentIdType::Ticker as i32,
-            id: symbol.clone(),
-            class_code: Some(mic.clone()),
-        },
     }
 }
 
@@ -1047,6 +1081,7 @@ impl MarketDataConnector {
     }
 
     async fn instrument_by(&self, id: &InstrumentId) -> Result<pb::Instrument, Error> {
+        require_native(id)?;
         self.acquire("GetInstrumentBy")?;
         let mut c = self.inner.client.instruments();
         let r = query(
@@ -1054,10 +1089,11 @@ impl MarketDataConnector {
             c.get_instrument_by(instrument_request(id)),
         )
         .await?;
-        r.instrument.ok_or_else(|| Error::Rejected {
-            code: "NotFound".into(),
-            message: format!("instrument {} not found", id.key.display()),
-        })
+        let i = r.instrument.ok_or_else(|| {
+            Error::not_found(format!("instrument {} not found", id.key.display()))
+        })?;
+        self.inner.lots.put_instrument(id, &i);
+        Ok(i)
     }
 }
 
@@ -1160,7 +1196,7 @@ impl InstrumentSource for MarketDataConnector {
     ///
     /// # Errors
     ///
-    /// [`Error::Rejected`] (code `NotFound`) when the broker does not know the instrument, and the
+    /// [`Error::Rejected`] (code `not_found`) when the broker does not know the instrument, and the
     /// other errors of [`order_book`](OrderBookSource::order_book).
     async fn get(&self, id: &InstrumentId) -> Result<Instrument, Error> {
         Ok(map_instrument::instrument_from_full(
@@ -1170,8 +1206,8 @@ impl InstrumentSource for MarketDataConnector {
 
     /// Lot size, price step and currency of an instrument.
     ///
-    /// `lot_size` is the pieces in one lot. `min_qty` is always 1 lot, because orders are sized in
-    /// lots. `price_step` and `price_step_value` are both the instrument's minimal price increment
+    /// `lot_size` is the units of the instrument in one lot. `min_qty` is one lot too: an order is a whole
+    /// number of lots. `price_step` and `price_step_value` are both the instrument's minimal price increment
     /// (for futures the step in money would need another call, which is not made).
     ///
     /// # Errors
@@ -1192,6 +1228,7 @@ impl InstrumentSource for MarketDataConnector {
     ///
     /// The same as [`get`](InstrumentSource::get).
     async fn trading_status(&self, id: &InstrumentId) -> Result<TradingStatus, Error> {
+        require_native(id)?;
         self.acquire("GetTradingStatus")?;
         let req = pb::GetTradingStatusRequest {
             instrument_id: Some(Self::id_ref(id)),

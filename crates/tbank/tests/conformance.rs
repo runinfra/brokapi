@@ -135,3 +135,173 @@ async fn own_orders_events_active_replace_and_executions() {
     .await;
     ud.shutdown(ShutdownMode::Immediate).await;
 }
+
+// ─── guarantees of the command path ───────────────────────────────────────────
+
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+
+async fn ud_timeout(
+    server: &MockServer,
+    request_timeout: Duration,
+) -> (UserDataConnector, mpsc::Receiver<Envelope>) {
+    let (tx, rx) = mpsc::channel(256);
+    let cfg = TbankConfig::for_mock(TOKEN, &server.endpoint)
+        .with_account(ACCOUNT_A)
+        .with_request_timeout(request_timeout);
+    let ud = UserDataConnector::start(UserDataConfig::new(cfg, "tbank-ud"), limiter(), tx)
+        .await
+        .expect("ud start");
+    (ud, rx)
+}
+
+#[tokio::test]
+async fn a_cid_is_placed_once() {
+    let server = MockServer::start(Arc::new(MockOptions::default())).await;
+    let (ud, _rx) = ud(&server).await;
+    conf::reconcile(&ud).await;
+    conf::duplicate_place(&ud, &sber(), Price::from(100)).await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn a_quantity_that_is_not_whole_lots_is_refused_not_rounded() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (ud, _rx) = ud(&server).await;
+    conf::reconcile(&ud).await;
+    conf::invalid_qty(&ud, &sber(), Price::from(100)).await;
+    // The four refusals sent nothing: one order reached the broker.
+    assert_eq!(opts.post_calls.load(Ordering::SeqCst), 1);
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn an_id_of_another_broker_is_a_config_error_and_nothing_is_sent() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (ud, _rx) = ud(&server).await;
+    conf::reconcile(&ud).await;
+    let foreign = InstrumentId::new(
+        InstrumentKey::new("SBER", "MISX"),
+        NativeId::SymbolMic {
+            symbol: "SBER".into(),
+            mic: "MISX".into(),
+        },
+    );
+    conf::foreign_instrument_id(&ud, &foreign, Price::from(100)).await;
+    assert_eq!(opts.post_calls.load(Ordering::SeqCst), 0);
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn an_unknown_instrument_is_not_found() {
+    let server = MockServer::start(Arc::new(MockOptions::default())).await;
+    let (md, _rx) = md(&server).await;
+    let nope = InstrumentId::new(
+        InstrumentKey::new("NOPE", "TQBR"),
+        NativeId::Uid("no-such-uid".into()),
+    );
+    conf::unknown_instrument(&md, &nope).await;
+    md.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn a_place_without_an_answer_is_unknown() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (ud, _rx) = ud_timeout(&server, Duration::from_millis(150)).await;
+    conf::reconcile(&ud).await;
+    opts.post_delay_ms.store(600, Ordering::SeqCst);
+    conf::place_without_answer_is_unknown(
+        &ud,
+        &sber(),
+        Price::from(100),
+        |call| {
+            brokapi_mocks::time::elapse_when(
+                "the order reached the mock",
+                || opts.post_calls.load(Ordering::SeqCst) == 1,
+                Duration::from_millis(200),
+                call,
+            )
+        },
+        || async {
+            brokapi_mocks::time::jump(Duration::from_millis(500)).await;
+        },
+    )
+    .await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn a_cut_of_the_order_streams_degrades_until_reconcile() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (ud, mut rx) = ud(&server).await;
+    conf::reconcile(&ud).await;
+    conf::stream_cut_degrades_until_reconcile(&ud, &mut rx, &sber(), Price::from(100), || async {
+        // Both streams are open (the subscribes waited for their confirmations): cut them.
+        server.cut_user_streams();
+        // The connector pauses before it reopens: move the clock until both are open again.
+        brokapi_mocks::time::jump_until("the streams are back", Duration::from_secs(1), || {
+            opts.user_stream_opens.load(Ordering::SeqCst) >= 4
+        })
+        .await;
+    })
+    .await;
+    // The streams were opened again after the cut: two at the start, two more after it.
+    assert_eq!(opts.user_stream_opens.load(Ordering::SeqCst), 4);
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn the_gate_is_checked_again_after_the_queue() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (ud, mut rx) = ud_timeout(&server, Duration::from_secs(120)).await;
+    conf::reconcile(&ud).await;
+    // The first order is held for 20 s of the test clock: longer than the jumps that reopen the streams.
+    opts.post_delay_ms.store(20_000, Ordering::SeqCst);
+    conf::gate_checked_after_the_queue(
+        &ud,
+        &mut rx,
+        &sber(),
+        Price::from(100),
+        || async {
+            brokapi_mocks::time::wait_until("the first order is at the mock", || {
+                opts.post_calls.load(Ordering::SeqCst) == 1
+            })
+            .await;
+        },
+        || async {
+            let before = opts.user_stream_opens.load(Ordering::SeqCst);
+            server.cut_user_streams();
+            brokapi_mocks::time::jump_until(
+                "the streams are back",
+                Duration::from_millis(600),
+                || opts.user_stream_opens.load(Ordering::SeqCst) > before,
+            )
+            .await;
+        },
+        || async {
+            opts.post_delay_ms.store(0, Ordering::SeqCst);
+            brokapi_mocks::time::jump(Duration::from_secs(21)).await;
+        },
+    )
+    .await;
+    // The queued place never went out.
+    assert_eq!(opts.post_calls.load(Ordering::SeqCst), 1);
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn the_order_book_is_resynced_after_a_cut() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (md, mut rx) = md(&server).await;
+    conf::order_book_resync(&md, &mut rx, &sber(), || {
+        opts.md_cut_after.store(1, Ordering::SeqCst);
+    })
+    .await;
+    md.shutdown(ShutdownMode::Immediate).await;
+}

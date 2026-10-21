@@ -37,6 +37,7 @@ pub const ENVELOPE_SCHEMA: u16 = 1;
 ///         Event::Portfolio(_) | Event::Positions(_) | Event::Balances(_) => { /* account */ }
 ///         Event::Resync { .. } => { /* drop the book of that instrument, wait for a snapshot */ }
 ///         Event::Overflow { .. } => { /* events were lost: read the state, call reconcile */ }
+///         Event::Reconnected { .. } => { /* the stream was cut and reopened: read the state, call reconcile */ }
 ///     }
 /// }
 /// ```
@@ -87,6 +88,26 @@ pub enum Event {
         /// Wall clock when the loss was found. The connector sets it to "now" at the overflow, so it
         /// is an upper bound for where the hole starts, not the time of the first lost event.
         lost_from: UnixNanos,
+    },
+    /// A stream of your orders or fills was cut and opened again: whatever happened to your orders in
+    /// the gap never reached you.
+    ///
+    /// Sent for the order state and the executions subscriptions (the user data streams that carry
+    /// money), after the stream is open again. Market data streams have [`Event::Resync`] instead, and
+    /// the portfolio stream needs nothing because every message of it is a whole state.
+    ///
+    /// The connector is now degraded, like after an [`Event::Overflow`]: it refuses trading commands
+    /// with [`Error::Degraded`](crate::Error::Degraded) until you read the state from the broker
+    /// ([`OrderExecutor::active_orders`](crate::OrderExecutor::active_orders),
+    /// [`OrderExecutor::order_state`](crate::OrderExecutor::order_state),
+    /// [`ExecutionSource::executions`](crate::ExecutionSource::executions)) and call
+    /// [`OrderExecutor::reconcile`](crate::OrderExecutor::reconcile).
+    Reconnected {
+        /// The subscription whose stream was cut.
+        sub: SubscriptionId,
+        /// Wall clock when the connector saw the cut. The hole starts at or before it, so read the
+        /// history from some time before this moment.
+        gap_from: UnixNanos,
     },
 }
 

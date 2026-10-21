@@ -23,7 +23,7 @@ use brokapi_core::{
 };
 use brokapi_runtime::{
     BrokerLimiter, CommandGate, Emitter, InstrumentLocks, OrderRuntime, PriceGrid,
-    ShutdownController, reconcile_ledger,
+    ShutdownController,
 };
 use brokapi_sansio::{
     BrokerCore, DesiredSubscription, OrderSignal, SubscriptionKind, SubscriptionSet,
@@ -92,6 +92,11 @@ struct UdShared {
 ///   [`Error::Unknown`] (no answer, a break, HTTP 5xx), the order may exist. Ask `order_state` or
 ///   run `reconcile`. Calling `place` again with the same cid returns [`Error::Rejected`] with code
 ///   `duplicate_place`, because a retry could create a second order.
+/// - **The gate is checked twice.** Once at the start, and again when the command's turn in the queue of its
+///   instrument comes: a gate that closed while it waited stops it, and nothing is sent.
+/// - **A cut of the order events socket is told.** [`Event::Reconnected`](brokapi_core::Event::Reconnected) on the
+///   order state and executions subscriptions, the gate closes until `reconcile`.
+/// - **Quantity is in pieces**, a whole number, never rounded: `0.4` or `2.5` is `Rejected` with code `invalid_qty`.
 /// - **Rate limit.** Quota is taken from the shared limiter before the request. A refusal is
 ///   [`Error::RateLimited`] and nothing is sent, so the same cid can be used again.
 ///
@@ -256,6 +261,8 @@ impl UserDataConnector {
         // execution-status and transaction-status are not opened (the protocol crate still has them,
         // reachable through `raw().connect_ws`).
         let ws_events = ws_client.connect_order_events(event_tx.clone());
+        // Only the order events session announces its connects (a lost connection there loses fills).
+        let ws_client = ws_client.with_options(cfg.portfolio_ws_options());
         let ws_portfolio = ws_client.connect_portfolio(event_tx);
 
         let cancel = CancellationToken::new();
@@ -497,6 +504,21 @@ fn list_start() -> chrono::DateTime<Utc> {
 /// The order list pages are read until `totalPages`, at most this many (100 per page).
 const MAX_LIST_PAGES: i32 = 10;
 
+/// The biggest page `POST /trades/search` gives (`size`, 100), and the most pages read in one call.
+const TRADES_PAGE_SIZE: u32 = 100;
+const MAX_TRADE_PAGES: u32 = 20;
+/// The trades list holds at most this many of the most recent trades (docs of `POST /trades/search`).
+const TRADES_LIST_CAP: u64 = 1000;
+
+fn too_long() -> Error {
+    Error::Rejected {
+        code: "range_too_long".into(),
+        message: format!(
+            "the trade list holds {TRADES_LIST_CAP} trades at most and the range reaches that: read it in shorter ranges"
+        ),
+    }
+}
+
 /// How a broker order id is named in `orderId` / `orderIdType`: our cid is a UUID (`"1"`), anything
 /// else is the exchange id such as `20261019-TQBR-79628540663` (`"2"`).
 fn order_ref(id: &str) -> (&'static str, String) {
@@ -519,7 +541,9 @@ impl UserDataConnector {
             self.acquire("SearchOrders").await?;
             let req = OrderSearchRequest {
                 start_date_time: list_start(),
-                end_date_time: Utc::now(),
+                // The end is a day ahead of the local clock: the clock of this machine may lag behind the
+                // broker, and an order of the last minutes must not fall out of the window.
+                end_date_time: Utc::now() + chrono::Duration::days(1),
                 side: None,
                 order_status: Some(statuses.to_vec()),
                 order_types: Some(types.to_vec()),
@@ -664,6 +688,11 @@ impl OrderExecutor for UserDataConnector {
             Side::Buy => BcsOrderSide::Buy,
             Side::Sell => BcsOrderSide::Sell,
         };
+        // Whole pieces, a multiple of the lot when the lot is known: refused as it is, never rounded.
+        whole_pieces(req.qty)?;
+        self.inner
+            .price_grid
+            .check_qty(&req.instrument.key, req.qty)?;
         let http_req = match req.order_type {
             CoreOrderType::Market => CreateOrderRequest::market(
                 req.cid,
@@ -693,6 +722,9 @@ impl OrderExecutor for UserDataConnector {
 
         // Waits for earlier commands on this instrument, released on every exit path.
         let _instrument = self.inner.instrument_locks.lock(&req.instrument).await;
+        // The gate may have closed while this command stood in the queue (degraded, shutdown): ask again
+        // before the cid is marked and anything is sent.
+        self.check_command().await?;
         self.inner.instrument_locks.bind(req.cid, &req.instrument);
 
         let now = brokapi_runtime::now();
@@ -732,6 +764,8 @@ impl OrderExecutor for UserDataConnector {
         self.acquire("CancelOrder").await?;
         // The instrument comes from the orders this process placed; an older order is not serialized.
         let _instrument = self.inner.instrument_locks.lock_cid(cid).await;
+        // The gate may have closed while this command stood in the queue.
+        self.check_command().await?;
         let req = CancelByIdRequest::by_client_order_id(cid, uuid::Uuid::new_v4());
         let resp = self
             .inner
@@ -756,6 +790,9 @@ impl OrderExecutor for UserDataConnector {
                 if let Some(i) = self.inner.instrument_locks.instrument_of(req.original_cid) {
                     self.inner.price_grid.check(&i.key, p)?;
                 }
+                if let Some(i) = self.inner.instrument_locks.instrument_of(req.original_cid) {
+                    self.inner.price_grid.check_qty(&i.key, q)?;
+                }
                 (whole_pieces(q)?, Some(p.decimal()))
             }
             (q, p) => {
@@ -778,6 +815,9 @@ impl OrderExecutor for UserDataConnector {
                 if let Some(p) = p {
                     self.inner.price_grid.check(&snap.instrument.key, p)?;
                 }
+                if let Some(q) = q {
+                    self.inner.price_grid.check_qty(&snap.instrument.key, q)?;
+                }
                 let qty = q.unwrap_or(snap.qty);
                 (
                     whole_pieces(qty)?,
@@ -787,6 +827,8 @@ impl OrderExecutor for UserDataConnector {
         };
         self.acquire("ReplaceOrder").await?;
         let _instrument = self.inner.instrument_locks.lock_cid(req.original_cid).await;
+        // The gate may have closed while this command stood in the queue.
+        self.check_command().await?;
         if let Some(i) = self.inner.instrument_locks.instrument_of(req.original_cid) {
             self.inner.instrument_locks.bind(req.cid, &i);
         }
@@ -864,10 +906,27 @@ impl OrderExecutor for UserDataConnector {
         self.register_ud_sub(UdSubKind::OrderState, opts).await
     }
 
+    /// Compares the ledger with the broker. The decision for each cid of the ledger is the answer of
+    /// `GET /orders` for that order, not the list of orders (the list is cut at the 1000 most recent
+    /// orders and is cut by a time window, so an order that is alive may be missing from it):
+    ///
+    /// - the order is alive (new, partly filled, being replaced, or being cancelled): `confirmed`, with
+    ///   the snapshot of that answer;
+    /// - the order is over (filled, cancelled, rejected), or the broker does not know the cid
+    ///   (`not_found`): `closed_offline`;
+    /// - the answer has no report, or any other error: the reconcile fails with that error and the gate
+    ///   stays as it was. Nothing is guessed.
+    ///
+    /// `foreign` are the active orders of the list that are not in the ledger. Success opens the gate
+    /// and ends `Degraded`.
     async fn reconcile(&self, ledger: &[ClientOrderId]) -> Result<ReconcileReport, Error> {
+        use brokapi_core::OrderState as S;
         self.acquire("Reconcile").await?;
-        let mut ledger_snaps = Vec::new();
-        let mut unknown = Vec::new();
+        let mut report = ReconcileReport {
+            confirmed: Vec::new(),
+            closed_offline: Vec::new(),
+            foreign: Vec::new(),
+        };
         for cid in ledger {
             self.acquire("GetOrder").await?;
             match self
@@ -876,27 +935,41 @@ impl OrderExecutor for UserDataConnector {
                 .get_order("1", &cid.hyphenated().to_string())
                 .await
             {
-                Ok(resp) => match map_state_list(Some(*cid), &resp, brokapi_runtime::now()) {
-                    Some(snap) => {
-                        // Teaches the cid of this broker order, so the list below names it.
-                        if let Some(id) = &snap.broker_id {
-                            self.learn(id.as_str(), *cid).await;
-                        }
-                        ledger_snaps.push(snap);
+                Ok(resp) => {
+                    let snap = map_state_list(Some(*cid), &resp, brokapi_runtime::now())
+                        .ok_or_else(|| {
+                            Error::Transport(brokapi_core::TransportError::Message(format!(
+                                "reconcile: the answer for order {cid} has no report"
+                            )))
+                        })?;
+                    // Teaches the cid of this broker order, so the list below names it.
+                    if let Some(id) = &snap.broker_id {
+                        self.learn(id.as_str(), *cid).await;
                     }
-                    None => unknown.push(*cid),
-                },
+                    match snap.state {
+                        S::Filled { .. } | S::Cancelled { .. } | S::Rejected { .. } => {
+                            report.closed_offline.push(*cid);
+                        }
+                        // Alive, or not clear (status 6 and the like): not closed, so the bot must not
+                        // place a second order in its stead.
+                        _ => report.confirmed.push(snap),
+                    }
+                }
                 // The broker never saw this cid (or forgot it): closed while we were offline.
-                Err(BcsApiError::NotFound { .. }) => unknown.push(*cid),
+                Err(BcsApiError::NotFound { .. }) => report.closed_offline.push(*cid),
                 // Anything else is not an answer about the order: reconcile is not done.
                 Err(e) => return Err(map_err(e)),
             }
         }
-        let broker = self.active_orders().await?;
-        let mut report = reconcile_ledger(&ledger_snaps, &broker);
-        report.closed_offline.extend(unknown);
-        // A reconcile that got this far leaves `Degraded`: the lists above are the repair of what
-        // the overflow may have cost.
+        let known: std::collections::HashSet<ClientOrderId> = ledger.iter().copied().collect();
+        report.foreign = self
+            .active_orders()
+            .await?
+            .into_iter()
+            .filter(|o| !o.cid.is_nil() && !known.contains(&o.cid))
+            .collect();
+        // A reconcile that got this far leaves `Degraded`: the answers above are the repair of what the
+        // lost events may have cost.
         self.inner.emitter.clear_degraded();
         let mut ctl = self.inner.shutdown.lock().await;
         ctl.gate_mut().clear_degraded();
@@ -907,25 +980,44 @@ impl OrderExecutor for UserDataConnector {
 
 #[async_trait]
 impl ExecutionSource for UserDataConnector {
+    /// Own trades in `range` (`POST /trades/search`), every page.
+    ///
+    /// The connector asks for the biggest page (`size = 100`) and reads page after page until
+    /// `totalPages`. Every page spends quota of `SearchTrades`. BCS lists at most the 1000 most recent
+    /// trades since 26.01.2026: when the answer says it holds that many (`totalRecords` of 1000 or more),
+    /// older trades of the range may be missing, and the answer is [`Error::Rejected`] with the code
+    /// `range_too_long` instead of a list that looks complete: read a shorter range.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::RateLimited`], [`Error::Transport`] or [`Error::Rejected`] (including `range_too_long`),
+    /// as for any read.
     async fn executions(&self, range: TimeRange) -> Result<Vec<Execution>, Error> {
-        self.acquire("SearchTrades").await?;
         let req = TradeSearchRequest {
             start_date_time: nanos_to_datetime(range.from).to_rfc3339(),
             end_date_time: nanos_to_datetime(range.to).to_rfc3339(),
             side: None,
             tickers: None,
         };
-        let resp = self
-            .inner
-            .http
-            .search_trades(&req, None, None)
-            .await
-            .map_err(map_err)?;
-        Ok(resp
-            .records
-            .iter()
-            .filter_map(|r| map_trade_record(r, brokapi_runtime::now()))
-            .collect())
+        let mut out = Vec::new();
+        for page in 0..MAX_TRADE_PAGES {
+            self.acquire("SearchTrades").await?;
+            let resp = self
+                .inner
+                .http
+                .search_trades(&req, Some(TRADES_PAGE_SIZE), Some(page))
+                .await
+                .map_err(map_err)?;
+            if resp.total_records >= TRADES_LIST_CAP {
+                return Err(too_long());
+            }
+            let now = brokapi_runtime::now();
+            out.extend(resp.records.iter().filter_map(|r| map_trade_record(r, now)));
+            if u64::from(page) + 1 >= resp.total_pages {
+                return Ok(out);
+            }
+        }
+        Err(too_long())
     }
 
     /// Fills pushed by the `orders/events/ws` channel: messages with `lastQuantity > 0`, each
@@ -978,6 +1070,9 @@ impl StopOrderExecutor for UserDataConnector {
         let wire = map_stop::build(&req)?;
         self.inner
             .price_grid
+            .check_qty(&req.instrument.key, req.qty)?;
+        self.inner
+            .price_grid
             .check(&req.instrument.key, req.stop_price)?;
         if let Some(p) = req.limit_price {
             self.inner.price_grid.check(&req.instrument.key, p)?;
@@ -985,6 +1080,8 @@ impl StopOrderExecutor for UserDataConnector {
         // Quota before the cid is marked: a `RateLimited` sent nothing, the cid stays usable.
         self.acquire("PlaceStopOrder").await?;
         let _instrument = self.inner.instrument_locks.lock(&req.instrument).await;
+        // The gate may have closed while this command stood in the queue.
+        self.check_command().await?;
         self.inner.instrument_locks.bind(req.cid, &req.instrument);
         let now = brokapi_runtime::now();
         {
@@ -1033,6 +1130,8 @@ impl StopOrderExecutor for UserDataConnector {
             }
         };
         let _instrument = self.inner.instrument_locks.lock_cid(known_cid).await;
+        // The gate may have closed while this command stood in the queue.
+        self.check_command().await?;
         let req = CancelByIdRequest {
             order_id_type: Some(order_id_type.into()),
             order_id,
