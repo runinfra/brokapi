@@ -1,37 +1,37 @@
-// Draws the ```mermaid blocks in the colors of the book theme (RunInfra: dark "navy" by default, "light" with a
-// darker accent). The library itself, mermaid.min.js, lies next to this file: no request to other sites.
+// Draws the ```mermaid blocks in the colors of the book theme (brokapi: light paper by default, dark "coal" as a
+// variant, the same orange accent). The library itself, mermaid.min.js, lies next to this file: no request to other sites.
 // `mdbook-mermaid install docs` rewrites this file with its stock version: after running it, restore this one
 // from git (git checkout docs/mermaid-init.js).
 (() => {
     const isDark = !document.documentElement.classList.contains('light');
-    const dark = {
-        background: '#0e131c', primaryColor: '#12202c', primaryTextColor: '#ffffff', primaryBorderColor: '#32d2ff',
-        secondaryColor: '#101a27', tertiaryColor: '#0e131c', lineColor: '#7d9ab0', textColor: '#dfe4ee',
-        mainBkg: '#12202c', nodeBorder: '#32d2ff', clusterBkg: '#0b121b', clusterBorder: '#2b3a4b',
-        edgeLabelBackground: '#0e131c', titleColor: '#ffffff', noteBkgColor: '#16222f', noteTextColor: '#dfe4ee',
-        nodeTextColor: '#ffffff', stateLabelColor: '#ffffff', noteBorderColor: '#32d2ff', actorBkg: '#12202c', actorBorder: '#32d2ff', actorTextColor: '#ffffff',
-        actorLineColor: '#4a5d70', signalColor: '#dfe4ee', signalTextColor: '#dfe4ee', labelBoxBkgColor: '#12202c',
-        labelBoxBorderColor: '#32d2ff', labelTextColor: '#ffffff', loopTextColor: '#dfe4ee',
-        activationBkgColor: '#1d3a4c', activationBorderColor: '#32d2ff', sequenceNumberColor: '#080a0f',
-        stateBkg: '#12202c', altBackground: '#0b121b', compositeBackground: '#0b121b', labelColor: '#ffffff',
-        transitionColor: '#7d9ab0', transitionLabelColor: '#dfe4ee', specialStateColor: '#32d2ff',
-    };
     const light = {
-        background: '#f3f6fa', primaryColor: '#e3f4fa', primaryTextColor: '#080a0f', primaryBorderColor: '#0076a3',
-        secondaryColor: '#eef3f8', tertiaryColor: '#f3f6fa', lineColor: '#4d5a6e', textColor: '#1c2433',
-        mainBkg: '#e3f4fa', nodeBorder: '#0076a3', clusterBkg: '#f7f9fc', clusterBorder: '#b5bdca',
-        edgeLabelBackground: '#f3f6fa', titleColor: '#080a0f', noteBkgColor: '#e3f4fa', noteTextColor: '#1c2433',
-        nodeTextColor: '#080a0f', stateLabelColor: '#080a0f', noteBorderColor: '#0076a3', actorBkg: '#e3f4fa', actorBorder: '#0076a3', actorTextColor: '#080a0f',
-        actorLineColor: '#98a2b3', signalColor: '#1c2433', signalTextColor: '#1c2433', labelBoxBkgColor: '#e3f4fa',
-        labelBoxBorderColor: '#0076a3', labelTextColor: '#080a0f', loopTextColor: '#1c2433',
-        activationBkgColor: '#bfe9f7', activationBorderColor: '#0076a3', sequenceNumberColor: '#ffffff',
-        stateBkg: '#e3f4fa', altBackground: '#f7f9fc', compositeBackground: '#f7f9fc', labelColor: '#080a0f',
-        transitionColor: '#4d5a6e', transitionLabelColor: '#1c2433', specialStateColor: '#0076a3',
+        background: '#fbfaf7', primaryColor: '#ffffff', primaryTextColor: '#121212', primaryBorderColor: '#121212',
+        secondaryColor: '#efede6', tertiaryColor: '#fbfaf7', lineColor: '#5c5a55', textColor: '#121212',
+        mainBkg: '#ffffff', nodeBorder: '#121212', clusterBkg: '#f0eee8', clusterBorder: '#c8c5ba',
+        edgeLabelBackground: '#fbfaf7', titleColor: '#121212', noteBkgColor: '#fff1ea', noteTextColor: '#121212',
+        nodeTextColor: '#121212', stateLabelColor: '#121212', noteBorderColor: '#ff5b1f', actorBkg: '#ffffff', actorBorder: '#121212', actorTextColor: '#121212',
+        actorLineColor: '#a19e94', signalColor: '#121212', signalTextColor: '#121212', labelBoxBkgColor: '#ffffff',
+        labelBoxBorderColor: '#121212', labelTextColor: '#121212', loopTextColor: '#121212',
+        activationBkgColor: '#ffd2bf', activationBorderColor: '#ff5b1f', sequenceNumberColor: '#ffffff',
+        stateBkg: '#ffffff', altBackground: '#f0eee8', compositeBackground: '#f0eee8', labelColor: '#121212',
+        transitionColor: '#5c5a55', transitionLabelColor: '#121212', specialStateColor: '#ff5b1f',
+    };
+    const dark = {
+        background: '#1a1a17', primaryColor: '#26251f', primaryTextColor: '#f5f4ef', primaryBorderColor: '#8f8d86',
+        secondaryColor: '#22211d', tertiaryColor: '#1a1a17', lineColor: '#9a978e', textColor: '#e7e5de',
+        mainBkg: '#26251f', nodeBorder: '#8f8d86', clusterBkg: '#151513', clusterBorder: '#3a3935',
+        edgeLabelBackground: '#1a1a17', titleColor: '#f5f4ef', noteBkgColor: '#33211a', noteTextColor: '#f5f4ef',
+        nodeTextColor: '#f5f4ef', stateLabelColor: '#f5f4ef', noteBorderColor: '#ff5b1f', actorBkg: '#26251f', actorBorder: '#8f8d86', actorTextColor: '#f5f4ef',
+        actorLineColor: '#5c5a55', signalColor: '#e7e5de', signalTextColor: '#e7e5de', labelBoxBkgColor: '#26251f',
+        labelBoxBorderColor: '#8f8d86', labelTextColor: '#f5f4ef', loopTextColor: '#e7e5de',
+        activationBkgColor: '#6b2a10', activationBorderColor: '#ff5b1f', sequenceNumberColor: '#121212',
+        stateBkg: '#26251f', altBackground: '#151513', compositeBackground: '#151513', labelColor: '#f5f4ef',
+        transitionColor: '#9a978e', transitionLabelColor: '#e7e5de', specialStateColor: '#ff5b1f',
     };
     mermaid.initialize({
         startOnLoad: false,
         theme: 'base',
-        themeVariables: Object.assign({ fontFamily: "'Geist', system-ui, sans-serif", fontSize: '14px' }, isDark ? dark : light),
+        themeVariables: Object.assign({ fontFamily: "'Golos Text', system-ui, sans-serif", fontSize: '14px' }, isDark ? dark : light),
     });
 
     // Wide diagrams: squeezed to the page they become unreadable on a phone (text around 7 px). If the natural width
@@ -57,7 +57,7 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', draw); else draw();
 
     // A change of the theme draws the diagrams again: the simplest way is to reload the page.
-    for (const id of ['navy', 'light']) {
+    for (const id of ['coal', 'light']) {
         const button = document.getElementById('mdbook-theme-' + id);
         if (!button) continue;
         button.addEventListener('click', () => {

@@ -1,0 +1,116 @@
+/* API reference (rustdoc) in the brokapi style: paper #f5f4ef, ink #121212, accent #ff5b1f, Golos Text and JetBrains Mono.
+   Connected by docs/build.sh: --default-theme=light and --extend-css. The fonts are copied by build.sh into api/fonts/
+   (the book's own copies have hashed names). The font paths are relative to the css file (rustdoc writes it as api/theme.css, so fonts/ is next to it). */
+@font-face { font-family: 'Golos Text'; font-weight: 400 900; font-display: swap;
+  src: url('fonts/golos-text-cyrillic-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'Golos Text'; font-weight: 400 900; font-display: swap;
+  src: url('fonts/golos-text-latin-wght-normal.woff2') format('woff2-variations'); }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 100 800; font-display: swap;
+  src: url('fonts/jetbrains-mono-cyrillic-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 100 800; font-display: swap;
+  src: url('fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2-variations'); }
+:root {
+  --font-family: 'Golos Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-family-code: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+}
+body, .docblock, .docblock-short, .item-table, .sidebar, .search-results, h1, h2, h3, h4 {
+  font-family: var(--font-family);
+}
+code, pre, .code-header, .src-line-numbers, .rust { font-family: var(--font-family-code); }
+html, body, code, pre { font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'calt' 0; }
+
+/* Code blocks: dark with light text in both themes */
+:root[data-theme="light"], :root[data-theme="dark"] {
+  --code-block-background-color: #121212;
+  --code-highlight-kw-color: #ff8a5c;
+  --code-highlight-kw-2-color: #ff8a5c;
+  --code-highlight-lifetime-color: #d9c28a;
+  --code-highlight-prelude-color: #ff8a5c;
+  --code-highlight-prelude-val-color: #9fd8a8;
+  --code-highlight-number-color: #9fd8a8;
+  --code-highlight-string-color: #9fd8a8;
+  --code-highlight-literal-color: #9fd8a8;
+  --code-highlight-attribute-color: #d9c28a;
+  --code-highlight-self-color: #ff8a5c;
+  --code-highlight-macro-color: #d9c28a;
+  --code-highlight-question-mark-color: #ff8a5c;
+  --code-highlight-comment-color: #8f8d86;
+  --code-highlight-doc-comment-color: #8f8d86;
+}
+pre, .docblock pre, .rustdoc .example-wrap pre { color: #ecebe6; border-radius: 12px; }
+.docblock :not(pre) > code, .item-table :not(pre) > code, .docblock-short code {
+  background: var(--inline-code-background, #e9e7df); color: var(--inline-code-color, #121212); border-radius: 4px;
+}
+.docblock a:not(.src):not(.scrape-help):not(.tooltip) { text-decoration: underline; text-decoration-color: #ff5b1f; text-underline-offset: 0.18em; }
+
+:root[data-theme="light"] {
+  --main-background-color: #f5f4ef;
+  --main-color: #121212;
+  --inline-code-background: #e9e7df;
+  --inline-code-color: #121212;
+  --settings-input-color: #ff5b1f;
+  --settings-input-border-color: #bdbab0;
+  --settings-button-color: #121212;
+  --settings-button-border-focus: #ff5b1f;
+  --sidebar-background-color: #efede6;
+  --sidebar-background-color-hover: #e3e1d8;
+  --scrollbar-track-background-color: #efede6;
+  --scrollbar-thumb-background-color: #c8c5ba;
+  --scrollbar-color: #c8c5ba #efede6;
+  --headings-border-bottom-color: #dcd9d0;
+  --border-color: #dcd9d0;
+  --button-background-color: #fbfaf7;
+  --right-side-color: #5c5a55;
+  --link-color: #121212;
+  --sidebar-link-color: #3a3935;
+  --sidebar-current-link-background-color: #e3e1d8;
+  --type-link-color: #121212;
+  --search-color: #121212;
+  --search-input-focused-border-color: #ff5b1f;
+  --search-result-link-focus-background-color: #e3e1d8;
+  --target-background-color: #ffe6db;
+  --target-border-color: #ff5b1f;
+  --toggles-color: #5c5a55;
+  --table-alt-row-background-color: #efede6;
+  --src-line-numbers-span-color: #8f8d86;
+}
+:root[data-theme="dark"] {
+  --main-background-color: #151513;
+  --main-color: #e7e5de;
+  --inline-code-background: #26251f;
+  --inline-code-color: #ecebe6;
+  --code-block-background-color: #0c0c0b;
+  --settings-input-color: #ff5b1f;
+  --settings-input-border-color: #4a4944;
+  --settings-button-color: #e7e5de;
+  --settings-button-border-focus: #ff5b1f;
+  --sidebar-background-color: #1a1a17;
+  --sidebar-background-color-hover: #26251f;
+  --scrollbar-track-background-color: #1a1a17;
+  --scrollbar-thumb-background-color: #3a3935;
+  --scrollbar-color: #3a3935 #1a1a17;
+  --headings-border-bottom-color: #2f2e2a;
+  --border-color: #2f2e2a;
+  --button-background-color: #1a1a17;
+  --right-side-color: #9a978e;
+  --link-color: #e7e5de;
+  --sidebar-link-color: #b6b3a9;
+  --sidebar-current-link-background-color: #26251f;
+  --type-link-color: #e7e5de;
+  --search-color: #f5f4ef;
+  --search-input-focused-border-color: #ff5b1f;
+  --search-result-link-focus-background-color: #26251f;
+  --target-background-color: #33211a;
+  --target-border-color: #ff5b1f;
+  --toggles-color: #9a978e;
+  --table-alt-row-background-color: #191917;
+  --src-line-numbers-span-color: #8f8d86;
+}
+:root[data-theme="light"] a.src, :root[data-theme="light"] .main-heading h1 { color: #121212; }
+:root[data-theme="dark"] a.src, :root[data-theme="dark"] .main-heading h1 { color: #f5f4ef; }
+:root[data-theme="dark"] .logo-container img { filter: none; }
+/* Links inside a dark code block (types in the declaration, links in examples): light, or they vanish on the dark block */
+pre a, pre a:visited, pre a[class] { color: #f4b79a !important; text-decoration: none; }
+pre a:hover { color: #ffffff !important; text-decoration: underline; }

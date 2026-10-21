@@ -39,13 +39,20 @@ tools/check            # проверка перед пушем: fmt, clippy, т
 - **Схемы Mermaid** рисуются в браузере из локальных файлов `docs/mermaid.min.js` и `docs/mermaid-init.js`, сеть
   не нужна. Библиотеку ставит `mdbook-mermaid install docs` (бинарь `mdbook-mermaid` лежит рядом с `mdbook`, препроцессор
   подключен в `book.toml`). Обновить библиотеку схем - запустить ту же команду заново, вернуть свой `mermaid-init.js` и закоммитить файлы.
-- **Вид книги - стиль RunInfra.** Файлы лежат в `docs/theme/`: `index.hbs` (взят из `mdbook init --theme` версии 0.5.4,
-  в шапку добавлены знак, слово RUNINFRA и название библиотеки), `runinfra.css` (цвета и вид: фон `#080a0f`, акцент
-  `#32d2ff`, у светлой темы акцент темнее для контраста), `favicon.svg`, шрифты в `theme/fonts/`. Шрифты только со
-  свободной лицензией: Geist, Geist Mono и Orbitron (OFL, тексты лицензий рядом), страница не делает внешних запросов.
-  Название библиотеки в шапке берется из `title` в `book.toml`, больше нигде оно не записано. По умолчанию темная
-  тема, светлая включается в меню. Цвета схем - в `docs/mermaid-init.js`: он свой, поэтому после
-  `mdbook-mermaid install docs` его нужно вернуть (`git checkout docs/mermaid-init.js`). Справочник API (rustdoc)
-  открывается в темной теме с тем же акцентом: `--default-theme` и `--extend-css docs/rustdoc-runinfra.css` в `docs/build.sh`.
+- **Вид книги - стиль brokapi** (как сайт brokapi.ru). Файлы лежат в `docs/theme/`: `index.hbs` (взят из `mdbook init --theme`
+  версии 0.5.4, в шапку добавлены знак и слово brokapi со ссылкой на https://brokapi.ru/, ссылка «brokapi.ru» справа,
+  полоса стадии под шапкой, строка «brokapi by RunInfra» внизу каждой страницы), `brokapi.css` (цвета и вид: светлая
+  бумага `#f5f4ef`, текст `#121212`, акцент `#ff5b1f`, код темными блоками со светлым текстом, темная тема `coal` в
+  тех же тонах), `favicon.svg`, шрифты в `theme/fonts/`. Шрифты только со свободной лицензией: Golos Text и JetBrains
+  Mono (OFL, тексты лицензий рядом), страница не делает внешних запросов. Текст полосы стадии записан только в
+  `index.hbs`, меняется там при смене стадии. По умолчанию светлая тема, темная включается в меню. Цвета схем - в
+  `docs/mermaid-init.js`: он свой, поэтому после `mdbook-mermaid install docs` его нужно вернуть
+  (`git checkout docs/mermaid-init.js`). Справочник API (rustdoc) в тех же цветах и шрифтах, по умолчанию светлый:
+  `--default-theme=light` и `--extend-css docs/rustdoc-brokapi.css` в `docs/build.sh`.
+- **Адрес: https://brokapi.ru/docs/.** Папка `docs/book` - это корень `/docs/`: книга лежит в ней, справочник в `api/`
+  (`/docs/api/`), файлы для агентов рядом (`/docs/llms.txt`, `/docs/llms-full.txt`, `страница.md`). Все ссылки внутри
+  относительные, в `book.toml` стоит `site-url = "/docs/"` (от него строятся `404.html` и поиск), шрифты справочника
+  берутся по пути относительно `api/theme.css`. Ссылки для агентов в `llms.txt` строит `docs/llms.py` от адреса
+  `https://brokapi.ru/docs` (переменная `BROKAPI_DOCS_URL` меняет его).
 - Примеры кода на Rust в книге собирались против текущего кода. После изменения публичного API их нужно проверить
   заново.

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds the whole documentation site into docs/book:
+# Builds the whole documentation site into docs/book. The site serves it at https://brokapi.ru/docs/ (the folder is the
+# root of /docs/, the reference is /docs/api/); all links inside are relative, book.toml has site-url = "/docs/".
 #   - the book (mdBook) at the root,
 #   - the API reference (rustdoc, cargo doc --no-deps) in docs/book/api/<crate>/index.html,
 #   - for AI agents: llms.txt (index), llms-full.txt (the whole book as one markdown file) and the markdown of every
@@ -33,8 +34,8 @@ echo "==> API reference"
 # Start from an empty doc folder: pages of crates built earlier (or excluded now) must not leak into the site.
 rm -rf "$TARGET/doc"
 # brokapi-mocks is for tests and examples: not on the site. The root crate brokapi needs its broker features.
-# The reference opens in the dark theme with the RunInfra accent (docs/rustdoc-runinfra.css).
-RUSTDOCFLAGS="${RUSTDOCFLAGS:--D warnings --default-theme=dark --extend-css $(pwd)/docs/rustdoc-runinfra.css}" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam \
+# The reference opens in the light theme in the brokapi colors (docs/rustdoc-brokapi.css).
+RUSTDOCFLAGS="${RUSTDOCFLAGS:--D warnings --default-theme=light --extend-css $(pwd)/docs/rustdoc-brokapi.css}" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam \
     --exclude brokapi-mocks
 rm -rf "$NEW/api"
 mkdir -p "$NEW/api"
@@ -42,9 +43,9 @@ cp -r "$TARGET/doc/." "$NEW/api/"
 # rustdoc preloads its own fonts (Fira Sans, Source Serif, Source Code Pro), but the reference sets its own:
 # take the preload out, so the browser does not download fonts nobody uses.
 python3 docs/rustdoc_nofonts.py "$NEW/api"
-# Fonts for the reference under stable names (docs/rustdoc-runinfra.css points at /api/fonts/).
+# Fonts for the reference under stable names (docs/rustdoc-brokapi.css points at them as fonts/NAME, relative to api/theme.css).
 mkdir -p "$NEW/api/fonts"
-cp docs/theme/fonts/*.woff2 "$NEW/api/fonts/"
+cp docs/theme/fonts/*.woff2 docs/theme/fonts/*-LICENSE.txt "$NEW/api/fonts/"
 
 echo "==> API reference as one markdown file for agents"
 python3 docs/apidigest.py "$NEW"

@@ -27,7 +27,7 @@
 //! broker (`brokapi-mocks`). The imitation is written from the broker documentation. It does not prove how
 //! the live broker behaves.
 //!
-//! The book with the full guide: <https://brokapi.runinfra.ru>
+//! The book with the full guide: <https://brokapi.ru/docs/>
 //!
 //! # Examples
 //!

@@ -3,7 +3,7 @@
 //! This is the core crate of the workspace. It has no network code and does not depend on any
 //! broker. A broker connector (`brokapi-bcs`, `brokapi-tbank`, `brokapi-finam`) implements the traits
 //! of this crate, and your program is written against them, so the same code runs on every broker.
-//! Documentation of the whole library, with guides: <https://brokapi.runinfra.ru>.
+//! Documentation of the whole library, with guides: <https://brokapi.ru/docs/>.
 //!
 //! # What is here
 //!

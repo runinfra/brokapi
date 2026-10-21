@@ -20,7 +20,7 @@ edition = "2024"
 version = "0.1.0-alpha.1"
 license = "MIT OR Apache-2.0"
 authors = ["The brokapi Authors"]
-homepage = "https://brokapi.runinfra.ru"
+homepage = "https://brokapi.ru/docs/"
 
 [workspace.dependencies]
 anyhow = "1"

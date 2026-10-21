@@ -4,10 +4,10 @@
 лимиты запросов. Сеть и деньги в тестах не используются: все примеры идут против имитаций брокеров.
 
 **Стадия: закрытая альфа.** Проверено только на имитациях, вживую нет, интерфейс до беты может меняться.
-Что проверено и что нет: [Готовность](https://brokapi.runinfra.ru/readiness.html).
+Что проверено и что нет: [Готовность](https://brokapi.ru/docs/readiness.html).
 
-Документация: <https://brokapi.runinfra.ru>. Справочник API собирается из кода (rustdoc) и лежит рядом с книгой.
-Для ИИ-агентов: [llms.txt](https://brokapi.runinfra.ru/llms.txt) и [llms-full.txt](https://brokapi.runinfra.ru/llms-full.txt), страницы книги в markdown рядом с HTML.
+Документация: <https://brokapi.ru/docs/>. Справочник API собирается из кода (rustdoc) и лежит рядом с книгой.
+Для ИИ-агентов: [llms.txt](https://brokapi.ru/docs/llms.txt) и [llms-full.txt](https://brokapi.ru/docs/llms-full.txt), страницы книги в markdown рядом с HTML.
 
 ## Подключение
 
@@ -19,7 +19,7 @@ brokapi = { version = "0.1.0-alpha.1", features = ["bcs"] }   # или "tbank", 
 ```
 
 В crates.io крейт пока не опубликован. Быстрый старт с пошаговым примером для БКС и Т-Банка:
-[книга](https://brokapi.runinfra.ru/quickstart.html).
+[книга](https://brokapi.ru/docs/quickstart.html).
 
 ## Состав
 

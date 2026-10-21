@@ -1,0 +1,255 @@
+/* brokapi documentation in the brokapi style (same colors, fonts and mark as the site brokapi.ru).
+   Light paper by default ("light"), the dark variant is "coal": dark paper, the same orange.
+   Code blocks are dark with light text in both themes.
+   mdBook gives the theme its colors through variables, so only the variables and a few places are set here. */
+
+:root {
+  --mono-font: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  --bk-sans: 'Golos Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --bk-accent: #ff5b1f;
+  --bk-code-bg: #121212;
+  --bk-code-ink: #ecebe6;
+  --bk-code-muted: #8f8d86;
+  --content-max-width: 820px;
+  --code-font-size: 0.86em;
+}
+
+.light {
+  --bg: #f5f4ef;
+  --fg: #121212;
+  --bk-heading: #121212;
+  --bk-muted: #5c5a55;
+  --bk-line: #dcd9d0;
+  --bk-soft: #e9e7df;
+  --bk-box: #fbfaf7;
+  --bk-hover: #ebe9e1;
+  --bk-accent-text: #c23c00;
+
+  --sidebar-bg: #efede6;
+  --sidebar-fg: #3a3935;
+  --sidebar-non-existant: #a19e94;
+  --sidebar-active: #121212;
+  --sidebar-spacer: #dcd9d0;
+  --sidebar-header-border-color: #ff5b1f;
+
+  --scrollbar: #c8c5ba;
+  --icons: #5c5a55;
+  --icons-hover: #121212;
+  --links: #121212;
+  --inline-code-color: #121212;
+
+  --theme-popup-bg: #fbfaf7;
+  --theme-popup-border: #dcd9d0;
+  --theme-hover: #ebe9e1;
+
+  --quote-bg: #ebe9e1;
+  --quote-border: #ff5b1f;
+  --warning-border: #c23c00;
+
+  --table-border-color: #dcd9d0;
+  --table-header-bg: #ebe9e1;
+  --table-alternate-bg: #f0eee8;
+
+  --searchbar-border-color: #bdbab0;
+  --searchbar-bg: #fbfaf7;
+  --searchbar-fg: #121212;
+  --searchbar-shadow-color: rgba(255, 91, 31, 0.35);
+  --searchresults-header-fg: #5c5a55;
+  --searchresults-border-color: #dcd9d0;
+  --searchresults-li-bg: #efede6;
+  --search-mark-bg: #ffd2bf;
+
+  --color-scheme: light;
+  --overlay-bg: rgba(18, 18, 18, 0.25);
+  --footnote-highlight: #ffd2bf;
+}
+
+.coal {
+  --bg: #151513;
+  --fg: #e7e5de;
+  --bk-heading: #f5f4ef;
+  --bk-muted: #9a978e;
+  --bk-line: #2f2e2a;
+  --bk-soft: #26251f;
+  --bk-box: #1a1a17;
+  --bk-hover: #22211d;
+  --bk-accent-text: #ff7a45;
+  --bk-code-bg: #0c0c0b;
+
+  --sidebar-bg: #1a1a17;
+  --sidebar-fg: #b6b3a9;
+  --sidebar-non-existant: #6e6b63;
+  --sidebar-active: #f5f4ef;
+  --sidebar-spacer: #2f2e2a;
+  --sidebar-header-border-color: #ff5b1f;
+
+  --scrollbar: #3a3935;
+  --icons: #9a978e;
+  --icons-hover: #f5f4ef;
+  --links: #e7e5de;
+  --inline-code-color: #ecebe6;
+
+  --theme-popup-bg: #1a1a17;
+  --theme-popup-border: #3a3935;
+  --theme-hover: #26251f;
+
+  --quote-bg: #1c1c19;
+  --quote-border: #ff5b1f;
+  --warning-border: #ff7a45;
+
+  --table-border-color: #2f2e2a;
+  --table-header-bg: #22211d;
+  --table-alternate-bg: #191917;
+
+  --searchbar-border-color: #4a4944;
+  --searchbar-bg: #1a1a17;
+  --searchbar-fg: #f5f4ef;
+  --searchbar-shadow-color: rgba(255, 91, 31, 0.45);
+  --searchresults-header-fg: #9a978e;
+  --searchresults-border-color: #2f2e2a;
+  --searchresults-li-bg: #1a1a17;
+  --search-mark-bg: #6b2a10;
+
+  --color-scheme: dark;
+  --overlay-bg: rgba(0, 0, 0, 0.5);
+  --footnote-highlight: #6b2a10;
+}
+
+/* Text */
+html, body { font-family: var(--bk-sans); }
+body { background: var(--bg); color: var(--fg); -webkit-font-smoothing: antialiased; }
+.content { font-size: 1.6rem; line-height: 1.65; }
+/* No ligatures anywhere: "->" must show as typed. */
+html, body, code, pre, .hljs { font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'calt' 0; }
+h1, h2, h3, h4, h5, h6 { font-family: var(--bk-sans); color: var(--bk-heading); letter-spacing: -0.015em; }
+h1, h2, h3, h4 { line-height: 1.25; }
+h1 { font-weight: 700; letter-spacing: -0.03em; font-size: 3.4rem; margin-top: 0.4em; }
+h2 { font-weight: 650; margin-top: 2.2em; padding-bottom: 0.3em; border-bottom: 1px solid var(--bk-line); }
+h3 { font-weight: 600; }
+a:link, a:visited, .content a:link, .content a:visited {
+  color: var(--links); text-decoration: underline; text-decoration-color: var(--bk-accent);
+  text-decoration-thickness: 1.5px; text-underline-offset: 0.2em;
+}
+.content a:hover { color: var(--bk-accent-text); }
+.header-link, a.header, .content a.header { color: inherit !important; text-decoration: none !important; }
+strong { color: var(--bk-heading); font-weight: 650; }
+
+/* Menu bar and brand */
+.menu-bar { background: var(--bg); border-bottom: 1px solid var(--bk-line); }
+.menu-bar .menu-title { display: none; }
+.brand { display: flex; align-items: center; gap: 1.2rem; min-width: 0; flex: 1 1 auto; justify-content: center; }
+.brand a, .brand a:link, .brand a:visited { text-decoration: none !important; }
+.brand-home { display: inline-flex; align-items: center; gap: 0.9rem; min-height: 44px; min-width: 44px; color: var(--bk-heading) !important; }
+.brand-mark { width: 3rem; height: 3rem; flex: 0 0 auto; }
+.brand-mark path { fill: none; stroke: var(--bk-heading); stroke-width: 2.6; stroke-linecap: round; }
+.brand-mark circle { fill: var(--bk-accent); }
+.brand-word { font-family: var(--mono-font); font-weight: 600; font-size: 2.1rem; letter-spacing: -0.02em; color: var(--bk-heading); }
+.brand-home:hover .brand-word { color: var(--bk-accent-text); }
+.brand-docs {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 0.9rem;
+  font-family: var(--mono-font); font-size: 1.3rem; color: var(--bk-muted) !important;
+  border: 1px solid var(--bk-line); border-radius: 999px; min-height: 28px; line-height: 1;
+}
+.brand-docs:hover { color: var(--bk-heading) !important; border-color: var(--bk-heading); }
+.right-buttons { align-items: center; }
+.right-buttons a.site-link, .right-buttons a.site-link:visited {
+  font-family: var(--mono-font); font-size: 1.3rem; color: var(--bk-muted); text-decoration: none;
+  padding: 0 1rem; display: inline-flex; align-items: center; min-height: 44px;
+}
+.right-buttons a.site-link:hover { color: var(--bk-heading); }
+@media (max-width: 560px) {
+  .brand-word { font-size: 1.8rem; }
+  .brand-mark { width: 2.6rem; height: 2.6rem; }
+  .brand { gap: 0.6rem; }
+  .brand-docs { padding: 0 0.6rem; }
+  .right-buttons .icon-button { display: none; }
+  .right-buttons a.site-link { padding: 0 0.4rem; font-size: 1.2rem; }
+}
+@media (max-width: 400px) { .brand-docs { display: none; } }
+
+/* Sidebar */
+.sidebar { font-size: 1.45rem; border-right: 1px solid var(--bk-line); }
+.sidebar .part-title {
+  font-family: var(--mono-font); font-size: 1.15rem; text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--bk-muted); margin-top: 1.4em;
+}
+.chapter li.chapter-item { line-height: 1.5; }
+.chapter li a:hover { color: var(--bk-heading); }
+.chapter li a.active { font-weight: 600; text-decoration: underline; text-decoration-color: var(--bk-accent);
+  text-decoration-thickness: 2px; text-underline-offset: 0.25em; }
+
+/* Code: dark block with light text in both themes */
+code, pre, .hljs, pre > .buttons { font-family: var(--mono-font); }
+:not(pre) > code {
+  background: var(--bk-soft); border-radius: 4px; padding: 0.05em 0.35em; color: var(--inline-code-color); font-size: 0.88em;
+}
+pre { border: 0; border-radius: 14px; background: var(--bk-code-bg); }
+pre > code, pre > .hljs { background: transparent; padding: 1.4rem 1.6rem; font-size: 1.35rem; line-height: 1.6; }
+.content pre code, .content pre .hljs { color: var(--bk-code-ink); }
+.content pre .hljs-comment, .content pre .hljs-quote { color: var(--bk-code-muted); font-style: normal; }
+.content pre .hljs-keyword, .content pre .hljs-selector-tag, .content pre .hljs-literal, .content pre .hljs-built_in { color: #ff8a5c; }
+.content pre .hljs-string, .content pre .hljs-attr, .content pre .hljs-template-variable, .content pre .hljs-number,
+.content pre .hljs-symbol, .content pre .hljs-bullet { color: #9fd8a8; }
+.content pre .hljs-title, .content pre .hljs-section, .content pre .hljs-type, .content pre .hljs-class .hljs-title { color: #ecebe6; font-weight: 600; }
+.content pre .hljs-meta, .content pre .hljs-attribute, .content pre .hljs-variable { color: #d9c28a; }
+/* Copy and other buttons in a dark block */
+pre > .buttons button, pre > .buttons .clip-button { color: var(--bk-code-muted); }
+pre > .buttons button:hover { color: var(--bk-code-ink); }
+:root { --copy-button-filter: invert(60%); --copy-button-filter-hover: invert(95%); }
+
+/* Tables: a wide table scrolls inside its own box instead of stretching the page */
+.table-wrapper { overflow-x: auto; margin: 1.6rem 0; border: 1px solid var(--bk-line); border-radius: 12px; }
+.content table { margin: 0; border-collapse: collapse; font-size: 1.4rem; line-height: 1.5; width: 100%; }
+.content table th {
+  background: var(--table-header-bg); color: var(--bk-heading); font-weight: 600; text-align: left;
+  border: 0; border-bottom: 1px solid var(--bk-line); white-space: nowrap;
+}
+.content table td { border: 0; border-top: 1px solid var(--bk-line); vertical-align: top; min-width: 9em; }
+.content table td:first-child { min-width: 7em; }
+.content table th, .content table td { padding: 0.8rem 1.1rem; }
+.content table tbody tr:nth-child(2n) { background: var(--table-alternate-bg); }
+
+/* Quotes */
+blockquote {
+  background: var(--quote-bg); border: 0; border-left: 3px solid var(--bk-accent); border-radius: 0 8px 8px 0;
+  margin: 1.6rem 0; padding: 0.8rem 1.4rem;
+}
+
+/* Diagrams: a light box (dark in the dark theme) that does not push the page wider. Colors: mermaid-init.js */
+pre.mermaid, .mermaid {
+  background: var(--bk-box); border: 1px solid var(--bk-line); border-radius: 14px; color: var(--fg);
+  padding: 1.4rem 0.6rem; margin: 1.6rem 0; text-align: center; overflow-x: auto;
+}
+.mermaid svg { max-width: 100%; height: auto; }
+
+/* Next and previous */
+.nav-chapters { color: var(--icons); }
+.nav-chapters:hover { color: var(--bk-accent-text); }
+hr { border: 0; border-top: 1px solid var(--bk-line); }
+::selection { background: var(--footnote-highlight); }
+.content img { max-width: 100%; }
+@media (max-width: 560px) {
+  h1 { font-size: 2.7rem; }
+  h2 { font-size: 2.1rem; }
+  .content { font-size: 1.55rem; }
+}
+
+/* Stage strip under the menu bar (text in theme/index.hbs, the only place with it): a thin line with the orange dot,
+   like the badge on the home page of the site. */
+.stage-strip, .stage-strip:link, .stage-strip:visited {
+  display: flex; align-items: center; justify-content: center; gap: 0.9rem; padding: 0.6rem 1.5rem;
+  background: var(--bg); color: var(--bk-muted); border-bottom: 1px solid var(--bk-line);
+  font-family: var(--mono-font); font-size: 1.25rem; line-height: 1.4; text-decoration: none;
+}
+.stage-strip:hover { color: var(--bk-heading); }
+.stage-strip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bk-accent); flex: 0 0 auto; }
+@media (max-width: 560px) { .stage-strip { padding: 0.5rem 1.2rem; justify-content: flex-start; font-size: 1.15rem; } }
+
+/* Footer line of every page */
+.book-foot { margin-top: 5rem; padding: 1.6rem 0 3rem; border-top: 1px solid var(--bk-line); font-family: var(--mono-font);
+  font-size: 1.25rem; color: var(--bk-muted); }
+.book-foot a, .book-foot a:link, .book-foot a:visited { color: var(--bk-heading); font-weight: 600; text-decoration: none; }
+.book-foot a:hover { color: var(--bk-accent-text); }
+
+/* Under a diagram that is wider than the page (set by mermaid-init.js). */
+.mermaid-scroll-hint { margin: -0.6rem 0 1.2rem; font-size: 1.2rem; color: var(--bk-muted); text-align: right; }

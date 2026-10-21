@@ -33,7 +33,7 @@
 //! connector. Until the first reconcile every command fails with
 //! [`brokapi_core::Error::NotReconciled`].
 //!
-//! The book is at <https://brokapi.runinfra.ru>.
+//! The book is at <https://brokapi.ru/docs/>.
 //!
 //! # Examples
 //!

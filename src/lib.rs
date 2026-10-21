@@ -18,7 +18,7 @@
 //! | `finam` | Finam connectors; `finam::protocol` is the gRPC client | `finam` |
 //!
 //! The guide, the rules for orders and the readiness table are in the book:
-//! <https://brokapi.runinfra.ru>. The stage is closed alpha: checked on broker imitations only.
+//! <https://brokapi.ru/docs/>. The stage is closed alpha: checked on broker imitations only.
 //!
 //! # Example
 //!

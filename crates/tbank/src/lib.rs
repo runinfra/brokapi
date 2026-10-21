@@ -21,7 +21,7 @@
 //!   caller checks the order first.
 //! - `reconcile` must succeed once before the first order. It opens the command gate.
 //!
-//! The full guide is in the book: <https://brokapi.runinfra.ru>.
+//! The full guide is in the book: <https://brokapi.ru/docs/>.
 //!
 //! # Examples
 //!

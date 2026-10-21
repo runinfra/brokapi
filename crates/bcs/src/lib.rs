@@ -17,7 +17,7 @@
 //! [`limits::default_limits`] gives the bundled rate limits. Give every connector of one BCS account
 //! the same limiter, because the limits belong to the token.
 //!
-//! The full guide is at <https://brokapi.runinfra.ru>.
+//! The full guide is at <https://brokapi.ru/docs/>.
 //!
 //! # Examples
 //!

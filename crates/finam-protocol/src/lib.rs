@@ -10,7 +10,7 @@
 //! on top of it. Use this crate directly only when you need a Finam call the connector does not wrap
 //! (the connector's `raw()` is usually easier, it also keeps the rate limit).
 //!
-//! The book with the full guide: <https://brokapi.runinfra.ru>
+//! The book with the full guide: <https://brokapi.ru/docs/>
 //!
 //! # Examples
 //!

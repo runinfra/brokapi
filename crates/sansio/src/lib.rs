@@ -14,7 +14,7 @@
 //! The crate does no I/O at all, and the examples in it run with no mock. The connectors that
 //! use it run against the broker mocks, see `brokapi-mocks`.
 //!
-//! The book is at <https://brokapi.runinfra.ru>.
+//! The book is at <https://brokapi.ru/docs/>.
 //!
 //! # Examples
 //!

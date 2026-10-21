@@ -3,7 +3,7 @@
 //! All three wrap [`rust_decimal::Decimal`]: a decimal number with a 96-bit integer part and up to 28
 //! decimal places. `0.1 + 0.2 == 0.3` holds, `244.30` is not `244.299999...`, and a price is a
 //! multiple of its step or it is not. The decision and the comparison with the fixed-point integers of
-//! NautilusTrader are on the numbers page of the book: <https://brokapi.runinfra.ru/numbers.html>.
+//! NautilusTrader are on the numbers page of the book: <https://brokapi.ru/docs/numbers.html>.
 
 use std::fmt;
 use std::iter::Sum;

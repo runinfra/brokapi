@@ -21,7 +21,7 @@
 //! Limits belong to the broker user, not to a connector: build one [`BrokerLimiter`] per user and
 //! share its [`Arc`](std::sync::Arc) between all connectors of that user.
 //!
-//! The book is at <https://brokapi.runinfra.ru>.
+//! The book is at <https://brokapi.ru/docs/>.
 //!
 //! # Examples
 //!

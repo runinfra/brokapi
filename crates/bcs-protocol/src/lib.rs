@@ -5,7 +5,7 @@
 //! orders. The connector crate `brokapi-bcs` sits on top of it and maps these types to the
 //! broker-independent ones. Use this crate directly when you want the raw API.
 //!
-//! The reference book is at <https://brokapi.runinfra.ru>.
+//! The reference book is at <https://brokapi.ru/docs/>.
 //!
 //! # Parts
 //!

@@ -14,7 +14,7 @@
 //! - [`money`] - `Quotation` and `MoneyValue` (units and nano) converted to and from `Decimal`, without `f64` on the way.
 //! - [`ProtocolError`] - configuration and transport errors raised while building the channel.
 //!
-//! The full guide is in the book: <https://brokapi.runinfra.ru>.
+//! The full guide is in the book: <https://brokapi.ru/docs/>.
 //!
 //! # Examples
 //!

@@ -17,7 +17,7 @@
 
         <meta name="description" content="{{ description }}">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="theme-color" content="#080a0f">
+        <meta name="theme-color" content="#f5f4ef">
 
         {{#if favicon_svg}}
         <link rel="icon" href="{{ resource "favicon.svg" }}">
@@ -150,8 +150,8 @@
                             {{fa "solid" "paintbrush"}}
                         </button>
                         <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
-                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Dark</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Темная</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Светлая</button></li>
                         </ul>
                         {{#if search_enabled}}
                         <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
@@ -161,25 +161,20 @@
                     </div>
 
                     <h1 class="menu-title">{{ book_title }}</h1>
-                    <!-- RunInfra mark and name, then the name of the library. The library name comes from `title` in book.toml. -->
-                    <!-- Mark and RUNINFRA lead to runinfra.ru, the library name leads to the first page of the book. -->
+                    <!-- Mark and name of brokapi lead to the site brokapi.ru (same mark as on the site). -->
                     <div class="brand">
-                        <a class="brand-home" href="https://runinfra.ru" aria-label="RunInfra, runinfra.ru">
-                        <svg class="brand-mark" viewBox="0 0 77 57" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                            <path fill-rule="evenodd" clip-rule="evenodd" d="M59 24H47.5L59.5 37.5C84 36.5 80.5 0 59.5 0H0L12.5 14H59C61.5 15 62.1731 15.7685 62.5 19C62.26 22.6592 61.3331 23.5107 59 24Z" fill="url(#ri-g1)"/>
-                            <path d="M39.1277 24H22L49.8936 57H68L39.1277 24Z" fill="url(#ri-g2)"/>
-                            <defs>
-                                <linearGradient id="ri-g1" x1="38.2938" y1="0" x2="38.2938" y2="37.5" gradientUnits="userSpaceOnUse"><stop stop-color="#A1FFD6"/><stop offset="1" stop-color="#1BE38C"/></linearGradient>
-                                <linearGradient id="ri-g2" x1="45" y1="24" x2="45" y2="57" gradientUnits="userSpaceOnUse"><stop stop-color="#CECECE"/><stop offset="1" stop-color="#686868"/></linearGradient>
-                            </defs>
-                        </svg>
-                        <span class="brand-word">RUNINFRA</span>
+                        <a class="brand-home" href="https://brokapi.ru/" aria-label="brokapi, brokapi.ru">
+                            <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+                                <path d="M3 8c9 0 10 8 17 8M3 16h17M3 24c9 0 10-8 17-8M20 16h4" />
+                                <circle cx="27" cy="16" r="3" />
+                            </svg>
+                            <span class="brand-word">brokapi</span>
                         </a>
-                        <span class="brand-sep" aria-hidden="true"></span>
-                        <a class="brand-lib" href="{{ path_to_root }}index.html" aria-label="{{ book_title }}: first page of the book">{{ book_title }}</a>
+                        <a class="brand-docs" href="{{ path_to_root }}index.html" aria-label="Documentation: first page of the book">docs</a>
                     </div>
 
                     <div class="right-buttons">
+                        <a class="site-link" href="https://brokapi.ru/">brokapi.ru</a>
                         {{#if print_enable}}
                         <a href="{{ path_to_root }}print.html" title="Print this book" aria-label="Print this book">
                             {{fa "solid" "print" "print-button"}}
@@ -227,7 +222,7 @@
                 </script>
 
                 <!-- Stage of the library. The only place with this text: change it here at the next stage. -->
-                <a class="stage-strip" href="{{ path_to_root }}readiness.html"><b>Альфа-тестирование</b><span class="stage-detail">: проверено только на имитациях брокеров, интерфейс может меняться</span></a>
+                <a class="stage-strip" href="{{ path_to_root }}readiness.html"><span class="dot"></span>Закрытая альфа: проверено на имитациях брокеров, интерфейс может меняться</a>
 
                 <div id="mdbook-content" class="content">
                     <main>
@@ -258,6 +253,7 @@
 
                         <div style="clear: both"></div>
                     </nav>
+                    <footer class="book-foot">brokapi by <a href="https://runinfra.ru">RunInfra</a></footer>
                 </div>
             </div>
 

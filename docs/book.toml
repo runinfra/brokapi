@@ -1,5 +1,5 @@
 [book]
-# Название библиотеки: оно же стоит в шапке справа от RUNINFRA (theme/index.hbs берет его отсюда)
+# Название библиотеки (в шапке слово brokapi написано в theme/index.hbs, оно не зависит от этого поля)
 title = "brokapi"
 language = "ru"
 src = "src"
@@ -9,10 +9,12 @@ build-dir = "book"
 create-missing = false
 
 [output.html]
-# Вид RunInfra: темная тема "navy" по умолчанию, светлая "light" с акцентом темнее. Файлы лежат в theme/
-default-theme = "navy"
-preferred-dark-theme = "navy"
-additional-css = ["theme/runinfra.css"]
+# Вид brokapi (как сайт brokapi.ru): светлая бумага "light" по умолчанию, темная "coal" как вариант. Файлы лежат в theme/
+default-theme = "light"
+preferred-dark-theme = "coal"
+additional-css = ["theme/brokapi.css"]
+# Книга живет в подкаталоге https://brokapi.ru/docs/: от этого адреса строятся 404.html и поиск, остальные ссылки относительные
+site-url = "/docs/"
 # Схемы Mermaid рисуются в браузере из локальных файлов mermaid.min.js и mermaid-init.js
 # (библиотека ставится командой `mdbook-mermaid install docs`, mermaid-init.js у нас свой, в цветах темы)
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
