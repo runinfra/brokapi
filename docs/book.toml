@@ -9,7 +9,8 @@ build-dir = "book"
 create-missing = false
 
 [output.html]
-# Вид brokapi (как сайт brokapi.ru): светлая бумага "light" по умолчанию, темная "coal" как вариант. Файлы лежат в theme/
+# Вид brokapi, вариант "Спецификация" (как сайт brokapi.ru): белая страница и синий акцент, светлая "light" по умолчанию, темная "coal"
+# как вариант. Файлы лежат в theme/
 default-theme = "light"
 preferred-dark-theme = "coal"
 additional-css = ["theme/brokapi.css"]
@@ -21,6 +22,11 @@ site-url = "/docs/"
 # подгружает файл только там, где есть схема. lang-tabs.js - выбор языка и вкладки Rust | Python, ui.js - таблицы-карточки,
 # длинный код, кнопка копирования, search.js - окно поиска (Pagefind).
 additional-js = ["mermaid.min.js", "mermaid-init.js", "lang-tabs.js", "ui.js", "search.js"]
+
+# Разделы сайдбара сворачиваются: раскрыт только тот, где открытая страница, остальные - одна строка со стрелкой.
+[output.html.fold]
+enable = true
+level = 0
 
 # Встроенный поиск mdBook (elasticlunr) выключен: он режет все не-ASCII буквы, и по-русски ничего не находил. Поиск делает
 # Pagefind: после mdbook build его индекс строит docs/build.sh (`pagefind --site docs/book`), окно поиска - docs/search.js.

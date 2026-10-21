@@ -1,128 +1,171 @@
-/* API reference (rustdoc) in the brokapi style: paper #f5f4ef, ink #121212, accent #ff5b1f, Golos Text and JetBrains Mono.
+/* API reference (rustdoc) in the design "Specification": white page, ink-blue text, blue links, Plex Sans and Plex Mono, code blocks
+   dark in both themes. The same tokens as the book (theme/brokapi.css).
    Connected by docs/build.sh: --default-theme=light and --extend-css. The fonts are copied by build.sh into api/fonts/
    (the book's own copies have hashed names). The font paths are relative to the css file (rustdoc writes it as api/theme.css, so fonts/ is next to it). */
-@font-face { font-family: 'Golos Text'; font-weight: 400 900; font-display: swap;
-  src: url('fonts/golos-text-cyrillic-wght-normal.woff2') format('woff2-variations');
+@font-face { font-family: 'IBM Plex Sans'; font-weight: 400 700; font-display: swap;
+  src: url('fonts/ibm-plex-sans-cyrillic-wght-normal.woff2') format('woff2-variations');
   unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
-@font-face { font-family: 'Golos Text'; font-weight: 400 900; font-display: swap;
-  src: url('fonts/golos-text-latin-wght-normal.woff2') format('woff2-variations'); }
-@font-face { font-family: 'JetBrains Mono'; font-weight: 100 800; font-display: swap;
-  src: url('fonts/jetbrains-mono-cyrillic-wght-normal.woff2') format('woff2-variations');
+@font-face { font-family: 'IBM Plex Sans'; font-weight: 400 700; font-display: swap;
+  src: url('fonts/ibm-plex-sans-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 400; font-display: swap;
+  src: url('fonts/ibm-plex-mono-cyrillic-400-normal.woff2') format('woff2');
   unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
-@font-face { font-family: 'JetBrains Mono'; font-weight: 100 800; font-display: swap;
-  src: url('fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2-variations'); }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 400; font-display: swap;
+  src: url('fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 500; font-display: swap;
+  src: url('fonts/ibm-plex-mono-cyrillic-500-normal.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 500; font-display: swap;
+  src: url('fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 600; font-display: swap;
+  src: url('fonts/ibm-plex-mono-cyrillic-600-normal.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 600; font-display: swap;
+  src: url('fonts/ibm-plex-mono-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
 :root {
-  --font-family: 'Golos Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-family-code: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  --font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-family-code: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 }
 body, .docblock, .docblock-short, .item-table, .sidebar, .search-results, h1, h2, h3, h4 {
   font-family: var(--font-family);
 }
 code, pre, .code-header, .src-line-numbers, .rust { font-family: var(--font-family-code); }
-html, body, code, pre { font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'calt' 0; }
+html, body, code, pre { font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'calt' 0, 'tnum' 1; }
+h1, h2, h3, h4, h5 { font-weight: 600; }
 
 /* Code blocks: dark with light text in both themes */
 :root[data-theme="light"], :root[data-theme="dark"] {
-  --code-block-background-color: #121212;
-  --code-highlight-kw-color: #ff8a5c;
-  --code-highlight-kw-2-color: #ff8a5c;
-  --code-highlight-lifetime-color: #d9c28a;
-  --code-highlight-prelude-color: #ff8a5c;
-  --code-highlight-prelude-val-color: #9fd8a8;
-  --code-highlight-number-color: #9fd8a8;
-  --code-highlight-string-color: #9fd8a8;
-  --code-highlight-literal-color: #9fd8a8;
-  --code-highlight-attribute-color: #d9c28a;
-  --code-highlight-self-color: #ff8a5c;
-  --code-highlight-macro-color: #d9c28a;
-  --code-highlight-question-mark-color: #ff8a5c;
-  --code-highlight-comment-color: #8f8d86;
-  --code-highlight-doc-comment-color: #8f8d86;
+  --code-block-background-color: #0b1220;
+  --code-highlight-kw-color: #8fa8ff;
+  --code-highlight-kw-2-color: #8fa8ff;
+  --code-highlight-lifetime-color: #f0c987;
+  --code-highlight-prelude-color: #8fa8ff;
+  --code-highlight-prelude-val-color: #7fd6ad;
+  --code-highlight-number-color: #f0c987;
+  --code-highlight-string-color: #7fd6ad;
+  --code-highlight-literal-color: #f0c987;
+  --code-highlight-attribute-color: #c6cffd;
+  --code-highlight-self-color: #8fa8ff;
+  --code-highlight-macro-color: #c6cffd;
+  --code-highlight-question-mark-color: #8fa8ff;
+  --code-highlight-comment-color: #93a0b4;
+  --code-highlight-doc-comment-color: #93a0b4;
 }
-pre, .docblock pre, .rustdoc .example-wrap pre { color: #ecebe6; border-radius: 12px; }
+pre, .docblock pre, .rustdoc .example-wrap pre { color: #e7ecf3; border-radius: 2px; }
 .docblock :not(pre) > code, .item-table :not(pre) > code, .docblock-short code {
-  background: var(--inline-code-background, #e9e7df); color: var(--inline-code-color, #121212); border-radius: 4px;
+  background: var(--inline-code-background, #f2f4f7); color: var(--inline-code-color, #0b1220); border-radius: 2px;
 }
-.docblock a:not(.src):not(.scrape-help):not(.tooltip) { text-decoration: underline; text-decoration-color: #ff5b1f; text-underline-offset: 0.18em; }
+.docblock a:not(.src):not(.scrape-help):not(.tooltip) { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
 
 :root[data-theme="light"] {
-  --main-background-color: #f5f4ef;
-  --main-color: #121212;
-  --inline-code-background: #e9e7df;
-  --inline-code-color: #121212;
-  --settings-input-color: #ff5b1f;
-  --settings-input-border-color: #bdbab0;
-  --settings-button-color: #121212;
-  --settings-button-border-focus: #ff5b1f;
-  --sidebar-background-color: #efede6;
-  --sidebar-background-color-hover: #e3e1d8;
-  --scrollbar-track-background-color: #efede6;
-  --scrollbar-thumb-background-color: #c8c5ba;
-  --scrollbar-color: #c8c5ba #efede6;
-  --headings-border-bottom-color: #dcd9d0;
-  --border-color: #dcd9d0;
-  --button-background-color: #fbfaf7;
-  --right-side-color: #5c5a55;
-  --link-color: #121212;
-  --sidebar-link-color: #3a3935;
-  --sidebar-current-link-background-color: #e3e1d8;
-  --type-link-color: #121212;
-  --search-color: #121212;
-  --search-input-focused-border-color: #ff5b1f;
-  --search-result-link-focus-background-color: #e3e1d8;
-  --target-background-color: #ffe6db;
-  --target-border-color: #ff5b1f;
-  --toggles-color: #5c5a55;
-  --table-alt-row-background-color: #efede6;
-  --src-line-numbers-span-color: #8f8d86;
+  --main-background-color: #ffffff;
+  --main-color: #0b1220;
+  --inline-code-background: #f2f4f7;
+  --inline-code-color: #0b1220;
+  --settings-input-color: #1f3fe0;
+  --settings-input-border-color: #8a94a3;
+  --settings-button-color: #0b1220;
+  --settings-button-border-focus: #1f3fe0;
+  --sidebar-background-color: #ffffff;
+  --sidebar-background-color-hover: #f2f4f7;
+  --scrollbar-track-background-color: #ffffff;
+  --scrollbar-thumb-background-color: #cdd3db;
+  --scrollbar-color: #cdd3db #ffffff;
+  --headings-border-bottom-color: #cdd3db;
+  --border-color: #cdd3db;
+  --button-background-color: #ffffff;
+  --right-side-color: #566170;
+  --link-color: #1f3fe0;
+  --sidebar-link-color: #3a4556;
+  --sidebar-current-link-background-color: #f2f4f7;
+  --type-link-color: #1f3fe0;
+  --mod-link-color: #1f3fe0;
+  --trait-link-color: #1f3fe0;
+  --struct-link-color: #1f3fe0;
+  --enum-link-color: #1f3fe0;
+  --union-link-color: #1f3fe0;
+  --fn-link-color: #1f3fe0;
+  --macro-link-color: #1f3fe0;
+  --attr-link-color: #1f3fe0;
+  --keyword-link-color: #1f3fe0;
+  --primitive-link-color: #1f3fe0;
+  --constant-link-color: #1f3fe0;
+  --assoc-item-link-color: #1f3fe0;
+  --search-color: #0b1220;
+  --search-input-focused-border-color: #1f3fe0;
+  --search-result-link-focus-background-color: #f2f4f7;
+  --target-background-color: #dfe5ff;
+  --target-border-color: #1f3fe0;
+  --toggles-color: #566170;
+  --table-alt-row-background-color: #f2f4f7;
+  --src-line-numbers-span-color: #566170;
 }
 :root[data-theme="dark"] {
-  --main-background-color: #151513;
-  --main-color: #e7e5de;
-  --inline-code-background: #26251f;
-  --inline-code-color: #ecebe6;
-  --code-block-background-color: #0c0c0b;
-  --settings-input-color: #ff5b1f;
-  --settings-input-border-color: #4a4944;
-  --settings-button-color: #e7e5de;
-  --settings-button-border-focus: #ff5b1f;
-  --sidebar-background-color: #1a1a17;
-  --sidebar-background-color-hover: #26251f;
-  --scrollbar-track-background-color: #1a1a17;
-  --scrollbar-thumb-background-color: #3a3935;
-  --scrollbar-color: #3a3935 #1a1a17;
-  --headings-border-bottom-color: #2f2e2a;
-  --border-color: #2f2e2a;
-  --button-background-color: #1a1a17;
-  --right-side-color: #9a978e;
-  --link-color: #e7e5de;
-  --sidebar-link-color: #b6b3a9;
-  --sidebar-current-link-background-color: #26251f;
-  --type-link-color: #e7e5de;
-  --search-color: #f5f4ef;
-  --search-input-focused-border-color: #ff5b1f;
-  --search-result-link-focus-background-color: #26251f;
-  --target-background-color: #33211a;
-  --target-border-color: #ff5b1f;
-  --toggles-color: #9a978e;
-  --table-alt-row-background-color: #191917;
-  --src-line-numbers-span-color: #8f8d86;
+  --main-background-color: #0a0f1a;
+  --main-color: #e7ecf3;
+  --inline-code-background: #111826;
+  --inline-code-color: #e7ecf3;
+  --code-block-background-color: #060a12;
+  --settings-input-color: #8fa8ff;
+  --settings-input-border-color: #667699;
+  --settings-button-color: #e7ecf3;
+  --settings-button-border-focus: #8fa8ff;
+  --sidebar-background-color: #0a0f1a;
+  --sidebar-background-color-hover: #141c2e;
+  --scrollbar-track-background-color: #0a0f1a;
+  --scrollbar-thumb-background-color: #243049;
+  --scrollbar-color: #243049 #0a0f1a;
+  --headings-border-bottom-color: #243049;
+  --border-color: #243049;
+  --button-background-color: #0e1523;
+  --right-side-color: #93a0b4;
+  --link-color: #8fa8ff;
+  --sidebar-link-color: #b9c3d3;
+  --sidebar-current-link-background-color: #141c2e;
+  --type-link-color: #8fa8ff;
+  --mod-link-color: #8fa8ff;
+  --trait-link-color: #8fa8ff;
+  --struct-link-color: #8fa8ff;
+  --enum-link-color: #8fa8ff;
+  --union-link-color: #8fa8ff;
+  --fn-link-color: #8fa8ff;
+  --macro-link-color: #8fa8ff;
+  --attr-link-color: #8fa8ff;
+  --keyword-link-color: #8fa8ff;
+  --primitive-link-color: #8fa8ff;
+  --constant-link-color: #8fa8ff;
+  --assoc-item-link-color: #8fa8ff;
+  --search-color: #f3f6fb;
+  --search-input-focused-border-color: #8fa8ff;
+  --search-result-link-focus-background-color: #141c2e;
+  --target-background-color: #26346b;
+  --target-border-color: #8fa8ff;
+  --toggles-color: #93a0b4;
+  --table-alt-row-background-color: #0e1523;
+  --src-line-numbers-span-color: #93a0b4;
 }
-:root[data-theme="light"] a.src, :root[data-theme="light"] .main-heading h1 { color: #121212; }
-:root[data-theme="dark"] a.src, :root[data-theme="dark"] .main-heading h1 { color: #f5f4ef; }
+:root[data-theme="light"] a.src, :root[data-theme="light"] .main-heading h1 { color: #0b1220; }
+:root[data-theme="dark"] a.src, :root[data-theme="dark"] .main-heading h1 { color: #f3f6fb; }
 :root[data-theme="dark"] .logo-container img { filter: none; }
+.sidebar { border-right: 1px solid var(--border-color); }
+#copy-path { color: var(--right-side-color); }
 /* Links inside a dark code block (types in the declaration, links in examples): light, or they vanish on the dark block */
-pre a, pre a:visited, pre a[class] { color: #f4b79a !important; text-decoration: none; }
+pre a, pre a:visited, pre a[class] { color: #aebdff !important; text-decoration: none; }
 pre a:hover { color: #ffffff !important; text-decoration: underline; }
 
 /* The bar of the book on top (reference/bar.html, given to rustdoc by docs/build.sh with --html-before-content): it is fixed,
    so the page and everything that sticks to the top of the window start under it. */
-body.rustdoc { padding-top: var(--bk-bar-h, 42px); }
-html { scroll-padding-top: calc(var(--bk-bar-h, 42px) + 8px); }
-.sidebar { top: var(--bk-bar-h, 42px); height: calc(100vh - var(--bk-bar-h, 42px)); }
-.sidebar-resizer { top: var(--bk-bar-h, 42px); height: calc(100% - var(--bk-bar-h, 42px)); }
-rustdoc-topbar { top: var(--bk-bar-h, 42px); }
+body.rustdoc { padding-top: var(--bk-bar-h, 52px); }
+html { scroll-padding-top: calc(var(--bk-bar-h, 52px) + 8px); }
+.sidebar { top: var(--bk-bar-h, 52px); height: calc(100vh - var(--bk-bar-h, 52px)); }
+.sidebar-resizer { top: var(--bk-bar-h, 52px); height: calc(100% - var(--bk-bar-h, 52px)); }
+rustdoc-topbar { top: var(--bk-bar-h, 52px); }
 @media (max-width: 700px) {
-  .sidebar { top: calc(var(--topbar-height) + var(--bk-bar-h, 42px)); height: calc(100vh - var(--topbar-height) - var(--bk-bar-h, 42px)); }
+  .sidebar { top: calc(var(--topbar-height) + var(--bk-bar-h, 52px)); height: calc(100vh - var(--topbar-height) - var(--bk-bar-h, 52px)); }
 }
-:target { scroll-margin-top: calc(var(--bk-bar-h, 42px) + 8px); }
+:target { scroll-margin-top: calc(var(--bk-bar-h, 52px) + 8px); }

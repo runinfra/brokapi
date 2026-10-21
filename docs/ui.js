@@ -6,7 +6,9 @@
 //   - a long code block is folded into <details> with a limited height,
 //   - the copy button speaks Russian,
 //   - the menu button of the contents works from the keyboard,
-//   - the button "Сообщить об ошибке" opens a form that sends the report together with the page it was opened on.
+//   - the button "Сообщить об ошибке" opens a form that sends the report together with the page it was opened on,
+//   - the column "На этой странице" at the right of a wide screen (from the headings of the chapter, with the current one marked),
+//   - the cards "Назад" and "Дальше" at the foot of a chapter say when the page they lead to is in another part of the book.
 (function () {
   'use strict';
 
@@ -266,6 +268,74 @@
     return s.length > 1000 ? s.slice(0, 1000) + '...' : s;
   }
 
+  // ---- on this page ------------------------------------------------------------------------------------------------
+  // The list of h2 and h3 of the chapter in the column at the right (theme/index.hbs has the empty <aside class="page-toc">).
+  // The CSS shows it only on a wide screen and then hides the same list inside the menu at the left. The heading that has
+  // passed the upper part of the window is the current one.
+  function pageToc() {
+    var aside = document.querySelector('.page-toc');
+    var main = document.getElementById('main-content');
+    if (!aside || !main) return;
+    var heads = Array.prototype.filter.call(main.querySelectorAll('h2, h3'), function (h) { return h.id; });
+    if (heads.length < 2) return;
+    var title = document.createElement('b');
+    title.textContent = 'На этой странице';
+    aside.appendChild(title);
+    var links = heads.map(function (h) {
+      var a = document.createElement('a');
+      a.href = '#' + h.id;
+      a.textContent = h.textContent.trim();
+      if (h.tagName === 'H3') a.className = 'h3';
+      aside.appendChild(a);
+      return a;
+    });
+    aside.hidden = false;
+    document.documentElement.classList.add('has-page-toc');
+    var ticking = false;
+    function mark() {
+      ticking = false;
+      var at = 0;
+      heads.forEach(function (h, i) { if (h.getBoundingClientRect().top <= 120) at = i; });
+      links.forEach(function (a, i) {
+        var on = i === at;
+        a.classList.toggle('on', on);
+        if (on) a.setAttribute('aria-current', 'location'); else a.removeAttribute('aria-current');
+      });
+    }
+    window.addEventListener('scroll', function () {
+      if (!ticking) { ticking = true; window.requestAnimationFrame(mark); }
+    }, { passive: true });
+    mark();
+  }
+
+  // ---- cards back and forward ----------------------------------------------------------------------------------------
+  // mdBook knows only the title of the next page. When the next (or the previous) page belongs to another part of the book
+  // (the parts are the bold words of the menu), the label of the card says so: "Следующий раздел: Rust".
+  function pagerParts() {
+    var cards = document.querySelectorAll('.pager a[rel]');
+    if (!cards.length) return;
+    function partOf(href) {
+      var link = Array.prototype.filter.call(document.querySelectorAll('#mdbook-sidebar .chapter a'), function (a) { return a.href === href; })[0];
+      if (!link) return null;
+      var li = link;
+      while (li && !(li.tagName === 'LI' && li.parentElement && li.parentElement.classList.contains('chapter'))) li = li.parentElement;
+      // The title of a part is an <li class="part-title"> in the same list, before the chapters of the part.
+      while (li) {
+        if (li.classList.contains('part-title')) return li.textContent.trim();
+        li = li.previousElementSibling;
+      }
+      return '';
+    }
+    var here = partOf(window.location.href.split('#')[0]);
+    if (here === null) return;
+    Array.prototype.forEach.call(cards, function (card) {
+      var there = partOf(card.href);
+      if (there === null || there === here || !there) return;
+      var label = card.querySelector('.pager-label');
+      if (label) label.textContent = (card.rel.indexOf('prev') >= 0 ? 'Предыдущий раздел: ' : 'Следующий раздел: ') + there;
+    });
+  }
+
   // ---- the first Tab ---------------------------------------------------------------------------------------------------
   // toc.js scrolls the menu to the current chapter, and the browser takes that link as the point where Tab starts: the first
   // Tab then skips the link "К содержимому" and the buttons of the menu bar. Put the starting point back to the top.
@@ -282,7 +352,7 @@
   }
 
   function init() {
-    var steps = [tables, fold, copyButtons, menuButton, report, watchScroll, tabStart];
+    var steps = [tables, fold, copyButtons, menuButton, report, watchScroll, pageToc, pagerParts, tabStart];
     steps.forEach(function (step) {
       try { step(); } catch (e) { /* one part failing must not stop the others */ }
     });

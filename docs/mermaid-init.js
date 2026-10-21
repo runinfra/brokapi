@@ -1,5 +1,5 @@
-// Draws the ```mermaid blocks in the colors of the book theme (brokapi: light paper by default, dark "coal" as a
-// variant, the same orange accent). The library itself, mermaid.min.js (2.7 MB), lies next to this file: no request to
+// Draws the ```mermaid blocks in the colors of the book theme (brokapi, design "Specification": white page by default,
+// dark "coal" as a variant). The library itself, mermaid.min.js (2.7 MB), lies next to this file: no request to
 // other sites. It is fetched only on a page that has a diagram (the address is in theme/index.hbs, #mermaid-lib): the
 // other pages of the book do not pay for it.
 // `mdbook-mermaid install docs` rewrites this file with its stock version: after running it, restore this one
@@ -9,34 +9,36 @@
     const lib = document.getElementById('mermaid-lib');
     if (!lib || !lib.dataset.src) return;
     const isDark = !document.documentElement.classList.contains('light');
+    // Palette of the design "Specification": white page, ink-blue lines of the boxes, blue wires, the signal only for the
+    // points that mean something (notes, activations). Dark: the same tones on the cold dark page.
     const light = {
-        background: '#fbfaf7', primaryColor: '#ffffff', primaryTextColor: '#121212', primaryBorderColor: '#121212',
-        secondaryColor: '#efede6', tertiaryColor: '#fbfaf7', lineColor: '#5c5a55', textColor: '#121212',
-        mainBkg: '#ffffff', nodeBorder: '#121212', clusterBkg: '#f0eee8', clusterBorder: '#c8c5ba',
-        edgeLabelBackground: '#fbfaf7', titleColor: '#121212', noteBkgColor: '#fff1ea', noteTextColor: '#121212',
-        nodeTextColor: '#121212', stateLabelColor: '#121212', noteBorderColor: '#ff5b1f', actorBkg: '#ffffff', actorBorder: '#121212', actorTextColor: '#121212',
-        actorLineColor: '#a19e94', signalColor: '#121212', signalTextColor: '#121212', labelBoxBkgColor: '#ffffff',
-        labelBoxBorderColor: '#121212', labelTextColor: '#121212', loopTextColor: '#121212',
-        activationBkgColor: '#ffd2bf', activationBorderColor: '#ff5b1f', sequenceNumberColor: '#ffffff',
-        stateBkg: '#ffffff', altBackground: '#f0eee8', compositeBackground: '#f0eee8', labelColor: '#121212',
-        transitionColor: '#5c5a55', transitionLabelColor: '#121212', specialStateColor: '#ff5b1f',
+        background: '#ffffff', primaryColor: '#ffffff', primaryTextColor: '#0b1220', primaryBorderColor: '#0b1220',
+        secondaryColor: '#f2f4f7', tertiaryColor: '#ffffff', lineColor: '#1f3fe0', textColor: '#0b1220',
+        mainBkg: '#ffffff', nodeBorder: '#0b1220', clusterBkg: '#f2f4f7', clusterBorder: '#cdd3db',
+        edgeLabelBackground: '#ffffff', titleColor: '#0b1220', noteBkgColor: '#f2f4f7', noteTextColor: '#0b1220',
+        nodeTextColor: '#0b1220', stateLabelColor: '#0b1220', noteBorderColor: '#566170', actorBkg: '#ffffff', actorBorder: '#0b1220', actorTextColor: '#0b1220',
+        actorLineColor: '#93a0b4', signalColor: '#1f3fe0', signalTextColor: '#0b1220', labelBoxBkgColor: '#f2f4f7',
+        labelBoxBorderColor: '#566170', labelTextColor: '#0b1220', loopTextColor: '#0b1220',
+        activationBkgColor: '#dfe5ff', activationBorderColor: '#1f3fe0', sequenceNumberColor: '#ffffff',
+        stateBkg: '#ffffff', altBackground: '#f2f4f7', compositeBackground: '#f2f4f7', labelColor: '#0b1220',
+        transitionColor: '#1f3fe0', transitionLabelColor: '#0b1220', specialStateColor: '#ff5b1f',
     };
     const dark = {
-        background: '#1a1a17', primaryColor: '#26251f', primaryTextColor: '#f5f4ef', primaryBorderColor: '#8f8d86',
-        secondaryColor: '#22211d', tertiaryColor: '#1a1a17', lineColor: '#9a978e', textColor: '#e7e5de',
-        mainBkg: '#26251f', nodeBorder: '#8f8d86', clusterBkg: '#151513', clusterBorder: '#3a3935',
-        edgeLabelBackground: '#1a1a17', titleColor: '#f5f4ef', noteBkgColor: '#33211a', noteTextColor: '#f5f4ef',
-        nodeTextColor: '#f5f4ef', stateLabelColor: '#f5f4ef', noteBorderColor: '#ff5b1f', actorBkg: '#26251f', actorBorder: '#8f8d86', actorTextColor: '#f5f4ef',
-        actorLineColor: '#5c5a55', signalColor: '#e7e5de', signalTextColor: '#e7e5de', labelBoxBkgColor: '#26251f',
-        labelBoxBorderColor: '#8f8d86', labelTextColor: '#f5f4ef', loopTextColor: '#e7e5de',
-        activationBkgColor: '#6b2a10', activationBorderColor: '#ff5b1f', sequenceNumberColor: '#121212',
-        stateBkg: '#26251f', altBackground: '#151513', compositeBackground: '#151513', labelColor: '#f5f4ef',
-        transitionColor: '#9a978e', transitionLabelColor: '#e7e5de', specialStateColor: '#ff5b1f',
+        background: '#0e1523', primaryColor: '#111826', primaryTextColor: '#f3f6fb', primaryBorderColor: '#93a0b4',
+        secondaryColor: '#111826', tertiaryColor: '#0e1523', lineColor: '#8fa8ff', textColor: '#e7ecf3',
+        mainBkg: '#111826', nodeBorder: '#93a0b4', clusterBkg: '#0a0f1a', clusterBorder: '#243049',
+        edgeLabelBackground: '#0e1523', titleColor: '#f3f6fb', noteBkgColor: '#141c2e', noteTextColor: '#f3f6fb',
+        nodeTextColor: '#f3f6fb', stateLabelColor: '#f3f6fb', noteBorderColor: '#93a0b4', actorBkg: '#111826', actorBorder: '#93a0b4', actorTextColor: '#f3f6fb',
+        actorLineColor: '#4a5875', signalColor: '#8fa8ff', signalTextColor: '#e7ecf3', labelBoxBkgColor: '#141c2e',
+        labelBoxBorderColor: '#4a5875', labelTextColor: '#f3f6fb', loopTextColor: '#e7ecf3',
+        activationBkgColor: '#26346b', activationBorderColor: '#8fa8ff', sequenceNumberColor: '#0a0f1a',
+        stateBkg: '#111826', altBackground: '#0a0f1a', compositeBackground: '#0a0f1a', labelColor: '#f3f6fb',
+        transitionColor: '#8fa8ff', transitionLabelColor: '#e7ecf3', specialStateColor: '#ff6a2b',
     };
     const setup = () => mermaid.initialize({
         startOnLoad: false,
         theme: 'base',
-        themeVariables: Object.assign({ fontFamily: "'Golos Text', system-ui, sans-serif", fontSize: '14px' }, isDark ? dark : light),
+        themeVariables: Object.assign({ fontFamily: "'IBM Plex Sans', system-ui, sans-serif", fontSize: '14px' }, isDark ? dark : light),
     });
     // The library is fetched while the fonts load: the two waits go side by side.
     const library = () => new Promise((resolve, reject) => {
@@ -68,13 +70,13 @@
             box.classList.add('is-wide');
         }
     };
-    // Mermaid sizes every box by measuring its label at drawing time. Drawn before Golos Text has loaded, the
+    // Mermaid sizes every box by measuring its label at drawing time. Drawn before IBM Plex Sans has loaded, the
     // boxes fit the fallback font, then the wider web font clips the last letters. So wait for the fonts first
     // (with a time limit, so a font that never loads does not keep the diagrams from drawing).
     const fontsReady = () => {
         if (!document.fonts) return Promise.resolve();
         // The font is split by alphabet (unicode-range): ask for Cyrillic and Latin text, or only one file loads.
-        const loads = ["14px 'Golos Text'", "600 14px 'Golos Text'"]
+        const loads = ["14px 'IBM Plex Sans'", "600 14px 'IBM Plex Sans'"]
             .map((f) => document.fonts.load(f, 'Аа Яя Aa Zz').catch(() => {}));
         const limit = new Promise((resolve) => setTimeout(resolve, 6000));
         return Promise.race([Promise.all(loads).then(() => document.fonts.ready), limit]);

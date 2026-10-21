@@ -1,78 +1,118 @@
-/* The Python API reference in the brokapi style: paper #f5f4ef, ink #121212, accent #ff5b1f, Golos Text and JetBrains Mono.
+/* The Python API reference in the design "Specification": white page, ink-blue text, blue links, Plex Sans and Plex Mono, code blocks
+   dark in both themes. The same tokens as the book (theme/brokapi.css).
    pdoc puts this file into every page. The fonts are at /docs/api/python/fonts/ (docs/build.sh copies them there). */
-@font-face { font-family: 'Golos Text'; font-weight: 400 900; font-display: swap;
-  src: url('/docs/api/python/fonts/golos-text-cyrillic-wght-normal.woff2') format('woff2-variations');
+@font-face { font-family: 'IBM Plex Sans'; font-weight: 400 700; font-display: swap;
+  src: url('/docs/api/python/fonts/ibm-plex-sans-cyrillic-wght-normal.woff2') format('woff2-variations');
   unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
-@font-face { font-family: 'Golos Text'; font-weight: 400 900; font-display: swap;
-  src: url('/docs/api/python/fonts/golos-text-latin-wght-normal.woff2') format('woff2-variations'); }
-@font-face { font-family: 'JetBrains Mono'; font-weight: 100 800; font-display: swap;
-  src: url('/docs/api/python/fonts/jetbrains-mono-cyrillic-wght-normal.woff2') format('woff2-variations');
+@font-face { font-family: 'IBM Plex Sans'; font-weight: 400 700; font-display: swap;
+  src: url('/docs/api/python/fonts/ibm-plex-sans-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 400; font-display: swap;
+  src: url('/docs/api/python/fonts/ibm-plex-mono-cyrillic-400-normal.woff2') format('woff2');
   unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
-@font-face { font-family: 'JetBrains Mono'; font-weight: 100 800; font-display: swap;
-  src: url('/docs/api/python/fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2-variations'); }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 400; font-display: swap;
+  src: url('/docs/api/python/fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 500; font-display: swap;
+  src: url('/docs/api/python/fonts/ibm-plex-mono-cyrillic-500-normal.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 500; font-display: swap;
+  src: url('/docs/api/python/fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 600; font-display: swap;
+  src: url('/docs/api/python/fonts/ibm-plex-mono-cyrillic-600-normal.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 600; font-display: swap;
+  src: url('/docs/api/python/fonts/ibm-plex-mono-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
 
 :root, :root .pdoc {
-  --pdoc-background: #f5f4ef;
-  --text: #121212;
-  --muted: #5c5a55;
-  --link: #c23c00;
-  --link-hover: #ff5b1f;
-  --code: #ebe9e1;
-  --active: #ffd2bf;
-  --accent: #ebe9e1;
-  --accent2: #dcd9d0;
-  --nav-hover: rgba(255, 91, 31, 0.08);
-  --name: #c23c00;
-  --def: #c23c00;
-  --annotation: #5c5a55;
+  --pdoc-background: #ffffff;
+  --text: #0b1220;
+  --muted: #566170;
+  --link: #1f3fe0;
+  --link-hover: #1733b8;
+  --code: #f2f4f7;
+  --active: #dfe5ff;
+  --accent: #f2f4f7;
+  --accent2: #cdd3db;
+  --nav-hover: rgba(31, 63, 224, 0.07);
+  --name: #1f3fe0;
+  --def: #566170;
+  --annotation: #566170;
 }
 /* The dark theme: the book's choice (reference/head.html sets data-theme); without script, the choice of the system. */
 :root[data-theme="dark"], :root[data-theme="dark"] .pdoc {
-  --pdoc-background: #151513;
-  --text: #e7e5de;
-  --muted: #a19e94;
-  --link: #ff8a5c;
-  --link-hover: #ffb79b;
-  --accent: #1a1a17;
-  --accent2: #3a3935;
-  --active: #5a2a15;
-  --nav-hover: rgba(255, 138, 92, 0.12);
-  --name: #ff8a5c;
-  --code: #26251f;
-  --def: #ff8a5c;
-  --annotation: #a19e94;
+  --pdoc-background: #0a0f1a;
+  --text: #e7ecf3;
+  --muted: #93a0b4;
+  --link: #8fa8ff;
+  --link-hover: #b5c4ff;
+  --accent: #0e1523;
+  --accent2: #243049;
+  --active: #26346b;
+  --nav-hover: rgba(143, 168, 255, 0.12);
+  --name: #8fa8ff;
+  --code: #111826;
+  --def: #93a0b4;
+  --annotation: #93a0b4;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]), :root:not([data-theme]) .pdoc {
-    --pdoc-background: #151513; --text: #e7e5de; --muted: #a19e94; --link: #ff8a5c; --link-hover: #ffb79b;
-    --accent: #1a1a17; --accent2: #3a3935; --active: #5a2a15; --nav-hover: rgba(255, 138, 92, 0.12);
-    --name: #ff8a5c; --code: #26251f; --def: #ff8a5c; --annotation: #a19e94;
+    --pdoc-background: #0a0f1a; --text: #e7ecf3; --muted: #93a0b4; --link: #8fa8ff; --link-hover: #b5c4ff;
+    --accent: #0e1523; --accent2: #243049; --active: #26346b; --nav-hover: rgba(143, 168, 255, 0.12);
+    --name: #8fa8ff; --code: #111826; --def: #93a0b4; --annotation: #93a0b4;
   }
 }
 :root { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
-html, body { background: var(--pdoc-background); color: var(--text); font-family: 'Golos Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
-code, pre, .pdoc-code, .signature { font-family: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; font-variant-ligatures: none; }
-pre { background: #121212; color: #ecebe6; border-radius: 4px; }
-pre code, .pdoc-code { color: #ecebe6; background: transparent; }
-.pdoc-code .n, .pdoc-code .nn, .pdoc-code .nc, .pdoc-code .nf, .pdoc-code .p, .pdoc-code .o { color: #ecebe6; }
-.pdoc-code .k, .pdoc-code .kn, .pdoc-code .kd, .pdoc-code .ow { color: #ff8a5c; }
-.pdoc-code .s, .pdoc-code .s1, .pdoc-code .s2, .pdoc-code .mi, .pdoc-code .kc { color: #9fd8a8; }
-.pdoc-code .c, .pdoc-code .c1, .pdoc-code .ch { color: #8f8d86; }
-nav.pdoc { background: var(--accent); border-right: 1px solid var(--accent2); }
+html, body { background: var(--pdoc-background); color: var(--text); font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-feature-settings: 'tnum' 1; }
+code, pre, .pdoc-code, .signature { font-family: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; font-variant-ligatures: none; }
+/* pdoc paints .pdoc pre with the panel color and two rules: a dark block in both themes, without them */
+:root .pdoc pre, :root pre { background-color: #0b1220; color: #e7ecf3; border: 0; border-radius: 2px; padding: 14px 18px; }
+:root[data-theme="dark"] .pdoc pre, :root[data-theme="dark"] pre { background-color: #060a12; box-shadow: 0 0 0 1px var(--accent2); }
+:root .pdoc pre code, :root .pdoc pre .pdoc-code, pre code { color: #e7ecf3; background: transparent; }
+.pdoc-code { color: inherit; }
+.pdoc-code { background: transparent; }
+/* Colors of code: pdoc (Pygments) paints the signatures on the page color and the examples in dark blocks, so the colors are variables:
+   the page ones for signatures, the light ones for the dark blocks (pre). */
+:root { --tk-text: #0b1220; --tk-key: #1f3fe0; --tk-str: #0e7a53; --tk-num: #8a5a00; --tk-com: #566170; }
+:root[data-theme="dark"] { --tk-text: #e7ecf3; --tk-key: #8fa8ff; --tk-str: #7fd6ad; --tk-num: #f0c987; --tk-com: #93a0b4; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme]) { --tk-text: #e7ecf3; --tk-key: #8fa8ff; --tk-str: #7fd6ad; --tk-num: #f0c987; --tk-com: #93a0b4; } }
+pre { --tk-text: #e7ecf3; --tk-key: #8fa8ff; --tk-str: #7fd6ad; --tk-num: #f0c987; --tk-com: #93a0b4; }
+.pdoc-code .n, .pdoc-code .nn, .pdoc-code .nc, .pdoc-code .nf, .pdoc-code .fm, .pdoc-code .p, .pdoc-code .o, .pdoc-code .nv, .pdoc-code .na { color: var(--tk-text); }
+.pdoc-code .k, .pdoc-code .kn, .pdoc-code .kd, .pdoc-code .kr, .pdoc-code .kp, .pdoc-code .ow, .pdoc-code .nb, .pdoc-code .bp, .pdoc-code .nt { color: var(--tk-key); }
+.pdoc-code .s, .pdoc-code .s1, .pdoc-code .s2, .pdoc-code .sa, .pdoc-code .sb, .pdoc-code .sd, .pdoc-code .kc { color: var(--tk-str); }
+.pdoc-code .m, .pdoc-code .mi, .pdoc-code .mf, .pdoc-code .mh, .pdoc-code .il, .pdoc-code .no { color: var(--tk-num); }
+.pdoc-code .c, .pdoc-code .c1, .pdoc-code .ch, .pdoc-code .cm { color: var(--tk-com); }
+.pdoc-code .k, .pdoc-code .kn, .pdoc-code .kd, .pdoc-code .ow, .pdoc-code .nc, .pdoc-code .nn { font-weight: 500; }
+/* The dark code block lies on the page: a name inside it must not take the color meant for the page */
+pre .name, pre .def, pre .signature { color: inherit; }
+/* Links inside a dark block (the type in an example): the light blue, the page blue is too dark on it */
+pre a, pre a:visited, :root .pdoc pre a { color: #aebdff; }
+pre a:hover, :root .pdoc pre a:hover { color: #ffffff; }
+/* A link inside a sentence is told from the text by more than the color (WCAG 1.4.1) */
+main.pdoc a:not(.headerlink) { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+nav.pdoc { background: var(--pdoc-background); border-right: 1px solid var(--accent2); }
 nav.pdoc a { color: var(--text); }
 nav.pdoc a:hover { color: var(--link-hover); }
-h1, h2, h3 { font-weight: 650; }
+h1, h2, h3, :root .pdoc h1, :root .pdoc h2, :root .pdoc h3, nav.pdoc h2 { font-weight: 600; }
+nav.pdoc input[type="search"], nav.pdoc input[type="text"] {
+  font: 400 14px 'IBM Plex Sans', system-ui, sans-serif; color: var(--text); background: var(--pdoc-background); border: 1px solid #8a94a3;
+  border-radius: 3px; padding: 7px 10px; box-sizing: border-box;
+}
+:root[data-theme="dark"] nav.pdoc input[type="search"], :root[data-theme="dark"] nav.pdoc input[type="text"] { border-color: #667699; }
+nav.pdoc input:focus { outline: 2px solid var(--link); outline-offset: 1px; }
 .pdoc-button { border-color: var(--accent2); }
-.attribution { display: none; }
+.attribution, nav.pdoc .attribution { display: none !important; }
 footer { color: var(--muted); }
 
 /* The bar of the book (bar.html) is fixed at the top: the page starts under it. */
-body { padding-top: var(--bk-bar-h, 42px); }
+body { padding-top: var(--bk-bar-h, 52px); }
 @media (min-width: 770px) {
-  nav.pdoc { top: var(--bk-bar-h, 42px); height: calc(100vh - var(--bk-bar-h, 42px)); }
+  nav.pdoc { top: var(--bk-bar-h, 52px); height: calc(100vh - var(--bk-bar-h, 52px)); }
 }
 @media (max-width: 769px) {
-  #navtoggle { top: calc(var(--bk-bar-h, 42px) + 0.8rem); }
+  #navtoggle { top: calc(var(--bk-bar-h, 52px) + 0.8rem); }
 }
-html { scroll-padding-top: calc(var(--bk-bar-h, 42px) + 12px); }
+html { scroll-padding-top: calc(var(--bk-bar-h, 52px) + 12px); }

@@ -17,7 +17,7 @@
 
         <meta name="description" content="{{ description }}">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="theme-color" content="#f5f4ef">
+        <meta name="theme-color" content="#ffffff">
 
         {{#if favicon_svg}}
         <link rel="icon" href="{{ resource "favicon.svg" }}">
@@ -33,8 +33,8 @@
         {{/if}}
 
         <!-- Fonts. The text font in both alphabets is fetched at once: the page is Russian, a late font shifts the layout. -->
-        <link rel="preload" as="font" type="font/woff2" crossorigin href="{{ resource "fonts/golos-text-cyrillic-wght-normal.woff2" }}">
-        <link rel="preload" as="font" type="font/woff2" crossorigin href="{{ resource "fonts/golos-text-latin-wght-normal.woff2" }}">
+        <link rel="preload" as="font" type="font/woff2" crossorigin href="{{ resource "fonts/ibm-plex-sans-cyrillic-wght-normal.woff2" }}">
+        <link rel="preload" as="font" type="font/woff2" crossorigin href="{{ resource "fonts/ibm-plex-sans-latin-wght-normal.woff2" }}">
         <link rel="stylesheet" href="{{ resource "fonts/fonts.css" }}">
 
         <!-- Highlight.js Stylesheets -->
@@ -167,7 +167,7 @@
                             </svg>
                             <span class="brand-word">brokapi</span>
                         </a>
-                        <a class="brand-docs" href="{{ path_to_root }}index.html" aria-label="Документация: первая страница книги">docs</a>
+                        <a class="brand-docs" href="{{ path_to_root }}index.html" aria-label="Документация: первая страница книги">Документация</a>
                     </div>
 
                     <div class="right-buttons">
@@ -206,49 +206,43 @@
                     });
                 </script>
 
-                <!-- Stage of the library. The only place with this text: change it here at the next stage. -->
-                <aside class="stage-wrap" aria-label="Стадия проекта"><a class="stage-strip" href="{{ path_to_root }}readiness.html"><span class="dot"></span>Закрытая альфа: проверено на имитациях брокеров, интерфейс может меняться</a></aside>
+                <!-- Revision line: version and stage of the library. The only place with this text: change it here at the next stage. -->
+                <aside class="stage-wrap" aria-label="Стадия проекта"><a class="stage-strip" href="{{ path_to_root }}readiness.html"><span class="rev-ver">ред. 0.1.0-alpha.1</span><span class="rev-stage"><i></i>Закрытая альфа: проверено на имитациях брокеров, интерфейс может меняться</span></a></aside>
 
                 <div id="mdbook-content" class="content">
+                    <div class="doc-grid">
+                    <div class="doc-main">
                     <!-- data-pagefind-body: only the text of a chapter goes to the search index (not the print page). -->
                     <main id="main-content" tabindex="-1"{{#unless is_print}} data-pagefind-body{{/unless}}>
                         {{{ content }}}
                     </main>
 
-                    <nav class="nav-wrapper" aria-label="Переход между главами">
-                        <!-- Mobile navigation buttons -->
+                    {{#unless is_print}}
+                    <!-- Back and forward: the two large cards at the foot of a chapter, they go through the borders of the parts.
+                         The arrow keys of the book (book.js) use the arrows of .nav-wide-wrapper below, which are hidden by the CSS. -->
+                    <nav class="pager" aria-label="Страницы книги">
                         {{#if previous}}
-                            <a rel="prev" href="{{ path_to_root }}{{previous.link}}" class="mobile-nav-chapters previous" title="Предыдущая глава" aria-label="Предыдущая глава" aria-keyshortcuts="Left">
-                                {{#if (eq ../text_direction "rtl")}}
-                                {{fa "solid" "angle-right"}}
-                                {{else}}
-                                {{fa "solid" "angle-left"}}
-                                {{/if}}
-                            </a>
+                        <a class="pv" rel="prev" href="{{ path_to_root }}{{previous.link}}" aria-keyshortcuts="Left"><small class="pager-label">Назад</small><strong class="pager-title">{{previous.title}}</strong></a>
                         {{/if}}
-
                         {{#if next}}
-                            <a rel="next prefetch" href="{{ path_to_root }}{{next.link}}" class="mobile-nav-chapters next" title="Следующая глава" aria-label="Следующая глава" aria-keyshortcuts="Right">
-                                {{#if (eq ../text_direction "rtl")}}
-                                {{fa "solid" "angle-left"}}
-                                {{else}}
-                                {{fa "solid" "angle-right"}}
-                                {{/if}}
-                            </a>
+                        <a class="nx" rel="next prefetch" href="{{ path_to_root }}{{next.link}}" aria-keyshortcuts="Right"><small class="pager-label">Дальше</small><strong class="pager-title">{{next.title}}</strong></a>
+                        {{else}}
+                        <a class="nx" href="{{ path_to_root }}index.html"><small class="pager-label">Конец книги</small><strong class="pager-title">К началу</strong></a>
                         {{/if}}
-
-                        <div style="clear: both"></div>
                     </nav>
+                    <p class="pager-hint">Листать можно клавишами Влево и Вправо.</p>
+                    {{/unless}}
                     <footer class="book-foot">
-                        {{#if next}}
-                        <a class="next-up" href="{{ path_to_root }}{{next.link}}"><span class="next-up-label">Дальше</span><span class="next-up-title">{{next.title}}</span></a>
-                        {{/if}}
                         <div class="book-foot-line">
                             <span>brokapi by <a href="https://runinfra.ru">RunInfra</a></span>
                             <!-- Opens the report form (docs/ui.js), which also shows the button: without the script there is no form. -->
                             <button class="report-error" type="button" hidden>Сообщить об ошибке</button>
                         </div>
                     </footer>
+                    </div>
+                    <!-- "On this page": filled by docs/ui.js from the headings of the chapter, shown on a wide screen. -->
+                    <aside class="page-toc" aria-label="На этой странице" hidden></aside>
+                    </div>
                 </div>
             </div>
 
