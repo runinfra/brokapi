@@ -17,7 +17,7 @@ additional-css = ["theme/brokapi.css"]
 site-url = "/docs/"
 # Схемы Mermaid рисуются в браузере из локальных файлов mermaid.min.js и mermaid-init.js
 # (библиотека ставится командой `mdbook-mermaid install docs`, mermaid-init.js у нас свой, в цветах темы)
-additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-js = ["mermaid.min.js", "mermaid-init.js", "lang-tabs.js"]
 
 [output.html.playground]
 runnable = false
@@ -26,6 +26,12 @@ runnable = false
 
 [preprocessor.mermaid]
 command = "mdbook-mermaid"
+
+# Снимает общий отступ с блоков кода: якорь внутри функции попадает в книгу с отступом, а такой код Python не запустится
+# после копирования. Работает после `links`, который делает {{#include}} (docs/dedent_code.py).
+[preprocessor.dedent-code]
+command = "python3 dedent_code.py"
+after = ["links"]
 
 # Страницы раздела Rust переехали в rust/ (21.10.2026). Старые адреса остаются рабочими: mdBook кладет на их место
 # страницу с переадресацией. Переадресация и для markdown-копий агентов: docs/llms.py читает эту таблицу и пишет
@@ -46,3 +52,4 @@ command = "mdbook-mermaid"
 "/README.html" = "index.html"
 "/brokers/README.html" = "index.html"
 "/api-reference.html" = "api-reference.md"
+"/python/api-reference.html" = "api-reference.md"

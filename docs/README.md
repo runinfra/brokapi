@@ -11,11 +11,11 @@ README.md                    Что это: развилка из четырех
 architecture, streams, orders, reconcile, limits, numbers    Как устроено (общее)
 brokers/                     Брокеры (общее)
 rust/                        Rust: index.md, быстрый старт и инструкции (работает сейчас)
-python/index.md              Python: заглушка
+python/                      Python: index.md, быстрый старт, инструкции, тесты, объяснение (работает сейчас)
 gateway/index.md             Gateway: заглушка (служба и командная строка brokapi)
 mcp/index.md                 MCP: заглушка, стадия "возможно"
 agent-contract, errors, events, coverage    Справочник (общее)
-api.md, api-python.md, api-gateway.md       Справочник API: Rust (rustdoc в api/), Python и gateway - заглушки
+api.md, api-python.md, api-gateway.md       Справочник API: Rust (rustdoc в api/), Python (pdoc в api/python/), gateway - заглушка
 readiness, live, changelog   Состояние
 ```
 
@@ -25,39 +25,39 @@ readiness, live, changelog   Состояние
 - **Страницу переносят - старый адрес должен жить.** В `book.toml` в `[output.html.redirect]` добавляется строка
   `"/старый.html" = "новый/путь.html"`. mdBook кладет на старое место страницу с переадресацией (сохраняет `#якорь`),
   а `docs/llms.py` по этой же таблице пишет старый `страница.md` с адресом нового. Сайт и внешние ссылки тогда не ломаются.
-- **Заглушка** (продукт, которого еще нет) - один компонент `.stub` из `theme/brokapi.css`, образец - `python/index.md`.
+- **Заглушка** (продукт, которого еще нет) - один компонент `.stub` из `theme/brokapi.css`, образец - `gateway/index.md`.
   Заголовок продукта, метка стадии (`stub-stage`: "К бете" или "Возможно"), строка о том, что этого еще нет, три блока:
   "Что это будет" (2-4 строки), "Что работает уже сейчас" (ссылки на общие страницы, верные и для этого продукта) и
   "Как узнать, что появилось" со ссылкой на "Изменения" (`stub-foot`). Между HTML-тегами оставляйте пустые строки:
   тогда внутри работает обычный markdown. Не обещайте того, чего нет в решениях. Когда продукт выходит, заглушка
   заменяется настоящими страницами, а в `llms.py` пропадает пометка "ЕЩЕ НЕТ" в `DESCRIPTIONS` и в `SECTION_NOTES`.
-- **Код на нескольких языках (вкладки Rust / Python / gRPC).** Вкладок пока нет, потому что Python еще нет. Код в общих
-  страницах пока на Rust, и править его не нужно: блок ` ```rust ` уже отдается как `pre > code.language-rust`. Когда
-  появится Python, парные блоки оборачиваются в `<div class="lang-tabs">` (пустые строки вокруг и внутри):
+- **Код на нескольких языках (вкладки Rust / Python / gRPC).** Парные блоки оборачиваются в `<div class="lang-tabs">` (пустые
+  строки вокруг и внутри). Код для каждого языка берется из файла, который запускает тест: Rust - из `examples/`, Python - из
+  `crates/python/examples/` (`{{#include ...:якорь}}`). Не пишите код вкладки руками прямо в странице, иначе он не будет тестом.
 
   ````text
   <div class="lang-tabs">
 
-  ```rust
-  let ack = ud.place(request).await?;
+  ```rust,ignore
+  {{#include ../../examples/contract.rs:unknown}}
   ```
 
   ```python
-  ack = await ud.place(request)
+  {{#include ../../crates/python/examples/rules.py:unknown}}
   ```
 
   </div>
   ````
 
-  Без скрипта блоки стоят друг под другом с подписью языка (`theme/brokapi.css`, блок `.lang-tabs`). Вкладки
-  добавляются одним скриптом в `theme/`, подключенным в `book.toml` через `additional-js`: он находит `.lang-tabs`,
-  по классу `language-*` собирает кнопки и прячет все блоки, кроме выбранного. Выбор языка запоминается и общий для
-  всей книги. Разметку страниц после этого менять не придется.
+  Скрипт `docs/lang-tabs.js` (подключен в `book.toml`, `additional-js`) находит `.lang-tabs`, по классу `language-*` собирает кнопки и
+  прячет все блоки, кроме выбранного. Выбор языка запоминается и общий для всей книги. Без скрипта блоки стоят друг под другом с
+  подписью языка (`theme/brokapi.css`). Блок кода с `{{#include ...:якорь}}` внутри функции попадает в книгу с отступом: препроцессор
+  `docs/dedent_code.py` (после `links`) снимает общий отступ, иначе пример на Python нельзя копировать.
 
 ```bash
 mdbook build docs      # только книга, результат в docs/book (в git не попадает)
 mdbook serve docs      # локально на http://localhost:3000 (справочника API здесь нет)
-docs/build.sh          # книга + справочник API (rustdoc) в docs/book/api/
+docs/build.sh          # книга + справочник Rust (rustdoc) в docs/book/api/ + справочник Python (pdoc) в docs/book/api/python/
 tools/check            # проверка перед пушем: fmt, clippy, тесты, примеры, rustdoc, книга
 ```
 

@@ -2,7 +2,8 @@
 # Builds the whole documentation site into docs/book. The site serves it at https://brokapi.ru/docs/ (the folder is the
 # root of /docs/, the reference is /docs/api/); all links inside are relative, book.toml has site-url = "/docs/".
 #   - the book (mdBook) at the root,
-#   - the API reference (rustdoc, cargo doc --no-deps) in docs/book/api/<crate>/index.html,
+#   - the API reference of Rust (rustdoc, cargo doc --no-deps) in docs/book/api/<crate>/index.html,
+#   - the API reference of Python (pdoc, from the docstrings) in docs/book/api/python/, and python/api-reference.md,
 #   - for AI agents: llms.txt (index), llms-full.txt (the whole book as one markdown file) and the markdown of every
 #     page next to its HTML (page.html -> page.md), see docs/llms.py, and api-reference.md, the reference in text
 #     (docs/apidigest.py).
@@ -12,7 +13,8 @@
 #
 #   docs/build.sh
 #
-# Needs mdbook (and mdbook-mermaid), python3 (standard library only, for docs/llms.py) and a Rust toolchain.
+# Needs mdbook (and mdbook-mermaid), python3 (docs/llms.py uses the standard library only, docs/pydoc.py needs pdoc, which the
+# script installs into a virtualenv of its own on the first run: network on that run) and a Rust toolchain.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
@@ -47,7 +49,20 @@ python3 docs/rustdoc_nofonts.py "$NEW/api"
 mkdir -p "$NEW/api/fonts"
 cp docs/theme/fonts/*.woff2 docs/theme/fonts/*-LICENSE.txt "$NEW/api/fonts/"
 
-echo "==> API reference as one markdown file for agents"
+echo "==> Python API reference (pdoc) in api/python/"
+# pdoc reads the docstrings of the Python layer: the native extension is not needed (docs/pydoc.py puts a stand-in in its
+# place), nothing is compiled. pdoc lives in a small virtualenv of its own, made on the first run and kept between builds.
+PYDOC_VENV="${BROKAPI_PYDOC_VENV:-${XDG_CACHE_HOME:-$HOME/.cache}/brokapi-pydoc-venv}"
+if ! "$PYDOC_VENV/bin/python" -c 'import pdoc' 2>/dev/null; then
+    python3 -m venv "$PYDOC_VENV"
+    "$PYDOC_VENV/bin/pip" install --quiet 'pdoc==16.0.0'
+fi
+"$PYDOC_VENV/bin/python" docs/pydoc.py "$NEW/api/python" "$NEW/python/api-reference.md"
+# The fonts of the reference (docs/pdoc/custom.css points at /docs/api/python/fonts/).
+mkdir -p "$NEW/api/python/fonts"
+cp docs/theme/fonts/*.woff2 docs/theme/fonts/*-LICENSE.txt "$NEW/api/python/fonts/"
+
+echo "==> API reference (Rust) as one markdown file for agents"
 python3 docs/apidigest.py "$NEW"
 
 echo "==> replacing docs/book"

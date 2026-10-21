@@ -5,6 +5,8 @@
 репозитории проверяет, что тексты ошибок из `brokapi::core::Error` лежат на этой странице. Объяснение, откуда эти
 исходы берутся: [Круг команд](orders.md), [Круг жизни](reconcile.md), [Круг событий](streams.md).
 
+**Python.** У каждой ошибки есть одноименное исключение в `brokapi.errors` (и на верхнем уровне пакета: `brokapi.Unknown`, `brokapi.Rejected` и так далее), текст `str(error)` равен тексту в первой колонке. `Error::class()` - это `error.error_class` (`ErrorClass.RETRYABLE`, `FATAL`, `UNKNOWN`). Поля вариантов - атрибуты: `Rejected.code`, `Rejected.message`, `RateLimited.retry_after` (`timedelta`), `Unsupported.capability`. Подробнее: [Как Python связан с ядром](python/design.md#ошибки).
+
 Две вещи помогают разобраться быстрее. Метод `Error::class()` (тип `brokapi::core::ErrorClass`) отвечает на вопрос «можно ли повторить»: `Retryable`
 (сеть, лимит), `Fatal` (тот же вызов упадет снова), `Unknown` (исход команды неизвестен). И правило для всех
 команд: **команда не повторяется автоматически**, а повторять вручную можно только после того, как вы узнали, что

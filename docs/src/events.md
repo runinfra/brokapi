@@ -4,6 +4,8 @@
 события и что происходит, когда бот отстает: [Круг событий](streams.md). Каждое поле, вариант и метод до последней
 строки - в [Справочнике API](api.md) (крейт `brokapi_core`).
 
+**Python.** Конверт - `brokapi.Envelope`, события - классы `OrderBookSnapshot`, `OrderBookIncrement`, `MarketTrade`, `Quote`, `Candle`, `OrderSnapshot` (событие `Order`), `Execution`, `Portfolio`, `PositionsUpdate`, `BalancesUpdate`, `Resync`, `Overflow`. Вид события, который пакет еще не знает, приходит как `UnknownEvent`, а цикл не падает. Возможности - `await client.caps()`. Справочник: [Справочник API: Python](api-python.md).
+
 ## Конверт события
 
 Каждое событие приходит в конверте `Envelope`:

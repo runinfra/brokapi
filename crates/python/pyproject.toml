@@ -1,0 +1,47 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "brokapi"
+description = "One interface to the APIs of Russian brokers (BCS, T-Bank, Finam) for Python: a thin layer over the Rust core of brokapi."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT OR Apache-2.0" }
+keywords = ["trading", "broker", "algotrading", "finance", "api", "asyncio"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+    "Typing :: Typed",
+]
+dynamic = ["version"]
+
+[project.urls]
+Documentation = "https://brokapi.ru/docs/python/"
+Homepage = "https://brokapi.ru/"
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=1.0"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "brokapi._native"
+features = ["extension-module"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-p no:cacheprovider"
