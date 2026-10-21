@@ -30,14 +30,14 @@ TITLE = "brokapi"
 SUMMARY_LINE = (
     "brokapi - единый интерфейс к торговым API: один и тот же код бота работает с любым брокером. Начинаем с API брокеров "
     "российского рынка (БКС, Т-Банк, Финам), дальше другие брокеры и биржевые протоколы. Писать можно на Rust (ядро) или на "
-    "Python (пакет brokapi, тонкая обертка над ядром): рыночные данные, заявки, сверка со счетом, лимиты запросов. gateway и "
-    "MCP еще не вышли, их разделы - заглушки. Стадия: закрытая альфа, проверено на имитациях, вживую пока нет. Документация: %s/" % BASE_URL
+    "Python (пакет brokapi, тонкая обертка над ядром): рыночные данные, заявки, сверка со счетом, лимиты запросов. Gateway и "
+    "CLI еще не вышли, их разделы - заглушки. Стадия: закрытая альфа, проверено на имитациях, вживую пока нет. Документация: %s/" % BASE_URL
 )
 INTRO = """Как пользоваться этим набором. Книга написана по задачам и состоит из общей части (как устроено, брокеры, \
-ошибки, события, контракт для агентов) и разделов продуктов: Rust, Python, gateway, MCP. Писать код можно на Rust или на \
+ошибки, события, контракт для агентов) и разделов продуктов: Rust, Python, Gateway, CLI. Писать код можно на Rust или на \
 Python, оба работают сейчас (альфа). Если пользователь пишет на Python, берите отдельный индекс для Python: \
 %s/python/llms.txt, в нем только то, что нужно для Python, и справочник пакета одним файлом. Страницы с пометкой "еще нет" \
-(gateway, MCP) - заглушки: кода и пакетов там нет, не пытайтесь обращаться к службе gateway. Если нужно написать код: \
+(Gateway, CLI) - заглушки: кода и пакетов там нет, не пытайтесь обращаться к службе Gateway. Если нужно написать код: \
 прочитайте "Контракт для агентов" (все обязательные правила на одной странице, они одни для любого языка), затем инструкцию \
 из раздела нужного языка, ближайшую к задаче (торговый бот, несколько брокеров и счетов, история или исследовательский \
 движок), и копируйте код оттуда: каждый пример - рабочий тест против имитаций. Общие страницы (круги механики, заявки, \
@@ -50,12 +50,13 @@ https://brokapi.ru/docs/api/python/.""" % BASE_URL
 # part titles of SUMMARY.md that are not ready, with the note added to the section title in llms.txt
 SECTION_NOTES = {
     "Gateway": "еще нет, заглушка",
-    "MCP": "еще нет, заглушка, возможно",
+    "CLI": "еще нет, заглушка",
 }
 
 # path of the page in src/ -> one line for llms.txt
 DESCRIPTIONS = {
-    "README.md": "Что такое brokapi, выбор пути (Rust, Python, gateway, MCP) и статус каждого, три главных правила, честный статус",
+    "README.md": "Что такое brokapi, выбор пути (Rust, Python, Gateway, CLI) и статус каждого, три главных правила, честный статус",
+    "install.md": "Установка: cargo add brokapi и pip install brokapi (пакеты появятся в открытой бете), а сейчас установка из репозитория; проверка и частые ошибки",
     "architecture.md": "Карта: коннекторы MD и UD, счетчик лимитов, канал событий и три круга механики со схемами",
     "streams.md": "Круг событий: подписки, режимы буфера (Conflate, DropNewest, Lossless), Overflow, Resync, обрывы",
     "orders.md": "Круг команд: cid, порядок проверок place, исходы команды, почему нет автоповтора, машина состояний заявки",
@@ -84,18 +85,18 @@ DESCRIPTIONS = {
     "python/howto-history.md": "Python: выгрузка длинной истории свечей в файлы по лимитам брокера с продолжением после сбоя (candle_pages)",
     "python/testing.md": "Python: тесты против имитаций brokapi.testing (mock_bcs, mock_tbank, mock_finam), fill, ожидание событий без sleep",
     "python/design.md": "Объяснение: как пакет Python связан с ядром, мост tokio и asyncio, Decimal, ошибки, отличия от Rust",
-    "gateway/index.md": "ЕЩЕ НЕТ, заглушка: brokapi gateway, служба с gRPC для любого языка и командная строка brokapi, стадия к бете",
-    "mcp/index.md": "ЕЩЕ НЕТ, заглушка, возможно: brokapi MCP для ИИ-ассистентов, сначала только чтение, не утверждено",
+    "gateway/index.md": "ЕЩЕ НЕТ, заглушка: brokapi Gateway, служба с gRPC для любого языка и командная строка brokapi, стадия к бете",
+    "cli/index.md": "ЕЩЕ НЕТ, заглушка: brokapi CLI, командная строка для людей и ИИ-агентов (status, book, portfolio, вывод --json), через Gateway или напрямую",
     "agent-contract.md": "Контракт для агентов: обязательные правила с причинами, последствиями и кодом, частые ошибки",
     "errors.md": "Ошибки и состояния: что значат, почему бывают, что делать (Unknown, Rejected, RateLimited, Degraded...)",
     "events.md": "Конверт Envelope, события Event, возможности коннекторов caps()",
     "coverage.md": "Какие методы API каждого брокера закрыты общим интерфейсом, а какие только через raw()",
     "api.md": "Справочник API Rust (rustdoc): список крейтов и ссылки на страницы справочника",
     "api-python.md": "Справочник API Python (pdoc, из docstring): модули brokapi, models, errors, numbers, testing и ссылки на страницы справочника",
-    "api-gateway.md": "ЕЩЕ НЕТ, заглушка: справочник gRPC-интерфейса gateway (из .proto), появится вместе со службой",
+    "api-gateway.md": "ЕЩЕ НЕТ, заглушка: справочник gRPC-интерфейса Gateway (из .proto), появится вместе со службой",
     "readiness.md": "Готовность: что проверено в коде, на имитации и вживую",
     "live.md": "Живые прогоны: вопросы, на которые ответит только настоящий счет",
-    "changelog.md": "Журнал изменений для пользователей, в том числе когда появятся Python, gateway и MCP",
+    "changelog.md": "Журнал изменений для пользователей, в том числе когда появятся Gateway и CLI",
 }
 
 # the reference (rustdoc) pages for the "Справочник API" section of llms.txt
@@ -195,7 +196,7 @@ def read_redirects(docs):
 
 # pages of the common part that hold for Python as they do for Rust (the code on them is in tabs or does not depend on the language)
 PYTHON_COMMON = [
-    "agent-contract.md", "architecture.md", "streams.md", "orders.md", "reconcile.md", "limits.md", "numbers.md",
+    "install.md", "agent-contract.md", "architecture.md", "streams.md", "orders.md", "reconcile.md", "limits.md", "numbers.md",
     "errors.md", "events.md", "brokers/README.md", "brokers/bcs.md", "brokers/tbank.md", "brokers/finam.md",
     "coverage.md", "readiness.md", "live.md", "changelog.md",
 ]
@@ -210,7 +211,7 @@ def python_index(sections, book):
         "> Пакет brokapi для Python (pip install brokapi, Python 3.10+) - тонкая обертка над ядром brokapi на Rust: БКС, Т-Банк, "
         "Финам. События через async for, деньги и цены через decimal.Decimal, ошибки с теми же именами и текстом, что у ядра "
         "(Unknown, Rejected, RateLimited, NotReconciled, Degraded). Стадия: закрытая альфа, проверено на имитациях, вживую нет. "
-        "На PyPI пакета пока нет: ставится из клона репозитория (pip install ./crates/python, нужен Rust). Документация: %s/" % BASE_URL,
+        "На PyPI пакета пока нет (появится в открытой бете): сейчас ставится из репозитория (pip install \"git+https://github.com/runinfra/brokapi#subdirectory=crates/python\" или из клона: pip install ./crates/python, нужен Rust). Документация: %s/" % BASE_URL,
         "",
         "Как писать код. 1) Прочитайте \"Контракт для агентов\": обязательные правила одни для любого языка (торговля только после "
         "reconcile, cid придумывает бот и пишет в журнал до place, Unknown не повторять, один счетчик лимитов на область брокера: "

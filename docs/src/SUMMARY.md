@@ -2,6 +2,10 @@
 
 [Что это](README.md)
 
+# Начать
+
+- [Установка](install.md)
+
 # Как устроено
 
 - [Карта: сущности и три круга](architecture.md)
@@ -21,34 +25,34 @@
 # Rust
 
 - [brokapi на Rust](rust/index.md)
-  - [Быстрый старт](rust/quickstart.md)
-  - [Торговый бот на событиях](rust/howto-trading-bot.md)
-  - [Несколько брокеров и счетов: инфраструктура](rust/howto-infrastructure.md)
+  - [Быстрый старт на Rust](rust/quickstart.md)
+  - [Торговый бот на событиях, Rust](rust/howto-trading-bot.md)
+  - [Несколько брокеров и счетов: инфраструктура, Rust](rust/howto-infrastructure.md)
   - [Исследовательский движок](rust/howto-research.md)
   - [Запуск, рестарт и остановка бота](rust/lifecycle.md)
   - [Если что-то пошло не так](rust/recovery.md)
   - [Несколько счетов и брокеров](rust/accounts.md)
   - [Стоп-заявки](rust/stop-orders.md)
   - [Любой метод брокера: raw](rust/raw.md)
-  - [Тесты против имитаций](rust/mocks.md)
+  - [Тесты против имитаций, Rust](rust/mocks.md)
 
 # Python
 
 - [brokapi для Python](python/index.md)
-  - [Быстрый старт](python/quickstart.md)
-  - [Торговый бот на событиях](python/howto-trading-bot.md)
-  - [Несколько брокеров и счетов](python/howto-infrastructure.md)
+  - [Быстрый старт на Python](python/quickstart.md)
+  - [Торговый бот на событиях, Python](python/howto-trading-bot.md)
+  - [Несколько брокеров и счетов, Python](python/howto-infrastructure.md)
   - [История свечей](python/howto-history.md)
-  - [Тесты против имитаций](python/testing.md)
+  - [Тесты против имитаций, Python](python/testing.md)
   - [Как Python связан с ядром](python/design.md)
 
 # Gateway
 
-- [brokapi gateway](gateway/index.md)
+- [brokapi Gateway](gateway/index.md)
 
-# MCP
+# CLI
 
-- [brokapi MCP](mcp/index.md)
+- [brokapi CLI](cli/index.md)
 
 # Справочник
 
@@ -57,8 +61,8 @@
 - [События и возможности](events.md)
 - [Покрытие API](coverage.md)
 - [Справочник API]()
-  - [Rust](api.md)
-  - [Python](api-python.md)
+  - [Справочник Rust](api.md)
+  - [Справочник Python](api-python.md)
   - [Gateway (gRPC)](api-gateway.md)
 
 # Состояние

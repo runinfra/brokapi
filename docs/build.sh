@@ -2,6 +2,7 @@
 # Builds the whole documentation site into docs/book. The site serves it at https://brokapi.ru/docs/ (the folder is the
 # root of /docs/, the reference is /docs/api/); all links inside are relative, book.toml has site-url = "/docs/".
 #   - the book (mdBook) at the root,
+#   - the search index of the book (Pagefind, Russian) in docs/book/pagefind/, the window is docs/search.js,
 #   - the API reference of Rust (rustdoc, cargo doc --no-deps) in docs/book/api/<crate>/index.html,
 #   - the API reference of Python (pdoc, from the docstrings) in docs/book/api/python/, and python/api-reference.md,
 #   - for AI agents: llms.txt (index), llms-full.txt (the whole book as one markdown file) and the markdown of every
@@ -13,7 +14,7 @@
 #
 #   docs/build.sh
 #
-# Needs mdbook (and mdbook-mermaid), python3 (docs/llms.py uses the standard library only, docs/pydoc.py needs pdoc, which the
+# Needs mdbook (and mdbook-mermaid), pagefind (or npx, which fetches it), python3 (docs/llms.py uses the standard library only, docs/pydoc.py needs pdoc, which the
 # script installs into a virtualenv of its own on the first run: network on that run) and a Rust toolchain.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -32,12 +33,33 @@ mdbook build docs --dest-dir "$(pwd)/$NEW"
 echo "==> files for AI agents (llms.txt, llms-full.txt, page.md)"
 python3 docs/llms.py docs "$NEW"
 
+echo "==> search index (Pagefind, Russian)"
+# The built-in search of mdBook is switched off (book.toml): its index cut every non-ASCII letter. Pagefind indexes the
+# text of <main data-pagefind-body> of every chapter (theme/index.hbs), the diagrams are left out. It runs before the API
+# reference is copied in: that reference has a search of its own. BROKAPI_NO_SEARCH=1 builds without the index (the window
+# of docs/search.js then says that search is unavailable).
+if [ "${BROKAPI_NO_SEARCH:-0}" != "1" ]; then
+    if command -v pagefind >/dev/null 2>&1; then
+        PAGEFIND=(pagefind)
+    elif command -v npx >/dev/null 2>&1; then
+        PAGEFIND=(npx --yes pagefind@1.5.2)
+    else
+        echo "error: pagefind is not installed (https://pagefind.app, version 1.5 or newer) and npx is not available" >&2
+        echo "       install it, or build without search: BROKAPI_NO_SEARCH=1 docs/build.sh" >&2
+        exit 1
+    fi
+    "${PAGEFIND[@]}" --site "$NEW" --force-language ru --exclude-selectors "pre.mermaid" --quiet
+    # The window of docs/search.js is our own: the ready-made interfaces of Pagefind are not used, do not ship them.
+    rm -f "$NEW"/pagefind/pagefind-*ui* "$NEW"/pagefind/pagefind-highlight.js
+fi
+
 echo "==> API reference"
 # Start from an empty doc folder: pages of crates built earlier (or excluded now) must not leak into the site.
 rm -rf "$TARGET/doc"
 # brokapi-mocks is for tests and examples: not on the site. The root crate brokapi needs its broker features.
-# The reference opens in the light theme in the brokapi colors (docs/rustdoc-brokapi.css).
-RUSTDOCFLAGS="${RUSTDOCFLAGS:--D warnings --default-theme=light --extend-css $(pwd)/docs/rustdoc-brokapi.css}" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam \
+# The reference opens in the light theme in the brokapi colors (docs/rustdoc-brokapi.css), takes the theme of the book from
+# localStorage (docs/reference/head.html) and has the thin bar of the book on top (docs/reference/bar.html).
+RUSTDOCFLAGS="${RUSTDOCFLAGS:--D warnings --default-theme=light --extend-css $(pwd)/docs/rustdoc-brokapi.css --html-in-header $(pwd)/docs/reference/head.html --html-before-content $(pwd)/docs/reference/bar.html}" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam \
     --exclude brokapi-mocks
 rm -rf "$NEW/api"
 mkdir -p "$NEW/api"

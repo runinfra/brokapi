@@ -9,7 +9,7 @@ of every public class, function and method, no styling.
 The reference is made from the Python layer only, so the native extension is not needed: a stand-in for
 `brokapi._native` is put in its place before pdoc imports the package (the layer touches it only inside functions).
 Needs pdoc (`pip install pdoc`), nothing else, and makes no request to the network. The pages use the fonts and the
-colors of the book (docs/pdoc/custom.css), the fonts are copied next to them by docs/build.sh.
+colors of the book (docs/reference/custom.css, the bar: docs/reference/bar.html), the fonts are copied next to them by docs/build.sh.
 """
 
 import re
@@ -117,7 +117,7 @@ def main() -> int:
 
     pdoc.render.configure(
         docformat="restructuredtext",
-        template_directory=HERE / "pdoc",
+        template_directory=HERE / "reference",
         footer_text="brokapi by RunInfra",
         search=True,
         show_source=False,

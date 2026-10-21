@@ -27,7 +27,7 @@
 
   --sidebar-bg: #efede6;
   --sidebar-fg: #3a3935;
-  --sidebar-non-existant: #a19e94;
+  --sidebar-non-existant: #6b685f;
   --sidebar-active: #121212;
   --sidebar-spacer: #dcd9d0;
   --sidebar-header-border-color: #ff5b1f;
@@ -78,7 +78,7 @@
 
   --sidebar-bg: #1a1a17;
   --sidebar-fg: #b6b3a9;
-  --sidebar-non-existant: #6e6b63;
+  --sidebar-non-existant: #928f86;
   --sidebar-active: #f5f4ef;
   --sidebar-spacer: #2f2e2a;
   --sidebar-header-border-color: #ff5b1f;
@@ -119,6 +119,7 @@
 html, body { font-family: var(--bk-sans); }
 body { background: var(--bg); color: var(--fg); -webkit-font-smoothing: antialiased; }
 .content { font-size: 1.6rem; line-height: 1.65; }
+.content p, .content li { line-height: 1.6; }
 /* No ligatures anywhere: "->" must show as typed. */
 html, body, code, pre, .hljs { font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'calt' 0; }
 h1, h2, h3, h4, h5, h6 { font-family: var(--bk-sans); color: var(--bk-heading); letter-spacing: -0.015em; }
@@ -245,12 +246,6 @@ hr { border: 0; border-top: 1px solid var(--bk-line); }
 .stage-strip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bk-accent); flex: 0 0 auto; }
 @media (max-width: 560px) { .stage-strip { padding: 0.5rem 1.2rem; justify-content: flex-start; font-size: 1.15rem; } }
 
-/* Footer line of every page */
-.book-foot { margin-top: 5rem; padding: 1.6rem 0 3rem; border-top: 1px solid var(--bk-line); font-family: var(--mono-font);
-  font-size: 1.25rem; color: var(--bk-muted); }
-.book-foot a, .book-foot a:link, .book-foot a:visited { color: var(--bk-heading); font-weight: 600; text-decoration: none; }
-.book-foot a:hover { color: var(--bk-accent-text); }
-
 /* Under a diagram that is wider than the page (set by mermaid-init.js). */
 .mermaid-scroll-hint { margin: -0.6rem 0 1.2rem; font-size: 1.2rem; color: var(--bk-muted); text-align: right; }
 
@@ -267,7 +262,7 @@ hr { border: 0; border-top: 1px solid var(--bk-line); }
 .chapter a.current-header { color: var(--sidebar-active); font-weight: 600; box-shadow: inset 2px 0 0 var(--bk-accent);
   margin-left: -16px; padding-left: 14px; }
 
-/* Fork on the first page: four cards, one per path (Rust, Python, gateway, MCP). In the markdown it is a plain loose
+/* Fork on the first page: four cards, one per path (Rust, Python, Gateway, CLI). In the markdown it is a plain loose
    list inside <div class="paths">: the first link of an item covers the whole card, the code span is the stage tag.
    Without this CSS the page stays a readable list (agents read the same markdown). */
 .paths ul { list-style: none; padding: 0; margin: 1.6rem 0; display: grid; grid-template-columns: 1fr; gap: 1.2rem; }
@@ -338,3 +333,173 @@ hr { border: 0; border-top: 1px solid var(--bk-line); }
 .lang-tabs pre:has(> code.language-python)::before { content: "Python"; }
 .lang-tabs pre:has(> code.language-proto)::before, .lang-tabs pre:has(> code.language-protobuf)::before { content: "gRPC"; }
 .lang-tabs pre:has(> code.language-bash)::before, .lang-tabs pre:has(> code.language-sh)::before { content: "Shell"; }
+
+
+/* ---- Added after the UX audit of 21.10.2026 ------------------------------------------------------------------------ */
+
+/* Skip link: the first stop of the Tab key, visible only when focused. */
+.skip-link {
+  position: absolute; left: 1.2rem; top: -10rem; z-index: 2000; padding: 0.9rem 1.4rem; border-radius: 8px;
+  background: var(--bk-heading); color: var(--bg) !important; font-family: var(--mono-font); font-size: 1.4rem;
+  text-decoration: none !important;
+}
+.skip-link:focus { top: 1rem; }
+main:focus { outline: none; }
+/* A visible focus everywhere, in the accent. */
+:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
+
+/* Language switch in the menu bar: one choice for the tabs of the whole book (docs/lang-tabs.js). */
+.lang-switch { display: inline-flex; border: 1px solid var(--bk-line); border-radius: 999px; overflow: hidden; margin-inline-end: 0.8rem; }
+.lang-switch button {
+  appearance: none; border: 0; background: transparent; color: var(--bk-muted); cursor: pointer; min-height: 30px;
+  padding: 0 1rem; font-family: var(--mono-font); font-size: 1.2rem; line-height: 1;
+}
+.lang-switch button + button { border-inline-start: 1px solid var(--bk-line); }
+.lang-switch button:hover { color: var(--bk-heading); }
+.lang-switch button.is-on { background: var(--bk-heading); color: var(--bg); }
+.lang-switch button:focus-visible { outline-offset: -2px; }
+
+/* Search: the button in the menu bar and the window (docs/search.js). */
+.search-toggle { display: inline-flex; align-items: center; gap: 0.7rem; width: auto; }
+.search-toggle .search-toggle-text { display: none; font-family: var(--mono-font); font-size: 1.25rem; }
+@media (min-width: 900px) { .search-toggle .search-toggle-text { display: inline; } }
+.search-modal { position: fixed; inset: 0; z-index: 1500; display: flex; justify-content: center; align-items: flex-start; padding: 8vh 1.2rem 1.2rem; }
+.search-modal[hidden] { display: none; }
+.search-backdrop { position: absolute; inset: 0; background: var(--overlay-bg); }
+.search-box {
+  position: relative; width: 100%; max-width: 72rem; max-height: 84vh; display: flex; flex-direction: column;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--bk-line); border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28); overflow: hidden; font-size: 1.5rem;
+}
+.search-form { display: flex; align-items: center; gap: 1rem; padding: 1.2rem 1.4rem; border-bottom: 1px solid var(--bk-line); }
+.search-input {
+  flex: 1 1 auto; min-width: 0; font: inherit; font-size: 1.7rem; color: var(--fg); background: var(--bk-box);
+  border: 1px solid var(--searchbar-border-color); border-radius: 10px; padding: 0.9rem 1.2rem;
+}
+.search-input:focus { outline: none; border-color: var(--bk-accent); box-shadow: 0 0 0 3px var(--searchbar-shadow-color); }
+.search-close {
+  appearance: none; background: transparent; color: var(--bk-muted); border: 1px solid var(--bk-line); border-radius: 8px;
+  padding: 0.6rem 1rem; font-family: var(--mono-font); font-size: 1.2rem; cursor: pointer; min-height: 36px;
+}
+.search-close:hover { color: var(--bk-heading); border-color: var(--bk-heading); }
+.search-status { margin: 0; padding: 0.8rem 1.6rem 0; min-height: 2.6rem; font-size: 1.3rem; color: var(--bk-muted); }
+.search-results { list-style: none; margin: 0; padding: 0.6rem 0.8rem; overflow-y: auto; flex: 1 1 auto; }
+.search-results li { margin: 0; padding: 0; }
+.search-hit {
+  display: block; padding: 1rem 1.2rem; border-radius: 10px; color: var(--fg) !important; text-decoration: none !important;
+}
+.search-hit:hover, .search-hit:focus-visible { background: var(--bk-hover); outline-offset: -2px; }
+.search-hit-title { display: block; font-weight: 650; color: var(--bk-heading); }
+.search-hit-section { display: block; font-family: var(--mono-font); font-size: 1.2rem; color: var(--bk-accent-text); margin-top: 0.1rem; }
+.search-hit-text { display: block; margin-top: 0.3rem; color: var(--bk-muted); line-height: 1.5; font-size: 1.35rem; }
+.search-hit-more, .search-hit-more:link, .search-hit-more:visited { text-decoration: none !important; }
+.search-hit-more:hover { color: var(--bk-accent-text) !important; }
+.search-hit-more { display: block; margin: -0.3rem 0 0.4rem 1.2rem; padding: 0 1.2rem; font-size: 1.2rem; color: var(--bk-muted) !important; }
+.search-results mark { background: var(--search-mark-bg); color: inherit; border-radius: 3px; padding: 0 0.15em; margin: 0 0.12em; }
+.search-hint { margin: 0; padding: 0.7rem 1.6rem; border-top: 1px solid var(--bk-line); font-family: var(--mono-font); font-size: 1.15rem; color: var(--bk-muted); }
+html.search-open .content { pointer-events: none; }
+@media (max-width: 560px) {
+  .search-modal { padding: 0.8rem; align-items: stretch; }
+  .search-box { max-height: none; border-radius: 12px; }
+  .search-hint { display: none; }
+}
+
+/* Menu bar on a narrow screen: the language switch takes the place of the link to the site (the mark leads there). */
+@media (max-width: 700px) {
+  .right-buttons a.site-link { display: none; }
+  .lang-switch { margin-inline-end: 0.2rem; }
+}
+@media (max-width: 560px) {
+  .brand-docs { display: none; }
+  .lang-switch button { padding: 0 0.7rem; min-height: 28px; font-size: 1.15rem; }
+}
+
+/* Footer of a page: in the column of the text, with the link to the next chapter. */
+.book-foot { max-width: var(--content-max-width); margin: 5rem auto 0; padding: 0 0 3rem; font-family: var(--mono-font);
+  font-size: 1.25rem; color: var(--bk-muted); }
+.book-foot a, .book-foot a:link, .book-foot a:visited { color: var(--bk-heading); text-decoration: none; }
+.book-foot a:hover { color: var(--bk-accent-text); }
+.book-foot .next-up {
+  display: block; margin-bottom: 2.4rem; padding: 1.4rem 1.8rem; border: 1px solid var(--bk-line); border-radius: 14px;
+  background: var(--bk-box); font-family: var(--bk-sans);
+}
+.book-foot .next-up:hover { border-color: var(--bk-heading); }
+.next-up-label { display: block; font-family: var(--mono-font); font-size: 1.15rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--bk-muted); }
+.next-up-title { display: block; margin-top: 0.3rem; font-size: 1.9rem; font-weight: 650; }
+.book-foot-line { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.8rem 2rem; padding-top: 1.6rem; border-top: 1px solid var(--bk-line); }
+.book-foot-line > span a { font-weight: 600; }
+.book-foot .report-error { color: var(--bk-muted); text-decoration: underline; text-decoration-color: var(--bk-line); text-underline-offset: 0.25em; }
+.book-foot .report-error:hover { color: var(--bk-accent-text); }
+
+/* Code */
+/* The copy button is always reachable: by keyboard (it is not hidden from focus), on a touch screen it is shown all the time. */
+pre > .buttons { visibility: visible; opacity: 0; }
+pre:hover > .buttons, pre:focus-within > .buttons, pre > .buttons:focus-within { opacity: 1; }
+@media (hover: none), (pointer: coarse) { pre > .buttons { opacity: 1; } }
+pre > .buttons button.clip-button { min-width: 44px; min-height: 34px; }
+.tooltiptext { font-family: var(--bk-sans); font-size: 1.2rem; white-space: nowrap; }
+pre[tabindex]:focus-visible { outline-offset: 2px; }
+/* A long block: limited height, scrolls inside, the first line stays in view. */
+details.code-fold { margin: 1.6rem 0; }
+details.code-fold > summary {
+  cursor: pointer; padding: 0.7rem 1.2rem; font-family: var(--mono-font); font-size: 1.2rem; color: var(--bk-muted);
+  background: var(--bk-soft); border-radius: 8px 8px 0 0; list-style-position: inside;
+}
+details.code-fold:not([open]) > summary { border-radius: 8px; }
+details.code-fold > summary:hover { color: var(--bk-heading); }
+details.code-fold > pre { margin: 0; border-radius: 0 0 14px 14px; max-height: 70vh; overflow: auto; }
+.lang-tabs details.code-fold { margin: 0.4rem 0 1rem; }
+.lang-tabs details.code-fold:has(> pre[hidden]) { display: none; }
+/* Which language a lone block is written in (on the pages common to Rust and Python). */
+pre.lang-solo::before {
+  content: attr(data-lang-label); display: block; padding: 0.9rem 1.6rem 0; font-family: var(--mono-font); font-size: 1.1rem;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--bk-code-muted);
+}
+/* Tabs "Rust | Python" with the ARIA roles: focus on the tab, the panel can be focused too. */
+.lang-tabs-bar button:focus-visible { outline-offset: -2px; }
+.lang-tabs pre[role="tabpanel"]:focus-visible { outline: 2px solid var(--bk-accent); }
+
+/* Tables. A wide table that does not fit scrolls inside its box (docs/ui.js marks it .is-scrollable): the first column
+   stays in place and a hint under the table says so. On a phone a table of three columns or more becomes cards:
+   one row, one card, the name of the column in front of every cell (data-label is put by docs/ui.js). */
+.content table th { white-space: normal; }
+.table-wrapper.is-scrollable { position: relative; }
+.table-wrapper.is-scrollable th:first-child, .table-wrapper.is-scrollable td:first-child {
+  position: sticky; left: 0; z-index: 1; background: var(--bg); box-shadow: 1px 0 0 var(--bk-line);
+}
+.table-wrapper.is-scrollable th:first-child { background: var(--table-header-bg); z-index: 2; }
+.table-wrapper.is-scrollable tbody tr:nth-child(2n) td:first-child { background: var(--table-alternate-bg); }
+.table-wrapper.is-scrollable + .table-hint { display: block; }
+.table-hint { display: none; margin: -1rem 0 1.6rem; font-size: 1.2rem; color: var(--bk-muted); text-align: right; }
+.table-wrapper[data-scrolls]:focus-visible { outline-offset: 2px; }
+@media (max-width: 700px) {
+  .table-wrapper.table-cards { border: 0; border-radius: 0; overflow: visible; }
+  .table-wrapper.table-cards table, .table-wrapper.table-cards tbody,
+  .table-wrapper.table-cards tr, .table-wrapper.table-cards td { display: block; width: 100%; }
+  .table-wrapper.table-cards thead {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+  .table-wrapper.table-cards tbody tr, .table-wrapper.table-cards tbody tr:nth-child(2n) {
+    margin: 0 0 1.2rem; border: 1px solid var(--bk-line); border-radius: 12px; background: var(--bk-box); overflow: hidden;
+  }
+  .table-wrapper.table-cards td { box-sizing: border-box; min-width: 0; border: 0; border-top: 1px solid var(--bk-line); padding: 0.7rem 1.2rem; overflow-wrap: anywhere; }
+  .table-wrapper.table-cards td:first-child { min-width: 0; border-top: 0; background: var(--table-header-bg); font-weight: 600; color: var(--bk-heading); }
+  .table-wrapper.table-cards td:empty { display: none; }
+  .table-wrapper.table-cards td[data-label]:not(:first-child)::before {
+    content: attr(data-label); display: block; margin-bottom: 0.15rem; font-family: var(--mono-font); font-size: 1.05rem;
+    text-transform: uppercase; letter-spacing: 0.1em; font-weight: 400; color: var(--bk-muted);
+  }
+  .table-wrapper.table-cards td:first-child[data-label]::before { content: none; }
+  .table-hint { display: none !important; }
+}
+
+/* Stubs of products that do not exist yet: backticks in the text must not stay raw (see gateway/index.md, mcp/index.md). */
+.stub code { font-size: 0.9em; }
+
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+/* The landmark around the stage strip must not change how it looks. */
+.stage-wrap { display: block; }
+/* Links of "On this page" in the menu: at least 24 px high (WCAG 2.2, target size). */
+.on-this-page a, .chapter a.header-in-summary, .chapter a.current-header { display: inline-block; min-height: 24px; line-height: 24px; box-sizing: border-box; }
+#mdbook-sidebar-toggle { cursor: pointer; }
+body:focus { outline: none; }
