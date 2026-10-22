@@ -1,8 +1,8 @@
-//! A research engine: a year of candles from three brokers within their limits, written to disk and resumable, a live
+//! A research engine: a year of candles from several brokers within their limits, written to disk and resumable, a live
 //! event stream recorded to a file, and the same stream played back from that file.
 //!
 //! The code of the page "Как собрать исследовательский движок" of the book (docs/src/rust/howto-research.md). `run` works on
-//! the in-process imitations of the three brokers, which, like the real ones, refuse a candle request over their span
+//! the in-process imitations of the brokers, which, like the real ones, refuse a candle request over their span
 //! and answer a series for the range asked. Nothing here touches the network or money.
 //!
 //! ```text
@@ -293,6 +293,7 @@ pub struct Result3 {
     pub tbank_requests: Vec<(i32, i64, i64)>,
     pub bcs_requests: usize,
     pub finam_requests: usize,
+    pub alor_requests: usize,
     /// T-Bank reads that the imitation refused for good: the engine writes the instruments to the report.
     pub fatal: VenueReport,
     /// T-Bank reads that failed twice on the network and then passed: the engine waited and went on.
@@ -301,8 +302,8 @@ pub struct Result3 {
 
 /// The whole engine on the imitations. `dir` holds the data files and the log.
 pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send + Sync>> {
-    use brokapi::{bcs, finam, tbank};
-    use brokapi_mocks::{bcs as mbcs, finam as mfinam, tbank as mtbank};
+    use brokapi::{alor, bcs, finam, tbank};
+    use brokapi_mocks::{alor as malor, bcs as mbcs, finam as mfinam, tbank as mtbank};
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
@@ -320,10 +321,18 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
         .synthetic_candles
         .store(true, Ordering::SeqCst);
 
-    // The small budgets of the three brokers, kept here so that the download can start with them spent.
-    let budgets = [small_budget(), small_budget(), small_budget()];
+    let alor_opts = Arc::new(malor::MockOptions::default());
+    let alor_server = malor::MockServer::start(alor_opts.clone()).await;
 
-    // One channel for the live events of all three market data connectors.
+    // The small budgets of the brokers, kept here so that the download can start with them spent.
+    let budgets = [
+        small_budget(),
+        small_budget(),
+        small_budget(),
+        small_budget(),
+    ];
+
+    // One channel for the live events of all the market data connectors.
     let (tx, live) = mpsc::channel::<Envelope>(4096);
     let finam_api =
         finam::FinamApiConfig::new(mfinam::SECRET).with_endpoint(finam_server.url.clone());
@@ -348,6 +357,18 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
     let finam_md = finam::MarketDataConnector::start(
         finam::MarketDataConfig::new(finam_api, "finam-md"),
         Arc::clone(&budgets[2]),
+        tx.clone(),
+    )
+    .await?;
+    let alor_md = alor::MarketDataConnector::start(
+        alor::MarketDataConfig::new(
+            alor::protocol::config::AlorConfig::for_mock(
+                "mock-refresh-token",
+                &alor_server.http_base,
+            ),
+            "alor-md",
+        ),
+        Arc::clone(&budgets[3]),
         tx,
     )
     .await?;
@@ -401,23 +422,32 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
                 })
                 .to_vec(),
         },
+        Venue {
+            name: "alor",
+            md: &alor_md,
+            instruments: ["SBER", "GAZP"]
+                .map(|t| (t.to_string(), alor::util::instrument_id(t, "TQBR")))
+                .to_vec(),
+        },
     ];
 
-    // ---- 1. A year of hourly bars. The three brokers are independent (own limits), so they run side by side.
+    // ---- 1. A year of hourly bars. The brokers are independent (own limits), so they run side by side.
     let year = TimeRange::new(
         UnixNanos::from_nanos(1_767_225_600_000_000_000), // 2026-01-01
         UnixNanos::from_nanos(1_798_761_600_000_000_000), // 2027-01-01
     );
     budgets.iter().for_each(|b| hold(b));
-    let (r_bcs, r_tbank, r_finam) = tokio::try_join!(
+    let (r_bcs, r_tbank, r_finam, r_alor) = tokio::try_join!(
         download(&venues[0], Timeframe::H1, year, dir),
         download(&venues[1], Timeframe::H1, year, dir),
         download(&venues[2], Timeframe::H1, year, dir),
+        download(&venues[3], Timeframe::H1, year, dir),
     )?;
     let mut reports = BTreeMap::new();
     reports.insert("bcs", r_bcs);
     reports.insert("tbank", r_tbank);
     reports.insert("finam", r_finam);
+    reports.insert("alor", r_alor);
 
     // A second run finds every file complete and asks the brokers for nothing.
     let again = download(&venues[0], Timeframe::H1, year, dir).await?;
@@ -432,6 +462,8 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
         .lock()
         .unwrap()
         .len();
+
+    let alor_requests = alor_opts.history_requests.lock().unwrap().len();
 
     // A read the broker refuses for good (`Rejected`) ends in the report, the engine goes on with the next instrument.
     tbank_opts.candle_fail.store(1, Ordering::SeqCst);
@@ -484,6 +516,7 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
     bcs_md.shutdown(stop).await;
     tbank_md.shutdown(stop).await;
     finam_md.shutdown(stop).await;
+    alor_md.shutdown(stop).await;
     Ok(Result3 {
         reports,
         second_run_requests: again.requests,
@@ -494,6 +527,7 @@ pub async fn run(dir: &Path) -> Result<Result3, Box<dyn std::error::Error + Send
         tbank_requests,
         bcs_requests,
         finam_requests,
+        alor_requests,
         fatal,
         transient,
     })

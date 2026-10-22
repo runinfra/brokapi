@@ -87,8 +87,8 @@ async fn infrastructure_survives_a_restart_with_the_journal() {
 
     // The order that was filled while the process was down: closed offline, and the journal knows how it ended.
     assert_eq!(r.journal[&r.cids["tbank-a"]], State::Done("filled".into()));
-    // The three that stayed on the exchanges were confirmed by the reconcile, then cancelled by the process.
-    for name in ["bcs", "tbank-b", "finam"] {
+    // The ones that stayed on the exchanges were confirmed by the reconcile, then cancelled by the process.
+    for name in ["bcs", "tbank-b", "finam", "alor"] {
         assert_eq!(
             r.journal[&r.cids[name]],
             State::Done("cancelled".into()),
@@ -116,7 +116,7 @@ async fn research_engine_downloads_a_year_records_and_replays() {
     let r = research::run(&dir).await.expect("the engine runs");
 
     // 1. A year of hourly bars, 2 instruments per venue, no gaps and no duplicates.
-    for venue in ["bcs", "tbank", "finam"] {
+    for venue in ["bcs", "tbank", "finam", "alor"] {
         for ticker in ["SBER", "GAZP"] {
             let text =
                 std::fs::read_to_string(dir.join(venue).join(format!("{ticker}_H1.csv"))).unwrap();
@@ -136,6 +136,8 @@ async fn research_engine_downloads_a_year_records_and_replays() {
     assert_eq!(r.bcs_requests, 2 * 7);
     assert_eq!(r.tbank_requests.len(), 2 * 5);
     assert_eq!(r.finam_requests, 2 * 18);
+    // ALOR documents no span: the engine asks for the whole year in one request per instrument.
+    assert_eq!(r.alor_requests, 2);
     assert!(
         r.tbank_requests
             .iter()

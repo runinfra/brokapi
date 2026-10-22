@@ -70,6 +70,8 @@ pub struct MockOptions {
     pub served: std::sync::Mutex<Vec<String>>,
     /// Every `X-REQID` of an order command, in order.
     pub request_ids: std::sync::Mutex<Vec<String>>,
+    /// Every candle request, as (`tf`, `from`, `to`).
+    pub history_requests: std::sync::Mutex<Vec<(String, i64, i64)>>,
     /// Every query of the trade history, as `dateFrom` and `limit`.
     pub history_asked: std::sync::Mutex<Vec<(Option<String>, Option<String>)>>,
     /// Calls of the quotations (a method no connector wraps, used to test `raw()`).
@@ -730,17 +732,32 @@ async fn handle_http(
                 let from: i64 = param(&q, "from")
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(1_792_368_000);
-                let step: i64 = match param(&q, "tf").unwrap_or("60") {
+                let to: i64 = param(&q, "to")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(from + 3600);
+                let tf = param(&q, "tf").unwrap_or("60").to_string();
+                opts.history_requests
+                    .lock()
+                    .unwrap()
+                    .push((tf.clone(), from, to));
+                let step: i64 = match tf.as_str() {
                     "D" => 86_400,
                     "W" => 604_800,
                     "M" => 2_592_000,
                     n => n.parse().unwrap_or(60),
-                };
-                let bars: Vec<Value> = (0..3)
-                    .map(|i| {
-                        json!({"time": from + i * step, "open": 300.0, "high": 301.0, "low": 299.5, "close": 300.5, "volume": 1200})
-                    })
-                    .collect();
+                }
+                .max(1);
+                // One candle on every point of the grid (aligned to the epoch) in the range asked, like the
+                // other imitations with `synthetic_candles`: a long history gets bars that depend on the range.
+                let mut bars = Vec::new();
+                let mut t = (from + step - 1).div_euclid(step) * step;
+                while t < to && bars.len() < 50_000 {
+                    let n = t.div_euclid(step);
+                    let open = 100 + n.rem_euclid(20);
+                    bars.push(json!({"time": t, "open": open, "high": open + 1, "low": open - 1, "close": open,
+                                     "volume": 1000 + n.rem_euclid(7)}));
+                    t += step;
+                }
                 return json_response(
                     StatusCode::OK,
                     &json!({"history": bars, "next": null, "prev": null}).to_string(),

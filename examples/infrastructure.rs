@@ -1,8 +1,8 @@
-//! One process, three brokers, four accounts: a shared event channel, one order journal in a file, and a restart
+//! One process, several brokers and accounts: a shared event channel, one order journal in a file, and a restart
 //! that reconciles every account against that journal.
 //!
 //! The code of the page "Как собрать инфраструктуру на несколько брокеров и счетов" of the book
-//! (docs/src/rust/howto-infrastructure.md). The accounts are BCS (one), T-Bank (two, one token) and Finam (one). `run` plays
+//! (docs/src/rust/howto-infrastructure.md). The accounts are BCS (one), T-Bank (two, one token), Finam (one) and ALOR (one). `run` plays
 //! two lives of the process against the in-process imitations: the first places an order on every account and goes away
 //! without cancelling (and leaves a journal line for an order that was never sent), while the process is down one order
 //! is filled, the second life reconciles every account with the journal and finds out what became of everything.
@@ -120,11 +120,12 @@ pub struct Settings {
     pub tbank_accounts: [String; 2],
     pub finam: brokapi::finam::FinamApiConfig,
     pub finam_account: String,
+    pub alor: brokapi::alor::protocol::config::AlorConfig,
 }
 
 impl Settings {
     /// BCS_REFRESH_TOKEN, BCS_IS_WRITE, TBANK_TOKEN, TBANK_SANDBOX, TBANK_ACCOUNT_ID, TBANK_ACCOUNT_ID_2, FINAM_SECRET,
-    /// FINAM_ACCOUNT_ID.
+    /// FINAM_ACCOUNT_ID, ALOR_REFRESH_TOKEN, ALOR_PORTFOLIO.
     pub fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
         dotenvy::dotenv().ok();
         let (finam, account) = brokapi::finam::api_config_from_env()?;
@@ -137,6 +138,7 @@ impl Settings {
             ],
             finam,
             finam_account: account.ok_or("FINAM_ACCOUNT_ID is not set")?,
+            alor: brokapi::alor::protocol::config::AlorConfig::from_env()?,
         })
     }
 }
@@ -167,17 +169,19 @@ pub struct Infra {
     pub bcs_md: brokapi::bcs::MarketDataConnector,
     pub tbank_md: brokapi::tbank::MarketDataConnector,
     pub finam_md: brokapi::finam::MarketDataConnector,
+    pub alor_md: brokapi::alor::MarketDataConnector,
     pub bcs: brokapi::bcs::UserDataConnector,
     pub tbank_a: brokapi::tbank::UserDataConnector,
     pub tbank_b: brokapi::tbank::UserDataConnector,
     pub finam: brokapi::finam::UserDataConnector,
+    pub alor: brokapi::alor::UserDataConnector,
     pub journal: Journal,
     /// Accounts that lost events (`Overflow`): reconcile them before trading.
     pub degraded: Vec<&'static str>,
 }
 
 /// The names of the accounts: the journal key and the `source` label of the envelopes.
-pub const ACCOUNTS: [&str; 4] = ["bcs", "tbank-a", "tbank-b", "finam"];
+pub const ACCOUNTS: [&str; 5] = ["bcs", "tbank-a", "tbank-b", "finam", "alor"];
 
 impl Infra {
     /// Connects everything, subscribes, reconciles every account with the journal, and only then returns.
@@ -185,13 +189,14 @@ impl Infra {
         settings: &Settings,
         journal_path: &Path,
     ) -> Result<(Self, mpsc::UnboundedReceiver<Envelope>), Box<dyn std::error::Error>> {
-        use brokapi::{bcs, finam, tbank};
+        use brokapi::{alor, bcs, finam, tbank};
 
         // One limiter per area where the broker counts a limit. T-Bank counts per user: both accounts and the market
-        // data connector share one. BCS counts per token, Finam per user. The three brokers never share.
+        // data connector share one. BCS counts per token, Finam per user, ALOR per login. The brokers never share.
         let bcs_limits = BrokerLimiter::new(&bcs::limits::default_limits());
         let tbank_limits = BrokerLimiter::new(&tbank::limits::default_limits());
         let finam_limits = BrokerLimiter::new(&finam::limits::default_limits());
+        let alor_limits = BrokerLimiter::new(&alor::limits::default_limits());
 
         // One channel for everything: the `source` label of an envelope says whose it is. A small task moves the
         // envelopes into the process's own queue at once, so the library's channel is always empty and the process
@@ -221,6 +226,12 @@ impl Infra {
             finam_md: finam::MarketDataConnector::start(
                 finam::MarketDataConfig::new(finam_api.clone(), "finam-md"),
                 finam_limits.clone(),
+                tx.clone(),
+            )
+            .await?,
+            alor_md: alor::MarketDataConnector::start(
+                alor::MarketDataConfig::new(settings.alor.clone(), "alor-md"),
+                alor_limits.clone(),
                 tx.clone(),
             )
             .await?,
@@ -258,6 +269,12 @@ impl Infra {
             finam: finam::UserDataConnector::start(
                 finam::UserDataConfig::new(finam_api, &settings.finam_account, "finam"),
                 finam_limits,
+                tx.clone(),
+            )
+            .await?,
+            alor: alor::UserDataConnector::start(
+                alor::UserDataConfig::new(settings.alor.clone(), "alor"),
+                alor_limits,
                 tx,
             )
             .await?,
@@ -278,12 +295,13 @@ impl Infra {
     }
 
     /// The accounts by name, as the trait the process needs.
-    pub fn accounts(&self) -> [(&'static str, &dyn Account); 4] {
+    pub fn accounts(&self) -> [(&'static str, &dyn Account); 5] {
         [
             ("bcs", &self.bcs),
             ("tbank-a", &self.tbank_a),
             ("tbank-b", &self.tbank_b),
             ("finam", &self.finam),
+            ("alor", &self.alor),
         ]
     }
 
@@ -447,9 +465,11 @@ impl Infra {
         self.tbank_a.shutdown(mode).await;
         self.tbank_b.shutdown(mode).await;
         self.finam.shutdown(mode).await;
+        self.alor.shutdown(mode).await;
         self.bcs_md.shutdown(mode).await;
         self.tbank_md.shutdown(mode).await;
         self.finam_md.shutdown(mode).await;
+        self.alor_md.shutdown(mode).await;
     }
     // ANCHOR_END: stop
 }
@@ -518,6 +538,7 @@ pub async fn sber_for(
                 .ok_or("SBER is not in the T-Bank directory")?
                 .id
         }
+        "alor" => brokapi::alor::util::instrument_id("SBER", "TQBR"),
         _ => brokapi::finam::util::instrument_from_symbol("SBER@MISX"),
     })
 }
@@ -562,13 +583,14 @@ async fn pump(
 
 /// The two lives of the process. `dir` holds the journal.
 pub async fn run(dir: &Path) -> Result<Result2, Box<dyn std::error::Error>> {
-    use brokapi_mocks::{bcs as mbcs, finam as mfinam, tbank as mtbank};
+    use brokapi_mocks::{alor as malor, bcs as mbcs, finam as mfinam, tbank as mtbank};
 
     // ANCHOR: mock_settings
     // The imitations live through both lives of the process, like the brokers do.
     let bcs_server = mbcs::MockServer::start(Default::default()).await;
     let tbank_server = mtbank::MockServer::start(Default::default()).await;
     let finam_server = mfinam::MockServer::start().await;
+    let alor_server = malor::MockServer::start(Default::default()).await;
     let settings = Settings {
         bcs: brokapi::bcs::protocol::config::BcsConfig::for_mock(
             "mock-refresh-token",
@@ -583,6 +605,10 @@ pub async fn run(dir: &Path) -> Result<Result2, Box<dyn std::error::Error>> {
         finam: brokapi::finam::FinamApiConfig::new(mfinam::SECRET)
             .with_endpoint(finam_server.url.clone()),
         finam_account: "ACC1".into(),
+        alor: brokapi::alor::protocol::config::AlorConfig::for_mock(
+            "mock-refresh-token",
+            &alor_server.http_base,
+        ),
     };
     // ANCHOR_END: mock_settings
     let journal_path = dir.join("orders.journal");
@@ -625,11 +651,11 @@ pub async fn run(dir: &Path) -> Result<Result2, Box<dyn std::error::Error>> {
         );
     }
     // Take the remaining orders off before leaving (a choice of this process; the library never does it).
-    for name in ["bcs", "tbank-b", "finam"] {
+    for name in ["bcs", "tbank-b", "finam", "alor"] {
         infra.account(name).cancel(cids[name]).await?;
     }
     pump(&mut infra, &mut events, Duration::from_secs(5), |i| {
-        ["bcs", "tbank-b", "finam"]
+        ["bcs", "tbank-b", "finam", "alor"]
             .iter()
             .all(|n| matches!(i.journal.state(cids[n]), Some(State::Done(_))))
     })
