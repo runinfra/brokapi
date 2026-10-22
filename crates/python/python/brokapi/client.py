@@ -80,7 +80,8 @@ class EventStream:
     """The events of one client, in order: ``async for envelope in client.events``.
 
     One stream per client, for market data and for the account together. :attr:`Envelope.source` says which
-    connector sent an event, :attr:`Envelope.sub` which subscription. The stream ends when the client is closed.
+    connector sent an event, :attr:`Envelope.sub` which subscription. The stream ends when the client is closed:
+the events sent before :meth:`Client.close` are still delivered, then the iteration stops.
 
     Read it as fast as you can. Do slow work (a database, a model) in another task and hand it the events through
     your own queue: when this stream is not read, the connector applies the rule of each subscription, and a lossless

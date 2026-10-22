@@ -173,7 +173,11 @@ async def test_close_ends_the_stream_and_is_safe_twice(bcs: Pair) -> None:
     reports = await client.close()
     assert len(reports) == 2
     assert await client.close() == []
+    # What the connectors sent before the close is still delivered, then the stream ends and stays ended.
+    assert all(e.source in ("bcs-md", "bcs-ud") for e in [e async for e in client.events])
     assert [e async for e in client.events] == []
+    with pytest.raises(EOFError):
+        await client.events.get(timeout=1)
     with pytest.raises(RuntimeError, match="closed"):
         await client.portfolio()
 
