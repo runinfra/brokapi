@@ -160,7 +160,7 @@
   // ---- report an error ---------------------------------------------------------------------------------------------
   // A form in a <dialog>: the reader writes what is wrong and sends it, the address it goes to is not shown (decision of
   // 21.10.2026, context/brand.md). The page, its title and the text the reader selected before opening go along. The
-  // receiver is POST /api/report on the same host (server side, vps-agent): JSON in, 2xx when taken, 429 when too often.
+  // receiver is POST /api/report on the same host (server side): JSON in, 2xx when taken, 429 when too often.
   var REPORT_URL = '/api/report';
 
   function report() {
