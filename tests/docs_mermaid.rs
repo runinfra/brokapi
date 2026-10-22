@@ -24,9 +24,9 @@ fn bad_labels(line: &str) -> Vec<String> {
     let mut rest = line;
     while let Some(start) = rest.find('[') {
         let after = &rest[start + 1..];
-        if after.starts_with('"') {
-            let close = after[1..].find('"').map_or(after.len(), |i| i + 2);
-            rest = &after[close..];
+        if let Some(quoted) = after.strip_prefix('"') {
+            let close = quoted.find('"').map_or(quoted.len(), |i| i + 1);
+            rest = &quoted[close..];
             continue;
         }
         if after.starts_with('(') {
