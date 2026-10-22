@@ -1368,11 +1368,30 @@ fn json_response(status: StatusCode, body: &str) -> Response {
         .into_response()
 }
 
+/// A recorded BCS answer. Built into the binary, not read from the source tree at run time: the mock also runs
+/// inside the Python package (`brokapi.testing`), where the sources are not there.
 fn fixture(name: &str) -> String {
-    let path = format!(
-        "{}/../bcs-protocol/tests/fixtures/{}",
-        env!("CARGO_MANIFEST_DIR"),
-        name
-    );
-    std::fs::read_to_string(path).unwrap_or_else(|e| panic!("fixture {name}: {e}"))
+    match name {
+        "rest/instrument_info.json" => {
+            include_str!("../../bcs-protocol/tests/fixtures/rest/instrument_info.json")
+        }
+        "rest/last_trades_records.json" => {
+            include_str!("../../bcs-protocol/tests/fixtures/rest/last_trades_records.json")
+        }
+        "rest/order_book.json" => {
+            include_str!("../../bcs-protocol/tests/fixtures/rest/order_book.json")
+        }
+        "ws/order_book.json" => {
+            include_str!("../../bcs-protocol/tests/fixtures/ws/order_book.json")
+        }
+        "ws/order_book_error.json" => {
+            include_str!("../../bcs-protocol/tests/fixtures/ws/order_book_error.json")
+        }
+        "ws/order_book_success.json" => {
+            include_str!("../../bcs-protocol/tests/fixtures/ws/order_book_success.json")
+        }
+        "ws/portfolio.json" => include_str!("../../bcs-protocol/tests/fixtures/ws/portfolio.json"),
+        other => panic!("no fixture {other}"),
+    }
+    .to_string()
 }
