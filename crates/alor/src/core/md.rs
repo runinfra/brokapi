@@ -403,4 +403,73 @@ mod tests {
         };
         assert_eq!(c.timeframe, Timeframe::M5);
     }
+
+    #[test]
+    fn a_refused_subscription_keeps_the_reason_and_a_bad_or_repeated_frame_gives_nothing() {
+        let mut core = MdCore::new();
+        let id = SubscriptionId::new(1);
+        core.register("g", id, SubscriptionKind::LastTrades { instrument: sber() });
+        assert_eq!(core.desired().subs().len(), 1);
+        let mut out = EventSink::new();
+        let now = Instant::now();
+        core.on_frame(
+            WsIncoming::Status {
+                guid: Some("g".into()),
+                code: 400,
+                message: "no such instrument".into(),
+            },
+            now,
+            &mut out,
+        );
+        assert_eq!(core.actual_state(id), Some(SubState::Failed));
+        assert_eq!(core.failure(id), Some("no such instrument"));
+        // A status without a guid and a frame nobody knows are not for any subscription.
+        core.on_frame(
+            WsIncoming::Status {
+                guid: None,
+                code: 200,
+                message: String::new(),
+            },
+            now,
+            &mut out,
+        );
+        core.on_frame(WsIncoming::Unknown("x".into()), now, &mut out);
+        // A trade that cannot be read is dropped, the same trade twice is told once.
+        core.on_frame(data("g", json!({"id": "not a number"})), now, &mut out);
+        let trade = json!({"id": 7, "price": 100.5, "qty": 3, "timestamp": 1, "side": "buy", "symbol": "SBER"});
+        core.on_frame(data("g", trade.clone()), now, &mut out);
+        core.on_frame(data("g", trade), now, &mut out);
+        assert_eq!(out.drain().len(), 1);
+    }
+
+    #[test]
+    fn a_trades_subscription_forgets_the_oldest_ids_when_the_memory_is_full() {
+        let mut core = MdCore::new();
+        let id = SubscriptionId::new(1);
+        core.register("g", id, SubscriptionKind::LastTrades { instrument: sber() });
+        let mut out = EventSink::new();
+        let now = Instant::now();
+        let trade = |n: i64| json!({"id": n, "price": 100.5, "qty": 3, "timestamp": 1, "side": "buy", "symbol": "SBER"});
+        for n in 0..=SEEN_TRADES_CAP as i64 {
+            core.on_frame(data("g", trade(n)), now, &mut out);
+        }
+        assert_eq!(out.drain().len(), SEEN_TRADES_CAP + 1);
+        // Trade 0 fell out of the memory: it is told again, trade 1 is still a repeat.
+        core.on_frame(data("g", trade(0)), now, &mut out);
+        core.on_frame(data("g", trade(SEEN_TRADES_CAP as i64)), now, &mut out);
+        assert_eq!(out.drain().len(), 1);
+    }
+
+    #[test]
+    fn the_core_sends_nothing_by_itself_and_has_no_timers() {
+        let mut core = MdCore::new();
+        assert!(core.poll_transmit().is_none());
+        assert!(core.poll_timeout().is_none());
+        core.on_timeout(Instant::now(), &mut EventSink::new());
+        let mut set = SubscriptionSet::new();
+        core.apply(&set);
+        set = SubscriptionSet::with_subscriptions(vec![]);
+        core.apply(&set);
+        assert!(core.desired().is_empty());
+    }
 }

@@ -404,4 +404,82 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0].payload, Event::Reconnected { .. }));
     }
+
+    #[test]
+    fn a_refused_subscription_keeps_the_reason_and_frames_nobody_wants_give_nothing() {
+        let mut c = core();
+        let id = SubscriptionId::new(1001);
+        c.register("o", id, UdSubKind::OrderState);
+        let mut out = EventSink::new();
+        let now = Instant::now();
+        c.on_frame(
+            WsIncoming::Status {
+                guid: Some("o".into()),
+                code: 400,
+                message: "refused".into(),
+            },
+            now,
+            &mut out,
+        );
+        assert_eq!(c.actual_state(id), Some(SubState::Failed));
+        assert_eq!(c.failure(id), Some("refused"));
+        c.on_frame(
+            WsIncoming::Status {
+                guid: None,
+                code: 200,
+                message: String::new(),
+            },
+            now,
+            &mut out,
+        );
+        c.on_frame(WsIncoming::Unknown("x".into()), now, &mut out);
+        // Data of a guid nobody registered, and data that is not an order.
+        c.on_frame(data("other", json!({})), now, &mut out);
+        c.on_frame(data("o", json!({"id": 5})), now, &mut out);
+        assert!(out.drain().is_empty());
+        // Forgotten, the subscription has no state.
+        c.forget("o");
+        assert_eq!(c.actual_state(id), None);
+    }
+
+    #[test]
+    fn the_memory_of_order_numbers_and_trades_is_bounded() {
+        let mut c = core();
+        let cid = Uuid::new_v4();
+        c.learn_order_id("", cid);
+        c.learn_order_id("1", Uuid::nil());
+        assert_eq!(c.cid_of_order_id("1"), None);
+        for n in 0..=ORDER_IDS_CAP {
+            c.learn_order_id(&n.to_string(), cid);
+        }
+        assert_eq!(
+            c.cid_of_order_id("0"),
+            None,
+            "the oldest number is forgotten"
+        );
+        assert_eq!(c.cid_of_order_id(&ORDER_IDS_CAP.to_string()), Some(cid));
+
+        c.register("e", SubscriptionId::new(1002), UdSubKind::Executions);
+        let mut out = EventSink::new();
+        let now = Instant::now();
+        let trade = |n: usize| {
+            json!({"id": n.to_string(), "orderno": "9", "symbol": "SBER", "board": "TQBR", "side": "buy",
+                   "qtyUnits": 1, "price": 10, "date": "2026-10-20T10:00:00Z"})
+        };
+        for n in 0..=SEEN_EXECUTIONS_CAP {
+            c.on_frame(data("e", trade(n)), now, &mut out);
+        }
+        assert_eq!(out.drain().len(), SEEN_EXECUTIONS_CAP + 1);
+        c.on_frame(data("e", trade(0)), now, &mut out);
+        assert_eq!(out.drain().len(), 1, "the oldest trade is told again");
+    }
+
+    #[test]
+    fn the_core_sends_nothing_by_itself_and_has_no_timers() {
+        let mut c = core();
+        assert!(c.poll_transmit().is_none());
+        assert!(c.poll_timeout().is_none());
+        c.on_timeout(Instant::now(), &mut EventSink::new());
+        c.apply(&SubscriptionSet::new());
+    }
 }
