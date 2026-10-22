@@ -622,9 +622,10 @@ impl UserDataConnector {
 
     /// State of a subscription's stream (connecting, active, reconnecting, failed).
     ///
-    /// `None` for an id this connector does not know. `subscribe_*` returns when the stream is open, so
-    /// this shows what the stream does later: reconnecting after a break. A stream that the broker
-    /// refuses (no permission) after it had been open shows as [`SubStatus::Failed`] and is retried slowly.
+    /// `None` for an id this connector does not know. Use it after `subscribe_*` returned and the
+    /// stream may still be opening (Finam may send the headers of a quiet stream only with its first message).
+    /// A stream that the broker refuses (no permission) shows as
+    /// [`SubStatus::Failed`] and is retried slowly.
     ///
     /// # Examples
     ///
@@ -846,12 +847,12 @@ impl UserDataConnector {
             .expect("streams poisoned")
             .insert(id, handle);
 
-        // Returns when the broker has opened the stream: what happens after that is delivered. A refusal, or no
-        // answer in time, takes the subscription back: nothing stays half open.
+        // Returns when the broker has opened the stream: what happens after that is delivered. A refusal takes the
+        // subscription back. No answer in time does not: the stream goes on opening in the background (see the
+        // config), because a server may send the headers of a quiet stream only with its first message.
         let failure = match tokio::time::timeout(self.inner.ack_timeout, first_rx).await {
-            Ok(Ok(Ok(()))) => return Ok(id),
             Ok(Ok(Err(e))) => map_protocol_err(&e),
-            _ => brokapi_runtime::not_confirmed(self.inner.ack_timeout),
+            _ => return Ok(id),
         };
         let h = self
             .inner

@@ -163,9 +163,14 @@ pub struct MarketDataConfig {
     pub source: Arc<str>,
     /// How long `subscribe_*` waits for the stream to open (default 3 seconds).
     ///
-    /// The call returns when the broker has opened the stream: what happens after that is delivered. A
-    /// refusal (unknown symbol, no permission) is returned as `Rejected`. A stream that does not open in
-    /// time is returned as `Transport`, and the subscription is taken back, so the call can be repeated.
+    /// The call returns as soon as the broker has opened the stream: what happens after that is delivered. A
+    /// refusal (unknown symbol, no permission) is returned as `Rejected`. **A stream that has not opened in time
+    /// leaves the subscription connecting and the call returns `Ok`**, unlike the other brokers: Finam is gRPC,
+    /// and a gRPC server may send the headers of a quiet stream only together with its first message, so a
+    /// healthy stream of orders can look "not open" until the first order. Until the stream is open, events of
+    /// the broker are not delivered: check
+    /// [`MarketDataConnector::sub_status`](crate::MarketDataConnector::sub_status). Not verified against the live
+    /// server; if it sends the headers at once, this will become an error like at the other brokers.
     pub subscribe_ack_timeout: Duration,
 }
 

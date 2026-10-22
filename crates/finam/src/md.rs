@@ -303,8 +303,8 @@ impl MarketDataConnector {
     /// State of a subscription's stream (connecting, active, reconnecting, failed).
     ///
     /// `None` for an id this connector does not know (never issued, or already unsubscribed).
-    /// `subscribe_*` returns when the stream is open, so this shows what the stream does later: it is
-    /// reconnecting after a break, or it is failed (the broker refuses it after it had been open).
+    /// Use it after `subscribe_*` returned and the stream may still be opening: Finam may send the headers of a
+    /// quiet stream only with its first message, so the call can return before the stream is open.
     ///
     /// # Examples
     ///
@@ -409,9 +409,8 @@ impl MarketDataConnector {
     }
 
     /// Registers the subscription in the core and buffers, opens the stream, and waits for the first
-    /// outcome: a refusal (bad symbol, no permission) is returned as an error, and so is a stream that
-    /// does not open within `subscribe_ack_timeout` (`Transport`). In both cases the subscription is
-    /// taken back.
+    /// outcome: a refusal (bad symbol, no permission) is returned as an error and the subscription is taken
+    /// back. A stream that has not opened within `subscribe_ack_timeout` leaves the subscription connecting.
     async fn register_sub<M: Send + 'static>(
         &self,
         instrument: InstrumentId,
@@ -451,18 +450,15 @@ impl MarketDataConnector {
             .expect("streams poisoned")
             .insert(id, handle);
 
-        // Returns when the broker has opened the stream: what happens after that is delivered. A refusal, or no
-        // answer in time, takes the subscription back: nothing stays half open.
+        // Returns when the broker has opened the stream: what happens after that is delivered. A refusal takes the
+        // subscription back. No answer in time does not: the stream goes on opening in the background (see the
+        // config), because a server may send the headers of a quiet stream only with its first message.
         match tokio::time::timeout(self.inner.ack_timeout, first_rx).await {
-            Ok(Ok(Ok(()))) => Ok(id),
             Ok(Ok(Err(e))) => {
                 self.drop_sub(id).await;
                 Err(map_protocol_err(&e))
             }
-            _ => {
-                self.drop_sub(id).await;
-                Err(brokapi_runtime::not_confirmed(self.inner.ack_timeout))
-            }
+            _ => Ok(id),
         }
     }
 
@@ -651,14 +647,14 @@ impl OrderBookSource for MarketDataConnector {
 
     /// Opens an `SubscribeOrderBook` stream. Envelopes carry `Event::OrderBook(OrderBook::Snapshot)`.
     ///
-    /// `opts.depth` is the number of levels per side (default and maximum 50). Returns when the broker
-    /// has opened the stream, within `subscribe_ack_timeout`: what happens after that is delivered. A
-    /// stream that does not open in time is an error and the subscription is taken back.
+    /// `opts.depth` is the number of levels per side (default and maximum 50). Waits up to
+    /// `subscribe_ack_timeout` for the broker to open the stream: a refusal inside that time is returned. If the
+    /// stream is not open by then the call still returns, and the stream goes on opening (see
+    /// [`MarketDataConnector::sub_status`]): until it is open, nothing is delivered.
     ///
     /// # Errors
     ///
     /// - [`Error::Config`]: the instrument has no `NativeId::SymbolMic`.
-    /// - [`Error::Transport`]: the stream did not open within `subscribe_ack_timeout`. Repeat the call.
     /// - [`Error::Rejected`]: the broker refused the stream (bad symbol, no permission), or this
     ///   connector already has the maximum number of streams (code `subscription_quota`).
     ///

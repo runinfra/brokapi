@@ -153,15 +153,16 @@ async fn own_orders_events_active_replace_and_executions() {
     ud.shutdown(ShutdownMode::Immediate).await;
 }
 
-/// The broker is slow to open a stream: `subscribe_*` waits for it, and a stream that does not open is an error
-/// with nothing left behind.
+/// The broker is slow to open a stream. Finam is gRPC, and the headers of a quiet stream may come only with its first
+/// message, so `subscribe_*` waits for the stream and, when it does not open in time, still returns `Ok`: the stream
+/// goes on opening, and what happens after it is open reaches the bot.
 #[tokio::test]
-async fn subscribe_returns_when_the_stream_is_open() {
+async fn subscribe_returns_while_the_stream_opens_late() {
     let server = MockServer::start().await;
     let (ud, mut rx) = ud(&server, "ACC1").await;
     conf::reconcile(&ud).await;
     server.state.options.stream_gate.hold();
-    conf::subscribe_waits_for_the_stream(
+    conf::subscribe_returns_while_the_stream_opens_late(
         &ud,
         &mut rx,
         "finam-ud-ACC1",
@@ -171,11 +172,20 @@ async fn subscribe_returns_when_the_stream_is_open() {
             brokapi_mocks::time::elapse_when(
                 "the stream request reached the broker",
                 || server.state.options.stream_gate.waiting() > 0,
-                std::time::Duration::from_secs(10),
+                // Past the wait of subscribe (3 s). Two calls move the clock 8 s, short of the 10 s timeout of one open attempt.
+                std::time::Duration::from_secs(4),
                 call,
             )
         },
         || async { server.state.options.stream_gate.release() },
+        || async {
+            brokapi_mocks::time::wait_until("both user streams are open at the broker", || {
+                server.state.count_calls("SubscribeOrders") > 0
+                    && server.state.count_calls("SubscribeTrades") > 0
+                    && server.state.options.stream_gate.waiting() == 0
+            })
+            .await;
+        },
         |cid| {
             let server = &server;
             async move {
@@ -216,12 +226,12 @@ async fn subscribe_returns_when_the_stream_is_open() {
 }
 
 #[tokio::test]
-async fn market_subscribe_returns_when_the_stream_is_open() {
+async fn market_subscribe_returns_while_the_stream_opens_late() {
     let server = MockServer::start().await;
     let (md, mut rx) = md(&server).await;
     server.state.options.stream_gate.hold();
     let id = sber();
-    conf::market_subscribe_waits_for_the_stream(
+    conf::market_subscribe_returns_while_the_stream_opens_late(
         &md,
         &mut rx,
         &id,
@@ -229,7 +239,7 @@ async fn market_subscribe_returns_when_the_stream_is_open() {
             brokapi_mocks::time::elapse_when(
                 "the stream request reached the broker",
                 || server.state.options.stream_gate.waiting() > 0,
-                std::time::Duration::from_secs(10),
+                std::time::Duration::from_secs(4),
                 call,
             )
         },

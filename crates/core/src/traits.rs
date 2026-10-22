@@ -200,6 +200,8 @@ pub trait OrderBookSource: Send + Sync {
     ///   the broker sends after the return reaches you. A stream that is not open within the connector's
     ///   `subscribe_ack_timeout` (3 seconds by default) is [`Error::Transport`], and nothing is left half
     ///   open, so the call can be repeated.
+    ///   (Finam returns `Ok` after the wait and goes on opening the stream, see
+    ///   [`OrderExecutor::subscribe_order_state`].)
     /// - **Guarantee:** the stream restores itself after a reconnect. Each restore is announced with
     ///   [`Event::Resync`](crate::Event::Resync): drop the book you hold for that instrument and wait
     ///   for the next snapshot.
@@ -1249,9 +1251,12 @@ pub trait OrderExecutor: Send + Sync {
     ///   [`place`](Self::place). Allowed while the gate is closed.
     /// - **Guarantee:** the call returns only when the stream is open at the broker. The broker's own
     ///   confirmation where the protocol has one (T-Bank, ALOR), else the open connection of the stream
-    ///   (BCS, Finam). Everything that happens to your orders after the return reaches you. A stream that is
+    ///   (BCS). Everything that happens to your orders after the return reaches you. A stream that is
     ///   not open within `subscribe_ack_timeout` (3 seconds by default) is [`Error::Transport`] and nothing
-    ///   is left half open, so the call can be repeated.
+    ///   is left half open, so the call can be repeated. **Finam is the exception**: it is gRPC and may
+    ///   send the headers of a quiet stream only with its first message, so after the wait the call
+    ///   returns `Ok` and the stream goes on opening in the background, with no guarantee until it is
+    ///   open (`sub_status` of the connector shows it).
     /// - **Guarantee:** every change of your orders arrives, in order, or the loss is announced with
     ///   [`Event::Overflow`](crate::Event::Overflow) and trading stops until a reconcile. The
     ///   subscription cannot be ended before shutdown.

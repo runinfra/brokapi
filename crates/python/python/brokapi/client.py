@@ -387,7 +387,8 @@ class Client:
 
         Returns when the stream is open at the broker, so an order placed right after it cannot be missed. A stream
         that does not open within three seconds raises :class:`~brokapi.Transport` and leaves nothing half open:
-        call again."""
+        call again. Finam is the exception: after three seconds the call returns and the stream goes on opening in
+        the background."""
         return await self._call("subscribe_order_state")
 
     async def subscribe_executions(self) -> int:

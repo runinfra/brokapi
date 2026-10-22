@@ -2167,6 +2167,142 @@ pub async fn market_subscribe_waits_for_the_stream<'a, M, D, DFut, R, RFut>(
     .await;
 }
 
+/// The soft variant of [`subscribe_waits_for_the_stream`], for a broker whose stream may announce itself only with
+/// its first message (Finam, gRPC): `subscribe_*` waits for the stream, and when it does not open in time it still
+/// returns `Ok` and the stream goes on opening in the background.
+///
+/// The adapter holds the opening of the streams at the broker before the call. Then:
+/// 1. `drive` runs the `subscribe_order_state` future to its end while the broker holds the stream and the clock
+///    moves past the connector's wait (but the stream open attempt must not time out itself). The outcome is `Ok`, not
+///    an error: the subscription stays.
+/// 2. The same for `subscribe_executions`.
+/// 3. `release` lets the broker open the streams, and `opened` returns when the broker has them open (the test
+///    waits for the counter of the mock, not for time).
+/// 4. An order is placed and then filled by `fill`: the `Order` event arrives on the subscription returned in
+///    step 1, and the `Execution` event on the one returned in step 2.
+///
+/// # Panics
+///
+/// With `[conformance:subscribe_returns_while_the_stream_opens_late] <reason>`.
+#[allow(clippy::too_many_arguments)]
+pub async fn subscribe_returns_while_the_stream_opens_late<
+    'a,
+    U,
+    D,
+    DFut,
+    R,
+    RFut,
+    O,
+    OFut,
+    F,
+    FFut,
+>(
+    ud: &'a U,
+    rx: &mut mpsc::Receiver<Envelope>,
+    source: &str,
+    id: &InstrumentId,
+    price: Price,
+    mut drive: D,
+    release: R,
+    opened: O,
+    fill: F,
+) where
+    U: OrderExecutor + ExecutionSource + ?Sized,
+    D: FnMut(SubscribeCall<'a>) -> DFut,
+    DFut: Future<Output = Result<SubscriptionId, Error>> + 'a,
+    R: FnOnce() -> RFut,
+    RFut: Future<Output = ()>,
+    O: FnOnce() -> OFut,
+    OFut: Future<Output = ()>,
+    F: FnOnce(ClientOrderId) -> FFut,
+    FFut: Future<Output = ()>,
+{
+    const S: &str = "subscribe_returns_while_the_stream_opens_late";
+    let orders: SubscribeCall<'a> = Box::pin(ud.subscribe_order_state());
+    let orders_sub = drive(orders).await.unwrap_or_else(|e| {
+        fail(
+            S,
+            format!("subscribe_order_state must return Ok while the stream opens, got {e:?}"),
+        )
+    });
+    let fills: SubscribeCall<'a> = Box::pin(ud.subscribe_executions());
+    let fills_sub = drive(fills).await.unwrap_or_else(|e| {
+        fail(
+            S,
+            format!("subscribe_executions must return Ok while the stream opens, got {e:?}"),
+        )
+    });
+    release().await;
+    opened().await;
+    let cid = place_limit(ud, S, id, price, lots(2)).await;
+    fill(cid).await;
+    let env = next_matching(
+        S,
+        rx,
+        |e| matches!(&e.payload, Event::Order(o) if o.cid == cid),
+    )
+    .await;
+    if env.source.as_ref() != source || env.sub != Some(orders_sub) {
+        fail(
+            S,
+            format!(
+                "order event envelope: source {:?} sub {:?}, expected {source:?} / {orders_sub:?}",
+                env.source, env.sub
+            ),
+        );
+    }
+    let env = next_matching(
+        S,
+        rx,
+        |e| matches!(&e.payload, Event::Execution(x) if x.cid == Some(cid)),
+    )
+    .await;
+    if env.sub != Some(fills_sub) {
+        fail(
+            S,
+            format!(
+                "the execution is on sub {:?}, expected {fills_sub:?}",
+                env.sub
+            ),
+        );
+    }
+}
+
+/// The soft variant of [`market_subscribe_waits_for_the_stream`] (see
+/// [`subscribe_returns_while_the_stream_opens_late`]): `subscribe_order_book` returns `Ok` when the stream is not
+/// open in time, and after `release` the books arrive on that subscription.
+///
+/// # Panics
+///
+/// With `[conformance:market_subscribe_returns_while_the_stream_opens_late] <reason>`.
+pub async fn market_subscribe_returns_while_the_stream_opens_late<'a, M, D, DFut, R, RFut>(
+    md: &'a M,
+    rx: &mut mpsc::Receiver<Envelope>,
+    id: &'a InstrumentId,
+    mut drive: D,
+    release: R,
+) where
+    M: OrderBookSource + ?Sized,
+    D: FnMut(SubscribeCall<'a>) -> DFut,
+    DFut: Future<Output = Result<SubscriptionId, Error>> + 'a,
+    R: FnOnce() -> RFut,
+    RFut: Future<Output = ()>,
+{
+    const S: &str = "market_subscribe_returns_while_the_stream_opens_late";
+    let call: SubscribeCall<'a> = Box::pin(md.subscribe_order_book(id, SubscribeOpts::conflate()));
+    let sub = drive(call).await.unwrap_or_else(|e| {
+        fail(
+            S,
+            format!("subscribe_order_book must return Ok while the stream opens, got {e:?}"),
+        )
+    });
+    release().await;
+    next_matching(S, rx, |e| {
+        matches!(e.payload, Event::OrderBook(_)) && e.sub == Some(sub)
+    })
+    .await;
+}
+
 // ─── guarantees of the command path ───────────────────────────────────────────
 
 fn order(id: &InstrumentId, price: Price, qty: Qty) -> PlaceOrderRequest {
