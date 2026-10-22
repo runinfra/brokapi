@@ -85,13 +85,13 @@ pub fn new_guid() -> String {
 /// Waits for the broker to confirm a new subscription.
 ///
 /// `state` reads the state of the subscription from the core. The wait ends with `Ok` when the subscription is
-/// active (the broker confirmed it, or data came), with [`Error::Rejected`] (`subscription_refused`) when the
+/// active (the broker confirmed it, or data came), with [`brokapi_core::Error::Rejected`] (`subscription_refused`) when the
 /// broker refused it, and with `Ok` again when `limit` passes with no answer: the subscription goes on opening
 /// in the background, and a bot that needs to know reads the state of its stream.
 ///
 /// # Errors
 ///
-/// [`Error::Rejected`] with the text of the broker when the subscription was refused.
+/// [`brokapi_core::Error::Rejected`] with the text of the broker when the subscription was refused.
 pub async fn wait_ack<C>(
     core: &tokio::sync::Mutex<C>,
     notify: std::sync::Arc<tokio::sync::Notify>,
