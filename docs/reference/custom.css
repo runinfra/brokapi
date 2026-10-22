@@ -116,3 +116,13 @@ body { padding-top: var(--bk-bar-h, 52px); }
   #navtoggle { top: calc(var(--bk-bar-h, 52px) + 0.8rem); }
 }
 html { scroll-padding-top: calc(var(--bk-bar-h, 52px) + 12px); }
+
+/* Accessibility (axe) */
+/* Output lines of an example (`>>> ` and the answer): pdoc's grey #717171 is 3.8:1 on the dark block, this is above 7:1 */
+:root .pdoc-code .go, pre .go { color: #b4bfd0; }
+/* The sign # before a member is drawn by CSS and hidden until the pointer is over the member: the keyboard focus shows it too */
+.pdoc .headerlink:focus-visible { opacity: 1; outline: 2px solid var(--link); outline-offset: 2px; }
+/* A block that scrolls sideways takes the keyboard focus (head.html): the focus must be seen */
+.pdoc pre:focus-visible, .pdoc .attr:focus-visible, .pdoc table:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+/* "Inherited Members" was a <h5>: a label with the look of one */
+.pdoc .inherited-title { font-size: 1em; font-weight: 600; margin: 1rem 0 .5rem; }

@@ -1,0 +1,12 @@
+{# The module page of the Python reference: pdoc's own, with two fixes for assistive technology (axe).
+   - The link to a member (`<a class="headerlink">`) has no text in pdoc, the sign `#` is drawn by CSS: it gets a name.
+   - "Inherited Members" is a `<h5>` right after the `<h1>` of the page, the heading levels skip: it becomes a plain label
+     (the look is in custom.css).
+   pdoc finds this file before its own module.html.jinja2. #}
+{% extends "default/module.html.jinja2" %}
+{% macro member(doc) -%}
+{{ default_member(doc) | replace('class="headerlink"'|safe, ('class="headerlink" aria-label="Link to ' ~ (doc.qualname or doc.name) ~ '"')|safe) }}
+{%- endmacro %}
+{% block module_contents %}
+{% filter replace('<h5>Inherited Members</h5>'|safe, '<div class="inherited-title">Inherited Members</div>'|safe) %}{{ super() }}{% endfilter %}
+{% endblock %}

@@ -13,3 +13,21 @@
   } catch (e) {}
 })();
 </script>
+<script>
+/* A block that scrolls sideways (a code block, a signature, a table) is reachable with the keyboard: the arrow keys scroll it
+   once it has focus. Only blocks that do scroll get a tab stop; the rest are left out of the Tab order. */
+(function () {
+  function mark() {
+    var els = document.querySelectorAll('.pdoc pre, .pdoc .attr, .pdoc table');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (el.scrollWidth > el.clientWidth + 1) el.setAttribute('tabindex', '0');
+      else if (el.getAttribute('tabindex') === '0') el.removeAttribute('tabindex');
+    }
+  }
+  document.addEventListener('DOMContentLoaded', mark);
+  window.addEventListener('load', mark);
+  window.addEventListener('resize', mark);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(mark);
+})();
+</script>
