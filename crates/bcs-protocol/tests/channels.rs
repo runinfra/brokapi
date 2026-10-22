@@ -203,3 +203,22 @@ fn market_data_that_does_not_fit_its_type_is_kept_as_text() {
         IncomingMessage::Unknown(t) if t == text
     ));
 }
+
+#[tokio::test]
+async fn a_link_that_stayed_silent_for_two_minutes_is_dropped_and_opened_again() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let ws = client(&server).await.with_options(WsOptions {
+        announce_connects: true,
+        reconnect_min: Duration::from_millis(10),
+        reconnect_max: Duration::from_millis(20),
+    });
+    let (tx, _rx) = kanal::bounded_async::<IncomingMessage>(64);
+    let md = ws.connect_market_data(tx);
+    md.wait_connected().await;
+    assert_eq!(opts.ws_connections(), 1);
+    // The watchdog counts the silence on the clock of the session: more than a minute without a pong or a ping.
+    brokapi_mocks::time::jump(Duration::from_secs(120)).await;
+    wait_until("a second connection", || opts.ws_connections() >= 2).await;
+    md.wait_connected().await;
+}

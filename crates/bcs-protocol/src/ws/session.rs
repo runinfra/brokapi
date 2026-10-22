@@ -3,7 +3,6 @@
 use crate::error::BcsApiError;
 use crate::http::client::BcsHttpClient;
 use crate::models::messages::IncomingMessage;
-use crate::utils::date_format::now_millis;
 use crate::ws::client::BcsWsChannel;
 use crate::ws::models::MarketDataSubscribe;
 use crate::ws::models::WsOutgoing;
@@ -537,7 +536,8 @@ impl WsSession {
             let (mut write, mut read) = ws_stream.split();
 
             // 3. Pong watchdog state
-            let mut last_pong: u64 = now_millis();
+            // On the clock of tokio, like the heartbeat itself: a test moves both with one `jump`.
+            let mut last_pong = time::Instant::now();
 
             // Reader is told first: the data of the restored subscriptions comes after this marker.
             if options.announce_connects
@@ -604,11 +604,11 @@ impl WsSession {
                                 break 'inner_session;
                             }
                             Some(Ok(Message::Pong(_))) => {
-                                last_pong = now_millis();
+                                last_pong = time::Instant::now();
                                 info!("WS {:?} received pong", channel);
                             }
                             Some(Ok(Message::Ping(data))) => {
-                                last_pong = now_millis();
+                                last_pong = time::Instant::now();
                                 if write.send(Message::Pong(data)).await.is_err() {
                                     error!("WS {:?} failed to send pong", channel);
                                     break 'inner_session;
@@ -630,9 +630,9 @@ impl WsSession {
 
                     // ИСПРАВЛЕННЫЙ HEARTBEAT - настоящий Ping frame!
                     _ = heartbeat.tick() => {
-                        let elapsed = now_millis() - last_pong;
-                        if elapsed > WS_PONG_TIMEOUT.as_millis() as u64 {
-                            error!("Pong timeout for {:?} ({}ms), reconnect", channel, elapsed);
+                        let elapsed = last_pong.elapsed();
+                        if elapsed > WS_PONG_TIMEOUT {
+                            error!("Pong timeout for {:?} ({:?}), reconnect", channel, elapsed);
                             break 'inner_session;
                         }
 
