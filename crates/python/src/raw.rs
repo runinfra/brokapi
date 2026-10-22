@@ -16,6 +16,7 @@
 
 use std::sync::OnceLock;
 
+use brokapi::alor::AlorRaw;
 use brokapi::bcs::BcsRaw;
 use brokapi::core::Error;
 use brokapi::finam::FinamRaw;
@@ -461,6 +462,92 @@ pub async fn bcs(
             })
             .await?
         }
+    };
+    Ok(reply)
+}
+
+// -------------------------------------------------------------------------------------------------- ALOR
+
+/// The query of an ALOR call: the pairs of `args["query"]`, a list value repeats the key.
+fn alor_query(args: &Value) -> Result<Vec<(String, String)>, CallError> {
+    let Some(query) = args.get("query").filter(|q| !q.is_null()) else {
+        return Ok(Vec::new());
+    };
+    let Value::Object(map) = query else {
+        return Err(CallError::Broker(config(
+            "args[\"query\"] must be an object",
+        )));
+    };
+    let mut pairs = Vec::new();
+    for (key, value) in map {
+        match value {
+            Value::Null => {}
+            Value::Array(items) => {
+                for item in items {
+                    pairs.push((key.clone(), url_text(item)?));
+                }
+            }
+            other => pairs.push((key.clone(), url_text(other)?)),
+        }
+    }
+    Ok(pairs)
+}
+
+/// ALOR: any method of the API by its verb and path, `"GET /md/v2/time"`. The path is the one of the API
+/// description (with the numbers already in it), `args["query"]` is the query, `args["body"]` the JSON of a POST
+/// or PUT, `args["request_id"]` the `X-REQID` of an order command (a new one is made if the call has none).
+pub async fn alor(
+    raw: AlorRaw,
+    method: &str,
+    args: &Value,
+    command: bool,
+) -> Result<Value, CallError> {
+    use brokapi::alor::protocol::http::client::Method;
+    let args = if args.is_null() { &json!({}) } else { args };
+    let Some((verb, path)) = method.split_once(' ') else {
+        return Err(CallError::Broker(config(format!(
+            "ALOR has no operation named {method:?}: give the verb and the path, \"GET /md/v2/time\"; nothing was sent"
+        ))));
+    };
+    let verb = match verb {
+        "GET" => Method::GET,
+        "POST" => Method::POST,
+        "PUT" => Method::PUT,
+        "DELETE" => Method::DELETE,
+        other => {
+            return Err(CallError::Broker(config(format!(
+                "the verb {other:?} is not supported, use GET, POST, PUT or DELETE"
+            ))));
+        }
+    };
+    if !path.starts_with('/') || path.contains(['?', '#']) {
+        return Err(CallError::Broker(config(
+            "after the verb comes a path that starts with / and has no query (the query goes to args[\"query\"])",
+        )));
+    }
+    let path = path.to_string();
+    let pairs = alor_query(args)?;
+    let body = args.get("body").cloned().filter(|b| !b.is_null());
+    let request_id = args
+        .get("request_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let reply: Value = if verb == Method::GET && !command {
+        raw.call(method, |http| async move {
+            let query: Vec<(&str, String)> =
+                pairs.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+            http.read::<Value>(&path, &query).await
+        })
+        .await?
+    } else {
+        raw.call_command(method, |http| async move {
+            let query: Vec<(&str, String)> =
+                pairs.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+            http.command::<Value, Value>(verb, &path, &query, body.as_ref(), Some(&request_id))
+                .await
+        })
+        .await?
     };
     Ok(reply)
 }

@@ -47,6 +47,10 @@ enum Conn {
         md: brokapi::finam::MarketDataConnector,
         ud: brokapi::finam::UserDataConnector,
     },
+    Alor {
+        md: brokapi::alor::MarketDataConnector,
+        ud: brokapi::alor::UserDataConnector,
+    },
 }
 
 impl Conn {
@@ -55,6 +59,7 @@ impl Conn {
             Conn::Bcs { md, .. } => md,
             Conn::Tbank { md, .. } => md,
             Conn::Finam { md, .. } => md,
+            Conn::Alor { md, .. } => md,
         }
     }
 
@@ -63,6 +68,7 @@ impl Conn {
             Conn::Bcs { ud, .. } => ud,
             Conn::Tbank { ud, .. } => ud,
             Conn::Finam { ud, .. } => ud,
+            Conn::Alor { ud, .. } => ud,
         }
     }
 
@@ -73,6 +79,7 @@ impl Conn {
             Conn::Bcs { ud, .. } => ud.price_grid().learn(params),
             Conn::Tbank { ud, .. } => ud.price_grid().learn(params),
             Conn::Finam { ud, .. } => ud.price_grid().learn(params),
+            Conn::Alor { ud, .. } => ud.price_grid().learn(params),
         }
     }
 
@@ -82,6 +89,7 @@ impl Conn {
             Conn::Bcs { ud, .. } => crate::raw::bcs(ud.raw(), method, args, command).await,
             Conn::Tbank { ud, .. } => crate::raw::tbank(ud.raw(), method, args, command).await,
             Conn::Finam { ud, .. } => crate::raw::finam(ud.raw(), method, args, command).await,
+            Conn::Alor { ud, .. } => crate::raw::alor(ud.raw(), method, args, command).await,
         }
     }
 
@@ -96,6 +104,10 @@ impl Conn {
                 serde_json::to_value(ud.caps()),
             ),
             Conn::Finam { md, ud } => (
+                serde_json::to_value(md.caps()),
+                serde_json::to_value(ud.caps()),
+            ),
+            Conn::Alor { md, ud } => (
                 serde_json::to_value(md.caps()),
                 serde_json::to_value(ud.caps()),
             ),
@@ -115,6 +127,10 @@ impl Conn {
                 (md.shutdown(mode).await, u)
             }
             Conn::Finam { md, ud } => {
+                let u = ud.shutdown(mode).await;
+                (md.shutdown(mode).await, u)
+            }
+            Conn::Alor { md, ud } => {
                 let u = ud.shutdown(mode).await;
                 (md.shutdown(mode).await, u)
             }
@@ -156,8 +172,9 @@ fn broker_kind(name: &str) -> Result<&'static str, CallError> {
         "bcs" => Ok("bcs"),
         "tbank" => Ok("tbank"),
         "finam" => Ok("finam"),
+        "alor" => Ok("alor"),
         other => Err(CallError::Broker(config(format!(
-            "unknown broker {other:?}: use \"bcs\", \"tbank\" or \"finam\""
+            "unknown broker {other:?}: use \"bcs\", \"tbank\", \"finam\" or \"alor\""
         )))),
     }
 }
@@ -166,6 +183,7 @@ fn default_limiter(broker: &'static str) -> NativeLimiter {
     let limiter = match broker {
         "bcs" => BrokerLimiter::new(&brokapi::bcs::limits::default_limits()),
         "tbank" => BrokerLimiter::new(&brokapi::tbank::limits::default_limits()),
+        "alor" => BrokerLimiter::new(&brokapi::alor::limits::default_limits()),
         _ => BrokerLimiter::new(&brokapi::finam::limits::default_limits()),
     };
     NativeLimiter { broker, limiter }
@@ -211,6 +229,21 @@ async fn start(
             let ud =
                 UserDataConnector::start(UserDataConfig::new(cfg, ud_source), limiter, tx).await?;
             Ok(Conn::Tbank { md, ud })
+        }
+        "alor" => {
+            use brokapi::alor::{
+                MarketDataConfig, MarketDataConnector, UserDataConfig, UserDataConnector,
+            };
+            let cfg = settings.alor()?;
+            let md = MarketDataConnector::start(
+                MarketDataConfig::new(cfg.clone(), md_source),
+                limiter.clone(),
+                tx.clone(),
+            )
+            .await?;
+            let ud =
+                UserDataConnector::start(UserDataConfig::new(cfg, ud_source), limiter, tx).await?;
+            Ok(Conn::Alor { md, ud })
         }
         _ => {
             use brokapi::finam::{
@@ -510,7 +543,7 @@ fn out<T: Serialize>(value: T) -> Result<String, CallError> {
     Ok(serde_json::to_string(&value)?)
 }
 
-/// The instrument of a ticker. BCS and Finam build it from the text, T-Bank looks it up in its directory.
+/// The instrument of a ticker. BCS, Finam and ALOR build it from the text, T-Bank looks it up in its directory.
 async fn resolve(
     inner: &Inner,
     conn: &Conn,
@@ -535,6 +568,10 @@ async fn resolve(
                 },
             ))
         }
+        "alor" => Ok(brokapi::alor::util::instrument_id(
+            ticker,
+            board.unwrap_or("TQBR"),
+        )),
         "finam" => Ok(brokapi::finam::util::instrument_from_symbol(&format!(
             "{ticker}@{}",
             board.unwrap_or("MISX")

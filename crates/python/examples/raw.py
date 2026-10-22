@@ -26,6 +26,14 @@ async def bcs_quotes(client: brokapi.Client) -> dict[str, Any]:
     # ANCHOR_END: bcs
 
 
+# ANCHOR: alor
+async def alor_summary(client: brokapi.Client) -> Any:
+    """ALOR (REST): the verb and the path of the API description. `query` is for the URL, `body` for a POST or PUT."""
+    reply = await client.raw("GET /md/v2/Clients/MOEX/D00001/summary")  # your own portfolio in the path
+    return reply["portfolioEvaluation"]  # prices are Decimal
+    # ANCHOR_END: alor
+
+
 # ANCHOR: finam
 async def finam_quote(client: brokapi.Client) -> str:
     """Finam (gRPC): the same as T-Bank. `google.type.Decimal` is {"value": "100.05"}."""

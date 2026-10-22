@@ -1,4 +1,4 @@
-"""brokapi: one interface to the APIs of Russian brokers (BCS, T-Bank, Finam) for Python.
+"""brokapi: one interface to the APIs of Russian brokers (BCS, T-Bank, Finam, ALOR) for Python.
 
 A thin layer over the Rust core of brokapi. The rules of the core are kept: trading opens after ``reconcile``, the
 ``cid`` of an order is made by the bot, a command whose outcome is :class:`Unknown` is never repeated, and one rate

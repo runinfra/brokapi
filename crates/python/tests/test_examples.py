@@ -151,12 +151,14 @@ async def test_infrastructure_two_lives_of_the_process(tmp_path: Path) -> None:
         await testing.mock_bcs() as bcs,
         await testing.mock_tbank() as tbank,
         await testing.mock_finam() as finam,
+        await testing.mock_alor() as alor,
     ):
         settings = {
             "bcs": bcs.settings,
             "tbank-a": {**tbank.settings, "account_id": "acc-a"},
             "tbank-b": {**tbank.settings, "account_id": "acc-b"},
             "finam": finam.settings,
+            "alor": alor.settings,
         }
         # The first life: an order on every account, then the process goes away without cancelling.
         infra = await infrastructure.Infra.start(settings, journal)
@@ -181,6 +183,7 @@ async def test_infrastructure_two_lives_of_the_process(tmp_path: Path) -> None:
             assert again.journal.orders[ghost][1] == "done"  # closed offline: it was never sent
             assert again.journal.orders[placed["bcs"]][1] == "working"
             assert again.journal.orders[placed["finam"]][1] == "working"
+            assert again.journal.orders[placed["alor"]][1] == "working"
             assert again.journal.orders[placed["tbank-b"]][1] == "working"
             assert again.clients["tbank-a"].limiter.broker == "tbank"
             filled = await again.clients["tbank-a"].order_state(placed["tbank-a"])
@@ -221,7 +224,7 @@ import record as record_example  # noqa: E402
 import stops  # noqa: E402
 
 
-@pytest.mark.parametrize("mock_of", [testing.mock_bcs, testing.mock_tbank, testing.mock_finam])
+@pytest.mark.parametrize("mock_of", [testing.mock_bcs, testing.mock_tbank, testing.mock_finam, testing.mock_alor])
 async def test_stops_example_protects_lists_and_releases(mock_of: object, capsys: pytest.CaptureFixture[str]) -> None:
     async with await mock_of() as mock:  # type: ignore[operator]
         client = await mock.connect()
@@ -272,8 +275,10 @@ async def test_raw_examples_read_each_broker(
     bcs: tuple[testing.MockBroker, brokapi.Client],
     tbank: tuple[testing.MockBroker, brokapi.Client],
     finam: tuple[testing.MockBroker, brokapi.Client],
+    alor: tuple[testing.MockBroker, brokapi.Client],
 ) -> None:
     assert (await raw_example.bcs_quotes(bcs[1]))["SBER"] > 0
+    assert Decimal(str(await raw_example.alor_summary(alor[1]))) > 0
     prices = await raw_example.tbank_prices(tbank[1])
     assert prices["SBER"] == "274.050000000"
     assert Decimal(await raw_example.finam_quote(finam[1])) > 0

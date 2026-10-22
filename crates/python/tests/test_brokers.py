@@ -1,4 +1,4 @@
-"""The same day on all three imitations: the interface does not depend on the broker."""
+"""The same day on every imitation: the interface does not depend on the broker."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import pytest
 import brokapi
 from brokapi import testing
 
-BROKERS = ["bcs", "tbank", "finam"]
+BROKERS = ["bcs", "tbank", "finam", "alor"]
 
 
 @pytest.fixture(params=BROKERS)

@@ -1,8 +1,8 @@
-"""One process, three brokers, four accounts: one event stream, one order journal in a file, and a restart that
+"""One process, several brokers and accounts: one event stream, one order journal in a file, and a restart that
 reconciles every account against that journal.
 
 The code of the page "Как собрать инфраструктуру на несколько брокеров и счетов" of the Python section of the book.
-The accounts are BCS (one), T-Bank (two, one token) and Finam (one). The tests play two lives of the process against
+The accounts are BCS (one), T-Bank (two, one token), Finam (one) and ALOR (one). The tests play two lives of the process against
 the imitations. Nothing here touches the network or money.
 """
 
@@ -15,7 +15,7 @@ from typing import Optional
 
 import brokapi
 
-ACCOUNTS = ["bcs", "tbank-a", "tbank-b", "finam"]
+ACCOUNTS = ["bcs", "tbank-a", "tbank-b", "finam", "alor"]
 
 
 # ANCHOR: journal
@@ -64,13 +64,14 @@ class Infra:
         """Connects everything, subscribes, reconciles every account with the journal, and only then returns."""
         clients: dict[str, brokapi.Client] = {}
         # One limiter per area where the broker counts a limit. T-Bank counts per user: both accounts share one.
-        # BCS counts per token, Finam per user. The three brokers never share.
+        # BCS counts per token, Finam per user, ALOR per login. The brokers never share.
         clients["bcs"] = await brokapi.connect("bcs", name="bcs", **settings.get("bcs", {}))
         clients["tbank-a"] = await brokapi.connect("tbank", name="tbank-a", **settings.get("tbank-a", {}))
         clients["tbank-b"] = await brokapi.connect(
             "tbank", name="tbank-b", limiter=clients["tbank-a"].limiter, **settings.get("tbank-b", {})
         )
         clients["finam"] = await brokapi.connect("finam", name="finam", **settings.get("finam", {}))
+        clients["alor"] = await brokapi.connect("alor", name="alor", **settings.get("alor", {}))
         infra = cls(clients, Journal(journal_path))
         # Subscribe to the statuses and fills of every account FIRST, then reconcile it with ITS part of the journal.
         for client in clients.values():
@@ -145,7 +146,8 @@ async def watch(infra: Infra) -> None:
 
 
 async def main() -> None:
-    # Every setting comes from the environment: BCS_REFRESH_TOKEN, BCS_IS_WRITE, TBANK_TOKEN, FINAM_SECRET, ...
+    # Every setting comes from the environment: BCS_REFRESH_TOKEN, BCS_IS_WRITE, TBANK_TOKEN, FINAM_SECRET,
+    # ALOR_REFRESH_TOKEN, ALOR_PORTFOLIO, ...
     # The two T-Bank accounts differ in account_id.
     settings = {
         "tbank-a": {"account_id": os.environ["TBANK_ACCOUNT_ID"]},

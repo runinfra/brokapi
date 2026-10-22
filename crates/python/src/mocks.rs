@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use brokapi::core::{CidCodec, ClientOrderId, Price, Qty};
-use brokapi_mocks::{bcs, finam, tbank};
+use brokapi_mocks::{alor, bcs, finam, tbank};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use serde_json::json;
@@ -17,6 +17,7 @@ enum Server {
     Bcs(bcs::MockServer),
     Tbank(tbank::MockServer),
     Finam(finam::MockServer),
+    Alor(alor::MockServer),
 }
 
 /// A running imitation of one broker.
@@ -26,7 +27,7 @@ pub struct NativeMock {
     server: Mutex<Option<Server>>,
 }
 
-/// Starts the imitation of `broker` (`"bcs"`, `"tbank"` or `"finam"`) on a free port.
+/// Starts the imitation of `broker` (`"bcs"`, `"tbank"`, `"finam"` or `"alor"`) on a free port.
 #[pyfunction]
 #[pyo3(signature = (broker, synthetic_candles=false))]
 pub fn start_mock(
@@ -62,6 +63,10 @@ pub fn start_mock(
                     .store(synthetic_candles, Ordering::Relaxed);
                 ("finam", Server::Finam(server))
             }
+            "alor" => (
+                "alor",
+                Server::Alor(alor::MockServer::start(Default::default()).await),
+            ),
             other => return Err(PyValueError::new_err(format!("no imitation of {other:?}"))),
         };
         Ok(NativeMock {
@@ -108,12 +113,17 @@ impl NativeMock {
                 "secret": finam::SECRET,
                 "account_id": "ACC1",
             }),
+            Server::Alor(s) => json!({
+                "endpoint": s.http_base,
+                "refresh_token": "mock-refresh-token",
+                "portfolio": alor::PORTFOLIO,
+            }),
         };
         Ok(settings.to_string())
     }
 
     /// Executes the order `cid`: it becomes filled (or partly filled), a fill event goes to the account.
-    /// BCS and Finam use `qty` and `price`. T-Bank fills the whole order at its price and ignores both.
+    /// BCS, Finam and ALOR use `qty` and `price`. T-Bank fills the whole order at its price and ignores both.
     #[pyo3(signature = (cid, qty=None, price=None, account=None))]
     fn fill(
         &self,
@@ -145,6 +155,16 @@ impl NativeMock {
             Server::Finam(s) => {
                 let (qty, price): (Qty, Price) = (dec(qty, "qty")?, dec(price, "price")?);
                 fill_finam(s, account.unwrap_or("ACC1"), cid, qty, price)?;
+            }
+            Server::Alor(s) => {
+                let (qty, price): (Qty, Price) = (dec(qty, "qty")?, dec(price, "price")?);
+                // The imitation panics for an order it does not have or one that is not working.
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    s.fill(&cid.hyphenated().to_string(), qty, price)
+                }))
+                .map_err(|_| {
+                    PyValueError::new_err("the ALOR imitation has no such working order to execute")
+                })?;
             }
         }
         Ok(())

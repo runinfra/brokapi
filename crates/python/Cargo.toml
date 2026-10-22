@@ -34,7 +34,7 @@ testing = ["dep:brokapi-mocks"]
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-brokapi = { path = "../..", features = ["bcs", "tbank", "finam"] }
+brokapi = { path = "../..", features = ["bcs", "tbank", "finam", "alor"] }
 brokapi-mocks = { path = "../mocks", optional = true }
 dotenvy = "0.15"
 pyo3 = { version = "0.30", features = ["abi3-py310"] }

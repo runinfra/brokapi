@@ -1,4 +1,4 @@
-"""`client.raw`: any method of a broker by name, on the imitations of all three."""
+"""`client.raw`: any method of a broker by name, on every imitation."""
 
 from __future__ import annotations
 
@@ -12,13 +12,14 @@ import pytest
 import brokapi
 from brokapi import testing
 
-BROKERS = ["bcs", "tbank", "finam"]
+BROKERS = ["bcs", "tbank", "finam", "alor"]
 
 # One read that each imitation answers, and the typed call that spends the same quota.
 READ: dict[str, tuple[str, dict[str, Any]]] = {
     "bcs": ("GetPortfolio", {}),
     "tbank": ("GetPortfolio", {"account_id": "acc-a"}),
     "finam": ("GetAccount", {"account_id": "ACC1"}),
+    "alor": ("GET /md/v2/Clients/MOEX/D00001/positions", {}),
 }
 
 
@@ -36,6 +37,9 @@ async def test_a_read_returns_the_reply_of_the_broker_as_plain_data(
     if mock.broker == "bcs":
         assert {row["type"] for row in reply} == {"depoLimit", "moneyLimit"}
         assert all(isinstance(row["quantity"], (int, Decimal)) for row in reply)
+    elif mock.broker == "alor":
+        assert {row["symbol"] for row in reply} == {"RUB", "SBER"}
+        assert all(isinstance(row["qtyUnits"], (int, Decimal)) for row in reply)
     elif mock.broker == "tbank":
         assert reply["account_id"] == "acc-a"
         assert isinstance(reply["positions"], list)
@@ -101,6 +105,11 @@ async def test_arguments_that_do_not_fit_the_method_are_refused(pair: tuple[test
             await client.raw("DELETE /x")
         with pytest.raises(brokapi.Config, match="query"):
             await client.raw("GetQuotes", {"query": [1]})
+    elif mock.broker == "alor":
+        with pytest.raises(brokapi.Config, match="verb"):
+            await client.raw("PATCH /x")
+        with pytest.raises(brokapi.Config, match="query"):
+            await client.raw("GET /md/v2/time", {"query": [1]})
     else:
         method, args = READ[mock.broker]
         with pytest.raises(brokapi.Config, match="do not fit"):
@@ -176,6 +185,7 @@ async def test_a_call_without_a_route_spends_the_default_quota(pair: tuple[testi
         "bcs": ("GET /trade-api-bff-portfolio/api/v1/portfolio", {}),
         "tbank": ("GetAccounts", {}),
         "finam": ("LastQuote", {"symbol": "SBER@MISX"}),
+        "alor": ("GET /md/v2/time", {}),
     }[mock.broker]
     await exhaust(client, method, args)
 
@@ -195,6 +205,14 @@ async def test_a_command_is_refused_by_the_broker_as_a_definite_no(
         with pytest.raises(brokapi.BrokapiError) as error:
             await client.raw("CancelOrder", {"account_id": "ACC1", "order_id": "no-such-order"}, command=True)
         assert not isinstance(error.value, brokapi.Unknown)  # an answer is not an unknown outcome
+    elif mock.broker == "alor":
+        with pytest.raises(brokapi.Rejected) as error:
+            await client.raw(
+                "DELETE /commandapi/warptrans/TRADE/v2/client/orders/1",
+                {"query": {"portfolio": "D00001", "exchange": "MOEX", "stop": False}},
+                command=True,
+            )
+        assert error.value.code == "not_found"
     else:
         with pytest.raises(brokapi.Rejected):
             await client.raw("POST /trade-api-bff-operations/api/v1/orders/cancel/sync", {"body": {}}, command=True)
@@ -203,3 +221,28 @@ async def test_a_command_is_refused_by_the_broker_as_a_definite_no(
 async def test_a_read_through_command_mode_works_too(bcs: tuple[testing.MockBroker, brokapi.Client]) -> None:
     _, client = bcs
     assert await client.raw("GetPortfolio", command=True) == await client.raw("GetPortfolio")
+
+
+async def test_alor_takes_the_verb_and_the_path_and_a_request_id_for_a_command(
+    alor: tuple[testing.MockBroker, brokapi.Client],
+) -> None:
+    _, client = alor
+    assert isinstance(await client.raw("GET /md/v2/time"), int)
+    body = {
+        "side": "buy",
+        "quantity": 1,
+        "price": Decimal("100.50"),
+        "instrument": {"symbol": "SBER", "exchange": "MOEX", "instrumentGroup": "TQBR"},
+        "user": {"portfolio": "D00001"},
+    }
+    path = "POST /commandapi/warptrans/TRADE/v2/client/orders/actions/limit"
+    first = await client.raw(path, {"body": body, "request_id": "my-request-1"}, command=True)
+    # The same request id: the broker answers with a copy of the first answer and does not place a second order.
+    again = await client.raw(path, {"body": body, "request_id": "my-request-1"}, command=True)
+    assert first == again and first["orderNumber"]
+    assert len(await client.active_orders()) == 1
+
+
+async def test_a_read_through_command_mode_works_too_on_alor(alor: tuple[testing.MockBroker, brokapi.Client]) -> None:
+    _, client = alor
+    assert await client.raw("GET /md/v2/time", command=True) > 0

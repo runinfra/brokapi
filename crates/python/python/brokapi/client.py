@@ -47,6 +47,7 @@ _BROKERS = {
     "bcs": {"refresh_token", "write", "endpoint"},
     "tbank": {"token", "sandbox", "account_id", "endpoint", "app_name"},
     "finam": {"secret", "account_id", "endpoint"},
+    "alor": {"refresh_token", "portfolio", "exchange", "test", "endpoint"},
 }
 
 
@@ -69,7 +70,7 @@ class Limiter:
 
     @property
     def broker(self) -> str:
-        """The broker whose limits it counts: ``bcs``, ``tbank`` or ``finam``."""
+        """The broker whose limits it counts: ``bcs``, ``tbank``, ``finam`` or ``alor``."""
         return self._native.broker
 
     def __repr__(self) -> str:
@@ -200,7 +201,7 @@ class Client:
 
     @property
     def broker(self) -> str:
-        """``bcs``, ``tbank`` or ``finam``."""
+        """``bcs``, ``tbank``, ``finam`` or ``alor``."""
         return self._native.broker
 
     @property
@@ -247,8 +248,8 @@ class Client:
     async def instrument(self, ticker: str, board: Optional[str] = None) -> InstrumentId:
         """The instrument for a ticker, in the form the broker wants.
 
-        ``board`` is the class code of BCS and T-Bank (default ``TQBR``) or the MIC of Finam (default ``MISX``).
-        ``"SBER@TQBR"`` works as the ticker too. BCS and Finam build the id from the text. T-Bank looks it up in
+        ``board`` is the class code of BCS, T-Bank and ALOR (default ``TQBR``) or the MIC of Finam (default ``MISX``).
+        ``"SBER@TQBR"`` works as the ticker too. BCS, Finam and ALOR build the id from the text. T-Bank looks it up in
         its directory (one request) and raises :class:`~brokapi.Rejected` with code ``not_found`` if there is none.
         """
         return _codec.decode(InstrumentId, await self._call("instrument", ticker=ticker, board=board))
@@ -525,8 +526,9 @@ class Client:
 
     async def subscribe_stop_orders(self) -> int:
         """A stream of stop order statuses. **No broker has one** (BCS does not document it, T-Bank's API has none,
-        Finam has none): this raises :class:`~brokapi.Unsupported` for all three. Poll :meth:`active_stop_orders`; the
-        library does not poll for you."""
+        Finam has none, ALOR's stream has no event of the common interface): this raises
+        :class:`~brokapi.Unsupported` for all of them. Poll :meth:`active_stop_orders`; the library does not poll for
+        you."""
         return await self._call("subscribe_stop_orders")
 
     # ------------------------------------------------------------------------------------------ raw
@@ -557,6 +559,11 @@ class Client:
           method. ``args`` has ``query`` (URL parameters), ``body`` (the JSON of a ``POST``) and, for
           ``GetOrderStatus``, ``path`` (``{"id": ...}``). A name without a route in the rate limit file spends the
           default quota.
+        - **ALOR** (REST): ``method`` is ``"VERB /path"`` with the verb ``GET``, ``POST``, ``PUT`` or ``DELETE`` and the
+          path of the API description (``"GET /md/v2/time"``, ``"GET /md/v2/Clients/MOEX/D12345/summary"``). ``args``
+          has ``query`` (URL parameters), ``body`` (the JSON of a ``POST`` or ``PUT``) and ``request_id`` (the
+          ``X-REQID`` of an order command: the broker answers a repeated id with a copy of its first answer; a new one is
+          made if you give none). Every call spends the default quota.
 
         Raises :class:`~brokapi.Config` for a method the broker does not have or arguments that do not fit it
         (nothing was sent and no quota was spent).
@@ -587,6 +594,19 @@ async def connect(
     *,
     refresh_token: Optional[str] = None,
     write: Optional[bool] = None,
+    endpoint: Optional[str] = None,
+    name: Optional[str] = None,
+    limiter: Optional[Limiter] = None,
+    event_buffer: int = 8192,
+) -> Client: ...
+@overload
+async def connect(
+    broker: Literal["alor"],
+    *,
+    refresh_token: Optional[str] = None,
+    portfolio: Optional[str] = None,
+    exchange: Optional[str] = None,
+    test: Optional[bool] = None,
     endpoint: Optional[str] = None,
     name: Optional[str] = None,
     limiter: Optional[Limiter] = None,
@@ -636,6 +656,9 @@ async def connect(
       (``TBANK_ENDPOINT``, ``TBANK_APP_NAME``).
     - ``finam``: ``secret`` (``FINAM_SECRET``, required), ``account_id`` (``FINAM_ACCOUNT_ID``, required), ``endpoint``
       (``FINAM_API_URL``).
+    - ``alor``: ``refresh_token`` (``ALOR_REFRESH_TOKEN``, required), ``portfolio`` (``ALOR_PORTFOLIO``, required when
+      the account has several portfolios), ``exchange`` (``ALOR_EXCHANGE``, ``MOEX`` or ``SPBX``, default ``MOEX``),
+      ``test`` (``ALOR_TEST``, ``true``: the test contour of the broker, with a test account).
 
     ``name`` labels the events (``<name>-md``, ``<name>-ud``) and defaults to the broker. Give each client of a
     process its own name. ``limiter`` puts this client on the rate limit counter of another one (see
@@ -643,10 +666,10 @@ async def connect(
     rule of each subscription.
 
     Raises :class:`~brokapi.Config` for a missing or wrong setting, :class:`~brokapi.Transport` when the broker cannot
-    be reached or refuses the token. BCS has no sandbox: the account is real.
+    be reached or refuses the token. BCS has no sandbox: the account is real. ALOR has a test contour (``test=True``).
     """
     if broker not in _BROKERS:
-        raise ValueError(f"unknown broker {broker!r}: use 'bcs', 'tbank' or 'finam'")
+        raise ValueError(f"unknown broker {broker!r}: use 'bcs', 'tbank', 'finam' or 'alor'")
     unknown = set(settings) - _BROKERS[broker]
     if unknown:
         raise TypeError(

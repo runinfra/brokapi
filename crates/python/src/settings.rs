@@ -1,6 +1,7 @@
 //! Settings of a connection: the arguments of `brokapi.connect(...)` first, the environment variables of the
 //! Rust library (`BCS_REFRESH_TOKEN`, `TBANK_TOKEN`, ...) for everything the caller did not pass.
 
+use brokapi::alor::protocol::config::{AlorConfig, AlorEnv};
 use brokapi::bcs::protocol::config::BcsConfig;
 use brokapi::core::Error;
 use brokapi::finam::FinamApiConfig;
@@ -79,6 +80,31 @@ impl Settings {
             None => BcsConfig::new(token),
         };
         Ok(cfg.with_write(write))
+    }
+
+    pub fn alor(&self) -> Result<AlorConfig, Error> {
+        let token = self
+            .text("refresh_token", "ALOR_REFRESH_TOKEN")
+            .ok_or_else(|| {
+                config("ALOR_REFRESH_TOKEN is not set (pass refresh_token=... or set the variable)")
+            })?;
+        let mut cfg = match self.endpoint(None) {
+            Some(url) => AlorConfig::for_mock(token, url),
+            None => {
+                let mut cfg = AlorConfig::new(token);
+                if self.flag("test", "ALOR_TEST") {
+                    cfg = cfg.with_env(AlorEnv::Test);
+                }
+                cfg
+            }
+        };
+        if let Some(portfolio) = self.text("portfolio", "ALOR_PORTFOLIO") {
+            cfg = cfg.with_portfolio(portfolio);
+        }
+        if let Some(exchange) = self.text("exchange", "ALOR_EXCHANGE") {
+            cfg = cfg.with_exchange(exchange);
+        }
+        Ok(cfg)
     }
 
     pub fn tbank(&self) -> Result<TbankConfig, Error> {

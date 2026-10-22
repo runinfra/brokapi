@@ -421,9 +421,10 @@ impl MockServer {
             date: now_text(),
         };
         let trade_id = trade.id.clone();
+        // The order event comes first, then the fill.
+        b.push("orders", owner, &o.json());
         b.push("trades", owner, &trade.json());
         b.trades.push(trade);
-        b.push("orders", owner, &o.json());
         trade_id
     }
 }

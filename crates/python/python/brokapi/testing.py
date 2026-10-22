@@ -31,7 +31,7 @@ from typing import Any, Optional
 from . import _codec, _native
 from .client import Client, connect
 
-__all__ = ["MockBroker", "mock_bcs", "mock_finam", "mock_tbank"]
+__all__ = ["MockBroker", "mock_alor", "mock_bcs", "mock_finam", "mock_tbank"]
 
 
 class MockBroker:
@@ -43,7 +43,7 @@ class MockBroker:
 
     @property
     def broker(self) -> str:
-        """``bcs``, ``tbank`` or ``finam``."""
+        """``bcs``, ``tbank``, ``finam`` or ``alor``."""
         return self._native.broker
 
     @property
@@ -75,7 +75,7 @@ class MockBroker:
     ) -> None:
         """Executes the order ``cid``: it becomes filled, and the fill event goes to the account.
 
-        BCS and Finam need ``qty`` and ``price`` (``qty`` less than the order makes a partial fill on BCS). T-Bank
+        BCS, Finam and ALOR need ``qty`` and ``price`` (``qty`` less than the order makes a partial fill on BCS). T-Bank
         fills the whole order at its price and ignores both. ``account`` picks the account of T-Bank
         (``acc-a`` or ``acc-b``) or Finam (``ACC1`` or ``ACC2``).
         """
@@ -123,3 +123,11 @@ async def mock_finam(*, synthetic_candles: bool = False) -> MockBroker:
     ``synthetic_candles=True``: a series for the period asked, one bar per step of the timeframe.
     """
     return await _start("finam", synthetic_candles)
+
+
+async def mock_alor(*, synthetic_candles: bool = False) -> MockBroker:
+    """An imitation of ALOR (HTTP and WebSocket). One portfolio, ``D00001``, and one exchange, ``MOEX``.
+
+    ``synthetic_candles`` has no effect on ALOR: it always answers three bars from the start of the period.
+    """
+    return await _start("alor", synthetic_candles)

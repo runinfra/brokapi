@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
-use reqwest::{Client, Method, StatusCode};
+pub use reqwest::Method;
+use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, warn};
