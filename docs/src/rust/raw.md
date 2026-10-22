@@ -10,6 +10,7 @@
 | Т-Банк | `TbankRaw` | `TbankClient` с клиентами всех сервисов (`users()`, `market_data()`, `instruments()`...) |
 | БКС | `BcsRaw` | `BcsHttpClient` (REST), плюс `connect_ws` для WebSocket-каналов |
 | Финам | `FinamRaw` | `FinamApi` с клиентами всех сервисов |
+| АЛОР | `AlorRaw` | `AlorHttpClient` (REST, по методу на операцию описания API), плюс `connect_ws` и `connect_cws` для каналов WebSocket |
 
 Сколько методов брокера есть и какие из них доступны только так: [Покрытие API](../coverage.md). Это не недоделка,
 а способ дать все остальное, не раздувая общий интерфейс.
@@ -17,8 +18,8 @@
 ## Два вызова
 
 - **`call(имя, замыкание)`** - для чтения. Сетевой сбой и таймаут - ошибка, которую можно повторить.
-  У Финама при просроченном токене запрос один раз повторяется после обновления JWT. У БКС клиент сам повторяет
-  запрос один раз после ответа 401 (`post_command` для заявок этого не делает).
+  У Финама при просроченном токене запрос один раз повторяется после обновления JWT. У БКС и АЛОРа клиент сам повторяет
+  запрос один раз после ответа 401 (команды заявок этого не делают).
 - **`call_command(имя, замыкание)`** - для всего, что **меняет счет**. Если ответа нет (таймаут, обрыв, ошибка
   сервера), результат `Unknown`: брокер мог выполнить команду. Библиотека такой вызов никогда не повторяет.
 
@@ -136,7 +137,34 @@ async fn finam_raw(md: &MarketDataConnector) -> Result<(), brokapi::core::Error>
 }
 ```
 
-Все три примера только читают. Все, что меняет счет (отчет, SL/TP-заявка Финама и подобное), идет через
+АЛОР: котировки нескольких бумаг сразу и сводка портфеля (оба метода в общем интерфейсе не нужны).
+
+```rust
+use brokapi::alor::MarketDataConnector;
+
+async fn alor_raw(md: &MarketDataConnector, portfolio: &str) -> Result<(), brokapi::core::Error> {
+    let raw = md.raw();
+
+    let quotes = raw
+        .call("GetQuotes", |http| async move { http.get_quotes(&[("MOEX", "SBER"), ("MOEX", "GAZP")]).await })
+        .await?;
+    for q in quotes {
+        println!("{} покупка {:?} продажа {:?} последняя {:?}", q.symbol, q.bid, q.ask, q.last_price);
+    }
+
+    let portfolio = portfolio.to_string();
+    let summary = raw
+        .call("GetSummary", |http| async move { http.get_summary("MOEX", &portfolio).await })
+        .await?;
+    println!("оценка портфеля: {:?}", summary.portfolio_evaluation);
+    Ok(())
+}
+```
+
+Остальные методы описания API (группы заявок, оценка заявки, риски, остальные подписки WebSocket, канал `/cws`) устроены так же:
+метод клиента `AlorHttpClient` в замыкании, имя для квоты первым аргументом.
+
+Все примеры только читают. Все, что меняет счет (отчет, SL/TP-заявка Финама, группа заявок АЛОРа и подобное), идет через
 `call_command`. Готовые полные примеры лежат в `examples/*_raw_access.rs` соответствующих крейтов.
 
 ## Как проверено

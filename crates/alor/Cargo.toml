@@ -46,3 +46,7 @@ path = "src/lib.rs"
 default = []
 # Level-3 integration tests against the live ALOR API (never run in CI).
 integration-live = []
+
+[[example]]
+name = "alor_raw_access"
+path = "examples/alor_raw_access.rs"

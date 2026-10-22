@@ -21,6 +21,7 @@
   - [БКС](brokers/bcs.md)
   - [Т-Банк](brokers/tbank.md)
   - [Финам](brokers/finam.md)
+  - [АЛОР](brokers/alor.md)
 
 # Rust
 

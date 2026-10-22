@@ -5,10 +5,10 @@
 Колонка **Где**:
 
 - **общий** - метод вызывает коннектор, он доступен через общие трейты (`brokapi-core`).
-- **клиент** - метод есть в клиенте брокера (`*-protocol`), общего трейта для него нет. Он доступен через `connector.raw()` (`TbankRaw`, `FinamRaw`, `BcsRaw`): тот же токен, адрес и общий счетчик лимитов, квота берется по имени метода. Это не недоделка, а способ дать все остальное без раздувания общего интерфейса.
+- **клиент** - метод есть в клиенте брокера (`*-protocol`), общего трейта для него нет. Он доступен через `connector.raw()` (`TbankRaw`, `FinamRaw`, `BcsRaw`, `AlorRaw`): тот же токен, адрес и общий счетчик лимитов, квота берется по имени метода. Это не недоделка, а способ дать все остальное без раздувания общего интерфейса.
 - **нет** - метода нет в библиотеке вообще. Сейчас таких нет. Если появится, рядом будет причина, почему его сознательно не берем.
 
-Что считается вызовом: в коде коннектора (`crates/{bcs,tbank,finam}/src`, без комментариев) метод клиента вызван как `.имя_метода(`. Вызовы через `raw()` сюда не попадают по построению: там имя метода приходит замыканием у пользователя.
+Что считается вызовом: в коде коннектора (`crates/{bcs,tbank,finam,alor}/src`, без комментариев) метод клиента вызван как `.имя_метода(`. Вызовы через `raw()` сюда не попадают по построению: там имя метода приходит замыканием у пользователя.
 
 ## Т-Банк
 
@@ -124,7 +124,7 @@
 
 Источник: официальные .proto в `crates/finam-protocol/proto`.
 
-Всего 42: в общем интерфейсе 21, только в клиенте брокера 21, нет 0.
+Всего 42: в общем интерфейсе 22, только в клиенте брокера 20, нет 0.
 
 | Сервис | Метод | Поток | Где |
 |---|---|---|---|
@@ -136,7 +136,7 @@
 | AssetsService | Assets |  | общий |
 | AssetsService | AllAssets |  | общий |
 | AssetsService | GetAsset |  | общий |
-| AssetsService | GetAssetParams |  | клиент |
+| AssetsService | GetAssetParams |  | общий |
 | AssetsService | OptionsChain |  | клиент |
 | AssetsService | Schedule |  | общий |
 | AssetsService | Clock |  | клиент |
@@ -212,4 +212,97 @@
 | WebSocket | portfolio (connect_portfolio) | да | общий |
 | WebSocket | limits (connect_limits) | да | клиент |
 | WebSocket | marginal-indicators (connect_marginal_indicators) | да | клиент |
+
+## АЛОР
+
+Источник: описания API брокера (OpenAPI для HTTP и AsyncAPI для WebSocket, alor.dev). Методы сопоставлены с функциями клиента вручную, использование коннектором ищется по коду. Команды канала `/cws` в клиенте есть (`CwsSession`), коннектор ходит за теми же командами по HTTP.
+
+Всего 84: в общем интерфейсе 25, только в клиенте брокера 59, нет 0.
+
+| Сервис | Метод | Поток | Где |
+|---|---|---|---|
+| REST | POST /refresh (get_access_token, refresh_access_token) |  | общий |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/orders (get_orders) |  | общий |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/orders/{orderId} (get_order) |  | общий |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/stoporders (get_stop_orders) |  | общий |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/stoporders/{orderId} (get_stop_order) |  | клиент |
+| REST | GET /md/v2/Clients/legacy/{exchange}/{portfolio}/money (get_money_legacy) |  | клиент |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/summary (get_summary) |  | клиент |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/positions (get_positions) |  | общий |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/positions/{symbol} (get_position) |  | клиент |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/trades (get_trades) |  | общий |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/{symbol}/trades (get_symbol_trades) |  | клиент |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/fortsrisk (get_forts_risk) |  | клиент |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/risk (get_risk) |  | клиент |
+| REST | GET /md/v2/Clients/{login}/positions (get_login_positions) |  | клиент |
+| REST | GET /md/stats/{exchange}/{portfolio}/history/trades (get_trade_stats) |  | клиент |
+| REST | GET /md/stats/{exchange}/{portfolio}/history/trades/{symbol} (get_trade_stats_by_symbol) |  | клиент |
+| REST | GET /md/v2/Stats/{exchange}/{portfolio}/history/trades (get_history_trades) |  | общий |
+| REST | GET /md/v2/Stats/{exchange}/{portfolio}/history/trades/{symbol} (get_history_trades_by_symbol) |  | клиент |
+| REST | GET /md/v2/Securities (get_securities) |  | общий |
+| REST | GET /md/v2/Securities/{exchange} (get_securities_by_exchange) |  | клиент |
+| REST | GET /md/v2/Securities/{exchange}/{symbol} (get_security) |  | общий |
+| REST | GET /md/v2/Securities/{exchange}/{symbol}/availableBoards (get_available_boards) |  | клиент |
+| REST | GET /md/v2/Securities/{exchange}/{symbol}/alltrades (get_all_trades) |  | общий |
+| REST | GET /md/v2/Securities/{exchange}/{symbol}/alltrades/history (get_all_trades_history) |  | клиент |
+| REST | GET /md/v2/Securities/{exchange}/{symbol}/actualFuturesQuote (get_actual_futures_quote) |  | клиент |
+| REST | GET /md/v2/Securities/{symbols}/quotes (get_quotes) |  | клиент |
+| REST | GET /md/v2/Securities/currencyPairs (get_currency_pairs) |  | клиент |
+| REST | GET /md/v2/orderbooks/{exchange}/{symbol} (get_order_book) |  | общий |
+| REST | GET /md/v2/time (get_time) |  | клиент |
+| REST | GET /md/v2/risk/rates (get_risk_rates) |  | клиент |
+| REST | GET /md/v2/history (get_history) |  | общий |
+| REST | GET /md/status/{exchange}/{market} (get_market_status) |  | клиент |
+| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/actions/market (create_market_order) |  | общий |
+| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/actions/limit (create_limit_order) |  | общий |
+| REST | POST /warptrans/{tradeServerCode}/v2/client/orders/actions/stopLoss (create_stop_loss) |  | клиент |
+| REST | POST /warptrans/{tradeServerCode}/v2/client/orders/actions/takeProfit (create_take_profit) |  | клиент |
+| REST | POST /warptrans/{tradeServerCode}/v2/client/orders/actions/takeProfitLimit (create_take_profit_limit) |  | клиент |
+| REST | POST /warptrans/{tradeServerCode}/v2/client/orders/actions/stopLossLimit (create_stop_loss_limit) |  | клиент |
+| REST | PUT /warptrans/{tradeServerCode}/v2/client/orders/actions/stopLoss/{orderId} (update_stop_loss) |  | клиент |
+| REST | PUT /warptrans/{tradeServerCode}/v2/client/orders/actions/takeProfit/{orderId} (update_take_profit) |  | клиент |
+| REST | PUT /warptrans/{tradeServerCode}/v2/client/orders/actions/takeProfitLimit/{orderId} (update_take_profit_limit) |  | клиент |
+| REST | PUT /warptrans/{tradeServerCode}/v2/client/orders/actions/stopLossLimit/{orderId} (update_stop_loss_limit) |  | клиент |
+| REST | PUT /commandapi/warptrans/TRADE/v2/client/orders/actions/market/{orderId} (update_market_order) |  | клиент |
+| REST | PUT /commandapi/warptrans/TRADE/v2/client/orders/actions/limit/{orderId} (update_limit_order) |  | общий |
+| REST | DELETE /warptrans/{tradeServerCode}/v2/client/orders/{orderId} (cancel_order_legacy) |  | клиент |
+| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/estimate (estimate_order) |  | клиент |
+| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/estimate/all (estimate_orders) |  | клиент |
+| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/actions/stopLimit (create_stop_limit_order) |  | общий |
+| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/actions/stop (create_stop_order) |  | общий |
+| REST | PUT /commandapi/warptrans/TRADE/v2/client/orders/actions/stop/{stopOrderId} (update_stop_order) |  | клиент |
+| REST | PUT /commandapi/warptrans/TRADE/v2/client/orders/actions/stopLimit/{stopOrderId} (update_stop_limit_order) |  | клиент |
+| REST | DELETE /commandapi/warptrans/TRADE/v2/client/orders/{orderId} (cancel_order) |  | общий |
+| REST | DELETE /commandapi/warptrans/TRADE/v2/client/orders/all (cancel_all_orders) |  | клиент |
+| REST | GET /commandapi/api/orderGroups (get_order_groups) |  | клиент |
+| REST | POST /commandapi/api/orderGroups (create_order_group) |  | клиент |
+| REST | GET /commandapi/api/orderGroups/{orderGroupId} (get_order_group) |  | клиент |
+| REST | PUT /commandapi/api/orderGroups/{orderGroupId} (update_order_group) |  | клиент |
+| REST | DELETE /commandapi/api/orderGroups/{orderGroupId} (delete_order_group) |  | клиент |
+| WebSocket | subscribeOrderBook /ws (WsSubscribe::order_book) | да | общий |
+| WebSocket | subscribeBars /ws (WsSubscribe::bars) | да | общий |
+| WebSocket | subscribeQuotes /ws (WsSubscribe::quotes) | да | общий |
+| WebSocket | subscribeTrades /ws (WsSubscribe::trades) | да | общий |
+| WebSocket | subscribeAllTrades /ws (WsSubscribe::all_trades) | да | общий |
+| WebSocket | subscribePositions /ws (WsSubscribe::positions) | да | общий |
+| WebSocket | subscribeSummaries /ws (WsSubscribe::summaries) | да | клиент |
+| WebSocket | subscribeRisks /ws (WsSubscribe::risks) | да | клиент |
+| WebSocket | subscribeSpectraRisks /ws (WsSubscribe::spectra_risks) | да | клиент |
+| WebSocket | subscribeInstruments /ws (WsSubscribe::instruments) | да | клиент |
+| WebSocket | subscribeOrders /ws (WsSubscribe::orders) | да | общий |
+| WebSocket | subscribeStopOrders /ws (WsSubscribe::stop_orders) | да | клиент |
+| WebSocket | unsubscribe /ws (WsSubscribe::unsubscribe) | да | клиент |
+| WebSocket | authorize /cws (CwsSession::authorize) | да | клиент |
+| WebSocket | createMarketOrder /cws (CREATE_MARKET) | да | клиент |
+| WebSocket | createLimitOrder /cws (CREATE_LIMIT) | да | клиент |
+| WebSocket | createStopMarketOrder /cws (CREATE_STOP) | да | клиент |
+| WebSocket | createStopLimitOrder /cws (CREATE_STOP_LIMIT) | да | клиент |
+| WebSocket | updateMarketOrder /cws (UPDATE_MARKET) | да | клиент |
+| WebSocket | updateLimitOrder /cws (UPDATE_LIMIT) | да | клиент |
+| WebSocket | updateStopMarketOrder /cws (UPDATE_STOP) | да | клиент |
+| WebSocket | updateStopLimitOrder /cws (UPDATE_STOP_LIMIT) | да | клиент |
+| WebSocket | deleteMarketOrder /cws (DELETE_MARKET) | да | клиент |
+| WebSocket | deleteLimitOrder /cws (DELETE_LIMIT) | да | клиент |
+| WebSocket | deleteStopMarketOrder /cws (DELETE_STOP) | да | клиент |
+| WebSocket | deleteStopLimitOrder /cws (DELETE_STOP_LIMIT) | да | клиент |
 

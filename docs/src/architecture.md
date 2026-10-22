@@ -65,8 +65,8 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-  CONN[brokapi-bcs, brokapi-tbank, brokapi-finam<br>коннекторы: склеивают слои]
-  PROTO[brokapi-bcs-protocol, brokapi-tbank-protocol, brokapi-finam-protocol<br>клиент брокера: сеть]
+  CONN[brokapi-bcs, brokapi-tbank, brokapi-finam, brokapi-alor<br>коннекторы: склеивают слои]
+  PROTO[brokapi-bcs-protocol, brokapi-tbank-protocol, brokapi-finam-protocol, brokapi-alor-protocol<br>клиент брокера: сеть]
   RT[brokapi-runtime<br>лимиты, буферы, шлюз,<br>очередь по бумаге, сверка]
   SANS[brokapi-sansio<br>ядро без сети: разбор,<br>машина состояний заявки]
   CORE[brokapi-core<br>общие типы и трейты:<br>то, что видит бот]
@@ -81,7 +81,7 @@ flowchart TB
 - Бот видит только `brokapi-core`. Сменить брокера - поменять коннектор, код бота почти не меняется.
 - Ядро без сети проверяется записанными сообщениями брокера и виртуальным временем, быстро и без интернета.
 - Внизу - тестовый контур: имитация брокера с настоящим протоколом и общие сценарии, которые гоняются против
-  каждой из трех.
+  каждого коннектора.
 
 ### Зачем ядро без сети
 

@@ -20,6 +20,7 @@ reply = await client.raw(method, args=None, *, command=False)   # reply: dict (�
 | Т-Банк | имя метода из описания API: `"GetLastPrices"`, `"GetUserTariff"`. Если у двух сервисов одно имя, `"UsersService/GetAccounts"` | сообщение запроса словарем, имена полей как в `.proto` (snake_case, camelCase тоже принимается) |
 | Финам | то же: `"LastQuote"`, `"Clock"` | то же |
 | БКС | имя из файла лимитов: `"GetQuotes"`, `"GetPortfolio"`, `"GetOperationHistory"`, или `"GET /путь"`, `"POST /путь"` для любого другого метода | `query` (параметры URL), `body` (JSON для `POST`), для `GetOrderStatus` еще `path` (`{"id": ...}`) |
+| АЛОР | глагол и путь из описания API: `"GET /md/v2/time"`, `"GET /md/v2/Clients/MOEX/D12345/summary"`, `"POST /commandapi/..."`. Глаголы `GET`, `POST`, `PUT`, `DELETE`. Каждый вызов тратит квоту по умолчанию | `query` (параметры URL), `body` (JSON), `request_id` (`X-REQID` команды: если не дать, коннектор сделает новый) |
 
 Т-Банк и Финам говорят по gRPC. Описание всех сервисов и сообщений вшито в библиотеку, метод ищется в нем по имени, словарь становится
 сообщением запроса, а ответ снова словарем. Поэтому годится **любой** метод API, в том числе тот, которого нет в общем интерфейсе. Формат
@@ -40,6 +41,14 @@ reply = await client.raw(method, args=None, *, command=False)   # reply: dict (�
 
 ```python
 {{#include ../../../crates/python/examples/raw.py:finam}}
+```
+
+АЛОР говорит по REST, как БКС, но методы называются глаголом и путем из описания API брокера: `"GET /md/v2/time"`. Числа с дробной
+частью приходят как `Decimal`. Команде заявки передают `request_id`: брокер отвечает на повторный идентификатор копией первого
+ответа и второй заявки не создает (по его документации, вживую не проверено).
+
+```python
+{{#include ../../../crates/python/examples/raw.py:alor}}
 ```
 
 В аргументах `raw` `Decimal` уходит текстом, `UUID` текстом, `datetime` с поясом строкой RFC 3339, `float` отвергается (`TypeError`).
@@ -79,7 +88,7 @@ reply = await client.raw(method, args=None, *, command=False)   # reply: dict (�
 - **Потоки не отдаются.** Метод, который открывает поток (server-streaming), дает `Unsupported` с `capability == "raw_streaming"`. В Rust квота
   покрывает открытие, а поток читает ваш код. Python так передать не может. Потоки читайте общим интерфейсом (`subscribe_*`).
 - Неизвестный метод и аргументы, которые не подходят методу, дают `Config`. Ничего не отправлено, квота не потрачена.
-- У БКС WebSocket-каналы (лимиты, маржинальные показатели) через `raw` не открываются: это есть в Rust (`connect_ws`), в Python нет.
+- У БКС и АЛОРа WebSocket-каналы через `raw` не открываются: это есть в Rust (`connect_ws`, у АЛОРа еще `connect_cws`), в Python нет.
 
 ## Как проверить
 

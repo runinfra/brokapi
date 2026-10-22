@@ -1,6 +1,6 @@
 # brokapi
 
-Библиотека на Rust: один интерфейс к API брокеров БКС, Т-Банк и Финам. Рыночные данные, заявки, сверка со счетом,
+Библиотека на Rust: один интерфейс к API брокеров БКС, Т-Банк, Финам и АЛОР. Рыночные данные, заявки, сверка со счетом,
 лимиты запросов. Сеть и деньги в тестах не используются: все примеры идут против имитаций брокеров.
 
 **Стадия: закрытая альфа.** Проверено только на имитациях, вживую нет, интерфейс до беты может меняться.
@@ -15,7 +15,7 @@
 
 ```toml
 [dependencies]
-brokapi = { version = "0.1.0-alpha.1", features = ["bcs"] }   # или "tbank", "finam"
+brokapi = { version = "0.1.0-alpha.1", features = ["bcs"] }   # или "tbank", "finam", "alor"
 ```
 
 В crates.io крейт пока не опубликован. Быстрый старт с пошаговым примером для БКС и Т-Банка:
@@ -27,8 +27,8 @@ brokapi = { version = "0.1.0-alpha.1", features = ["bcs"] }   # или "tbank", 
 |---|---|
 | `brokapi` | главный крейт, реэкспортирует остальные |
 | `brokapi-core`, `brokapi-runtime`, `brokapi-sansio` | типы и трейты, лимиты и сверка, ядро без сети |
-| `brokapi-bcs`, `brokapi-tbank`, `brokapi-finam` | коннекторы брокеров |
-| `brokapi-bcs-protocol`, `brokapi-tbank-protocol`, `brokapi-finam-protocol` | клиенты протоколов брокеров |
+| `brokapi-bcs`, `brokapi-tbank`, `brokapi-finam`, `brokapi-alor` | коннекторы брокеров |
+| `brokapi-bcs-protocol`, `brokapi-tbank-protocol`, `brokapi-finam-protocol`, `brokapi-alor-protocol` | клиенты протоколов брокеров |
 | `brokapi-mocks`, `brokapi-conformance` | имитации и общие сценарии для тестов, не публикуются |
 
 ## Проверка перед пушем

@@ -63,14 +63,15 @@ DESCRIPTIONS = {
     "reconcile.md": "Круг жизни: шлюз торговых команд и сверка reconcile, три списка отчета, что хранит бот",
     "limits.md": "Лимиты запросов: BrokerLimiter, ведра, RateLimited, почему отмена в отдельном ведре",
     "numbers.md": "Price, Qty, Money на Decimal, округление до шага цены, PriceGrid, перевод форматов брокеров",
-    "brokers/README.md": "Сравнение трех брокеров: идентификаторы инструментов, единицы, особенности",
+    "brokers/README.md": "Сравнение брокеров: идентификаторы инструментов, единицы, особенности",
     "brokers/bcs.md": "БКС: токены, идентификаторы, единицы количества, ограничения",
     "brokers/tbank.md": "Т-Банк: песочница, счета, лоты, uid инструмента, ограничения",
     "brokers/finam.md": "Финам: секрет и JWT, символ SBER@MISX, количество в штуках, нет replace",
+    "brokers/alor.md": "АЛОР: refresh-токен, портфель и биржа, тикер и режим торгов, лоты и штуки, X-REQID и cid, нет расписания",
     "rust/index.md": "Раздел Rust (работает сейчас, альфа): как подключить крейт и таблица инструкций по задачам",
     "rust/quickstart.md": "Rust: от нуля до первой заявки на БКС, Т-Банке и Финаме: подключение, сверка, подписки, заявка, отмена",
     "rust/howto-trading-bot.md": "Rust: как написать торгового бота на событиях: стакан, сигнал, заявка, статусы, выход из Unknown, остановка",
-    "rust/howto-infrastructure.md": "Rust: как собрать один процесс на три брокера и несколько счетов: журнал заявок в файле, рестарт со сверкой",
+    "rust/howto-infrastructure.md": "Rust: как собрать один процесс на несколько брокеров и счетов: журнал заявок в файле, рестарт со сверкой",
     "rust/howto-research.md": "Rust: как собрать исследовательский движок: выгрузка длинной истории свечей по лимитам, запись и воспроизведение событий",
     "rust/lifecycle.md": "Rust: как запустить, перезапустить и остановить бота: порядок start, подписка, reconcile, shutdown",
     "rust/recovery.md": "Rust: что делать при Unknown, Overflow, Degraded и долгом обрыве связи, с кодом",
@@ -83,7 +84,7 @@ DESCRIPTIONS = {
     "python/howto-trading-bot.md": "Python: как написать торгового бота на событиях: журнал, сверка, исходы place, Unknown, Overflow, остановка",
     "python/howto-infrastructure.md": "Python: несколько брокеров и счетов в одном процессе: общий limiter, merge событий, журнал в файле, рестарт со сверкой",
     "python/howto-history.md": "Python: выгрузка длинной истории свечей в файлы по лимитам брокера с продолжением после сбоя (candle_pages)",
-    "python/testing.md": "Python: тесты против имитаций brokapi.testing (mock_bcs, mock_tbank, mock_finam), fill, ожидание событий без sleep",
+    "python/testing.md": "Python: тесты против имитаций brokapi.testing (mock_bcs, mock_tbank, mock_finam, mock_alor), fill, ожидание событий без sleep",
     "python/stop-orders.md": "Python: стоп-заявки (place_stop, cancel_stop, active_stop_orders), потерянный ответ Unknown, различия брокеров, что проверено",
     "python/raw.md": "Python: любой метод API брокера через client.raw(имя, словарь): Т-Банк и Финам по имени из .proto, БКС по таблице или пути, квота, command=True, чего raw не делает",
     "python/record.md": "Python: запись потока событий в файл и проигрыш (brokapi.record: EnvelopeWriter, EnvelopeReader, replay, LogError), формат файла как у Rust",
@@ -104,12 +105,13 @@ DESCRIPTIONS = {
 
 # the reference (rustdoc) pages for the "Справочник API" section of llms.txt
 API_CRATES = [
-    ("brokapi", "Главный крейт: все под одним именем, брокеры включаются флагами bcs, tbank, finam"),
+    ("brokapi", "Главный крейт: все под одним именем, брокеры включаются флагами bcs, tbank, finam, alor"),
     ("brokapi_core", "Типы, трейты возможностей (OrderExecutor, OrderBookSource...), события, ошибки. С него начинать"),
     ("brokapi_runtime", "Лимиты (BrokerLimiter), PriceGrid, history (CandlePages), record (запись и воспроизведение событий)"),
     ("brokapi_bcs", "Коннекторы БКС и их настройка"),
     ("brokapi_tbank", "Коннекторы Т-Банка и их настройка"),
     ("brokapi_finam", "Коннекторы Финама и их настройка"),
+    ("brokapi_alor", "Коннекторы АЛОРа и их настройка"),
 ]
 
 INCLUDE = re.compile(r"\{\{#include\s+([^\s}:]+)(?::([^\s}]+))?\s*\}\}")
@@ -200,7 +202,7 @@ def read_redirects(docs):
 # pages of the common part that hold for Python as they do for Rust (the code on them is in tabs or does not depend on the language)
 PYTHON_COMMON = [
     "install.md", "agent-contract.md", "architecture.md", "streams.md", "orders.md", "reconcile.md", "limits.md", "numbers.md",
-    "errors.md", "events.md", "brokers/README.md", "brokers/bcs.md", "brokers/tbank.md", "brokers/finam.md",
+    "errors.md", "events.md", "brokers/README.md", "brokers/bcs.md", "brokers/tbank.md", "brokers/finam.md", "brokers/alor.md",
     "coverage.md", "readiness.md", "live.md", "changelog.md",
 ]
 
@@ -212,7 +214,7 @@ def python_index(sections, book):
         "# brokapi для Python",
         "",
         "> Пакет brokapi для Python (pip install brokapi, Python 3.10+) - тонкая обертка над ядром brokapi на Rust: БКС, Т-Банк, "
-        "Финам. События через async for, деньги и цены через decimal.Decimal, ошибки с теми же именами и текстом, что у ядра "
+        "Финам, АЛОР. События через async for, деньги и цены через decimal.Decimal, ошибки с теми же именами и текстом, что у ядра "
         "(Unknown, Rejected, RateLimited, NotReconciled, Degraded). Стадия: закрытая альфа, проверено на имитациях, вживую нет. "
         "На PyPI пакета пока нет (появится в открытой бете): сейчас ставится из репозитория (pip install \"git+https://github.com/runinfra/brokapi#subdirectory=crates/python\" или из клона: pip install ./crates/python, нужен Rust). Документация: %s/" % BASE_URL,
         "",
@@ -220,7 +222,7 @@ def python_index(sections, book):
         "reconcile, cid придумывает бот и пишет в журнал до place, Unknown не повторять, один счетчик лимитов на область брокера: "
         "limiter=, цены только Decimal). 2) Возьмите ближайшую инструкцию из раздела Python и копируйте код: каждый пример - тест "
         "против имитаций brokapi.testing. 3) Сигнатуры и поля - в python/api-reference.md. Возможности те же, что у Rust: стоп-заявки, "
-        "raw() и запись событий в файл (brokapi.record). Сеть и деньги в тестах не трогайте: mock_bcs(), mock_tbank(), mock_finam().",
+        "raw() и запись событий в файл (brokapi.record). Сеть и деньги в тестах не трогайте: mock_bcs(), mock_tbank(), mock_finam(), mock_alor().",
         "",
         "## Python",
         "",

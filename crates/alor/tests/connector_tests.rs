@@ -284,3 +284,36 @@ async fn the_last_trades_are_oldest_first_and_cut_to_the_limit() {
     assert_eq!(trades[1].trade_id.as_deref(), Some("9000"));
     md.shutdown(ShutdownMode::Immediate).await;
 }
+
+#[tokio::test]
+async fn a_price_off_the_step_is_refused_before_anything_is_sent_and_the_cid_stays_usable() {
+    use brokapi_core::InstrumentSource;
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (ud, _rx) = ud(&server).await;
+    let (tx, _mrx) = mpsc::channel(8);
+    let cfg = AlorConfig::for_mock("mock-refresh-token", &server.http_base);
+    let md = MarketDataConnector::start(MarketDataConfig::new(cfg, "alor-md"), limiter(), tx)
+        .await
+        .unwrap();
+    let id = instrument_id("SBER", "TQBR");
+    // The step is taught from the trading parameters of the instrument.
+    ud.price_grid()
+        .learn(&md.trading_params(&id).await.unwrap());
+    ud.reconcile(&[]).await.unwrap();
+    let mut req = limit_order(10, dec!(100.005));
+    let err = ud.place(req.clone()).await;
+    assert!(
+        matches!(err, Err(Error::Rejected { ref code, .. }) if code == "price_off_step"),
+        "{err:?}"
+    );
+    assert_eq!(
+        opts.order_commands.load(Ordering::SeqCst),
+        0,
+        "nothing was sent"
+    );
+    req.price = Some(Price::new(dec!(100.01)));
+    ud.place(req).await.expect("the same cid with a good price");
+    md.shutdown(ShutdownMode::Immediate).await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}

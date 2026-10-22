@@ -21,8 +21,10 @@ CRATES = [
     ("brokapi_bcs", None),
     ("brokapi_tbank", None),
     ("brokapi_finam", None),
+    ("brokapi_alor", None),
     ("brokapi_bcs_protocol", {"BcsConfig"}),
     ("brokapi_tbank_protocol", {"TbankConfig"}),
+    ("brokapi_alor_protocol", {"AlorConfig"}),
 ]
 KINDS = ("struct", "enum", "trait", "fn", "type", "constant", "macro")
 SKIP_SECTIONS = {
