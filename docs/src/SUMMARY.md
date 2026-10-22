@@ -5,6 +5,7 @@
 # Начать
 
 - [Установка](install.md)
+- [Перед боевым счетом](before-live.md)
 
 # Как устроено
 
@@ -69,8 +70,6 @@
   - [Справочник Python](api-python.md)
   - [Gateway (gRPC)](api-gateway.md)
 
-# Состояние
+# Версии
 
-- [Готовность](readiness.md)
-- [Живые прогоны](live.md)
 - [Изменения](changelog.md)

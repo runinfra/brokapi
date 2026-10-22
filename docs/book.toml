@@ -47,6 +47,7 @@ command = "mdbook-mermaid"
 command = "python3 dedent_code.py"
 after = ["links"]
 
+# Страницы readiness и live убраны из книги: их адреса ведут на "Перед боевым счетом".
 # Страницы раздела Rust переехали в rust/ (21.10.2026). Старые адреса остаются рабочими: mdBook кладет на их место
 # страницу с переадресацией. Переадресация и для markdown-копий агентов: docs/llms.py читает эту таблицу и пишет
 # старый page.md с адресом нового. Три последние строки - не переезд: mdBook пишет ссылки на README.md как README.html,
@@ -64,6 +65,8 @@ after = ["links"]
 "/raw.html" = "rust/raw.html"
 "/mocks.html" = "rust/mocks.html"
 "/mcp/index.html" = "../cli/index.html"
+"/readiness.html" = "before-live.html"
+"/live.html" = "before-live.html"
 "/README.html" = "index.html"
 "/brokers/README.html" = "index.html"
 "/api-reference.html" = "api-reference.md"

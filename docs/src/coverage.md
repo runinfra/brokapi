@@ -1,308 +1,306 @@
 # Покрытие API брокеров
 
-Собрано скриптом по коду, руками не правится. Цель: что поддерживает API брокера, то доступно из библиотеки.
+Какие методы API брокера закрыты общим интерфейсом. Колонка **Где**:
 
-Колонка **Где**:
+- **в интерфейсе** - метод доступен через общие трейты (`brokapi-core`).
+- **через raw()** - общего трейта нет, метод доступен через `connector.raw()` с теми же токеном, адресом и общим счетчиком лимитов.
+- **нет** - метода нет в библиотеке.
 
-- **общий** - метод вызывает коннектор, он доступен через общие трейты (`brokapi-core`).
-- **клиент** - метод есть в клиенте брокера (`*-protocol`), общего трейта для него нет. Он доступен через `connector.raw()` (`TbankRaw`, `FinamRaw`, `BcsRaw`, `AlorRaw`): тот же токен, адрес и общий счетчик лимитов, квота берется по имени метода. Это не недоделка, а способ дать все остальное без раздувания общего интерфейса.
-- **нет** - метода нет в библиотеке вообще. Сейчас таких нет. Если появится, рядом будет причина, почему его сознательно не берем.
-
-Что считается вызовом: в коде коннектора (`crates/{bcs,tbank,finam,alor}/src`, без комментариев) метод клиента вызван как `.имя_метода(`. Вызовы через `raw()` сюда не попадают по построению: там имя метода приходит замыканием у пользователя.
+Все методы брокера доступны через `raw()`, даже если общего трейта для них нет.
 
 ## Т-Банк
 
 Источник: официальные .proto в `crates/tbank-protocol/proto`.
 
-Всего 101: в общем интерфейсе 30, только в клиенте брокера 71, нет 0.
+Всего 101: в интерфейсе 30, через `raw()` 71.
 
 | Сервис | Метод | Поток | Где |
 |---|---|---|---|
-| InstrumentsService | TradingSchedules |  | общий |
-| InstrumentsService | BondBy |  | клиент |
-| InstrumentsService | Bonds |  | общий |
-| InstrumentsService | GetBondCoupons |  | клиент |
-| InstrumentsService | GetBondEvents |  | клиент |
-| InstrumentsService | CurrencyBy |  | клиент |
-| InstrumentsService | Currencies |  | общий |
-| InstrumentsService | EtfBy |  | клиент |
-| InstrumentsService | Etfs |  | общий |
-| InstrumentsService | FutureBy |  | клиент |
-| InstrumentsService | Futures |  | общий |
-| InstrumentsService | OptionBy |  | клиент |
-| InstrumentsService | Options |  | общий |
-| InstrumentsService | OptionsBy |  | клиент |
-| InstrumentsService | ShareBy |  | клиент |
-| InstrumentsService | Shares |  | общий |
-| InstrumentsService | Indicatives |  | клиент |
-| InstrumentsService | GetAccruedInterests |  | клиент |
-| InstrumentsService | GetFuturesMargin |  | клиент |
-| InstrumentsService | GetInstrumentBy |  | общий |
-| InstrumentsService | GetDividends |  | клиент |
-| InstrumentsService | GetAssetBy |  | клиент |
-| InstrumentsService | GetAssets |  | клиент |
-| InstrumentsService | GetFavorites |  | клиент |
-| InstrumentsService | EditFavorites |  | клиент |
-| InstrumentsService | CreateFavoriteGroup |  | клиент |
-| InstrumentsService | DeleteFavoriteGroup |  | клиент |
-| InstrumentsService | GetFavoriteGroups |  | клиент |
-| InstrumentsService | GetCountries |  | клиент |
-| InstrumentsService | FindInstrument |  | общий |
-| InstrumentsService | GetBrands |  | клиент |
-| InstrumentsService | GetBrandBy |  | клиент |
-| InstrumentsService | GetAssetFundamentals |  | клиент |
-| InstrumentsService | GetAssetReports |  | клиент |
-| InstrumentsService | GetConsensusForecasts |  | клиент |
-| InstrumentsService | GetForecastBy |  | клиент |
-| InstrumentsService | GetRiskRates |  | клиент |
-| InstrumentsService | GetInsiderDeals |  | клиент |
-| InstrumentsService | StructuredNoteBy |  | клиент |
-| InstrumentsService | StructuredNotes |  | клиент |
-| MarketDataService | GetCandles |  | общий |
-| MarketDataService | GetLastPrices |  | клиент |
-| MarketDataService | GetOrderBook |  | общий |
-| MarketDataService | GetTradingStatus |  | общий |
-| MarketDataService | GetTradingStatuses |  | клиент |
-| MarketDataService | GetLastTrades |  | общий |
-| MarketDataService | GetClosePrices |  | клиент |
-| MarketDataService | GetTechAnalysis |  | клиент |
-| MarketDataService | GetMarketValues |  | клиент |
-| MarketDataStreamService | MarketDataStream | да | общий |
-| MarketDataStreamService | MarketDataServerSideStream | да | клиент |
-| OperationsService | GetOperations |  | клиент |
-| OperationsService | GetPortfolio |  | общий |
-| OperationsService | GetPositions |  | общий |
-| OperationsService | GetWithdrawLimits |  | клиент |
-| OperationsService | GetBrokerReport |  | клиент |
-| OperationsService | GetDividendsForeignIssuer |  | клиент |
-| OperationsService | GetOperationsByCursor |  | общий |
-| OperationsStreamService | PortfolioStream | да | общий |
-| OperationsStreamService | PositionsStream | да | общий |
-| OrdersStreamService | TradesStream | да | общий |
-| OrdersStreamService | OrderStateStream | да | общий |
-| OrdersService | PostOrder |  | общий |
-| OrdersService | PostOrderAsync |  | клиент |
-| OrdersService | CancelOrder |  | общий |
-| OrdersService | GetOrderState |  | общий |
-| OrdersService | GetOrders |  | общий |
-| OrdersService | ReplaceOrder |  | общий |
-| OrdersService | GetMaxLots |  | клиент |
-| OrdersService | GetOrderPrice |  | клиент |
-| SandboxService | OpenSandboxAccount |  | клиент |
-| SandboxService | GetSandboxAccounts |  | клиент |
-| SandboxService | CloseSandboxAccount |  | клиент |
-| SandboxService | PostSandboxOrder |  | клиент |
-| SandboxService | PostSandboxOrderAsync |  | клиент |
-| SandboxService | ReplaceSandboxOrder |  | клиент |
-| SandboxService | GetSandboxOrders |  | клиент |
-| SandboxService | CancelSandboxOrder |  | клиент |
-| SandboxService | GetSandboxOrderState |  | клиент |
-| SandboxService | GetSandboxOrderPrice |  | клиент |
-| SandboxService | GetSandboxPositions |  | клиент |
-| SandboxService | GetSandboxOperations |  | клиент |
-| SandboxService | GetSandboxOperationsByCursor |  | клиент |
-| SandboxService | GetSandboxPortfolio |  | клиент |
-| SandboxService | SandboxPayIn |  | клиент |
-| SandboxService | GetSandboxWithdrawLimits |  | клиент |
-| SandboxService | GetSandboxMaxLots |  | клиент |
-| SandboxService | PostSandboxStopOrder |  | клиент |
-| SandboxService | GetSandboxStopOrders |  | клиент |
-| SandboxService | CancelSandboxStopOrder |  | клиент |
-| SignalService | GetStrategies |  | клиент |
-| SignalService | GetSignals |  | клиент |
-| StopOrdersService | PostStopOrder |  | общий |
-| StopOrdersService | GetStopOrders |  | общий |
-| StopOrdersService | CancelStopOrder |  | общий |
-| UsersService | GetAccounts |  | общий |
-| UsersService | GetMarginAttributes |  | клиент |
-| UsersService | GetUserTariff |  | клиент |
-| UsersService | GetInfo |  | клиент |
-| UsersService | GetBankAccounts |  | клиент |
-| UsersService | CurrencyTransfer |  | клиент |
+| InstrumentsService | TradingSchedules |  | в интерфейсе |
+| InstrumentsService | BondBy |  | через raw() |
+| InstrumentsService | Bonds |  | в интерфейсе |
+| InstrumentsService | GetBondCoupons |  | через raw() |
+| InstrumentsService | GetBondEvents |  | через raw() |
+| InstrumentsService | CurrencyBy |  | через raw() |
+| InstrumentsService | Currencies |  | в интерфейсе |
+| InstrumentsService | EtfBy |  | через raw() |
+| InstrumentsService | Etfs |  | в интерфейсе |
+| InstrumentsService | FutureBy |  | через raw() |
+| InstrumentsService | Futures |  | в интерфейсе |
+| InstrumentsService | OptionBy |  | через raw() |
+| InstrumentsService | Options |  | в интерфейсе |
+| InstrumentsService | OptionsBy |  | через raw() |
+| InstrumentsService | ShareBy |  | через raw() |
+| InstrumentsService | Shares |  | в интерфейсе |
+| InstrumentsService | Indicatives |  | через raw() |
+| InstrumentsService | GetAccruedInterests |  | через raw() |
+| InstrumentsService | GetFuturesMargin |  | через raw() |
+| InstrumentsService | GetInstrumentBy |  | в интерфейсе |
+| InstrumentsService | GetDividends |  | через raw() |
+| InstrumentsService | GetAssetBy |  | через raw() |
+| InstrumentsService | GetAssets |  | через raw() |
+| InstrumentsService | GetFavorites |  | через raw() |
+| InstrumentsService | EditFavorites |  | через raw() |
+| InstrumentsService | CreateFavoriteGroup |  | через raw() |
+| InstrumentsService | DeleteFavoriteGroup |  | через raw() |
+| InstrumentsService | GetFavoriteGroups |  | через raw() |
+| InstrumentsService | GetCountries |  | через raw() |
+| InstrumentsService | FindInstrument |  | в интерфейсе |
+| InstrumentsService | GetBrands |  | через raw() |
+| InstrumentsService | GetBrandBy |  | через raw() |
+| InstrumentsService | GetAssetFundamentals |  | через raw() |
+| InstrumentsService | GetAssetReports |  | через raw() |
+| InstrumentsService | GetConsensusForecasts |  | через raw() |
+| InstrumentsService | GetForecastBy |  | через raw() |
+| InstrumentsService | GetRiskRates |  | через raw() |
+| InstrumentsService | GetInsiderDeals |  | через raw() |
+| InstrumentsService | StructuredNoteBy |  | через raw() |
+| InstrumentsService | StructuredNotes |  | через raw() |
+| MarketDataService | GetCandles |  | в интерфейсе |
+| MarketDataService | GetLastPrices |  | через raw() |
+| MarketDataService | GetOrderBook |  | в интерфейсе |
+| MarketDataService | GetTradingStatus |  | в интерфейсе |
+| MarketDataService | GetTradingStatuses |  | через raw() |
+| MarketDataService | GetLastTrades |  | в интерфейсе |
+| MarketDataService | GetClosePrices |  | через raw() |
+| MarketDataService | GetTechAnalysis |  | через raw() |
+| MarketDataService | GetMarketValues |  | через raw() |
+| MarketDataStreamService | MarketDataStream | да | в интерфейсе |
+| MarketDataStreamService | MarketDataServerSideStream | да | через raw() |
+| OperationsService | GetOperations |  | через raw() |
+| OperationsService | GetPortfolio |  | в интерфейсе |
+| OperationsService | GetPositions |  | в интерфейсе |
+| OperationsService | GetWithdrawLimits |  | через raw() |
+| OperationsService | GetBrokerReport |  | через raw() |
+| OperationsService | GetDividendsForeignIssuer |  | через raw() |
+| OperationsService | GetOperationsByCursor |  | в интерфейсе |
+| OperationsStreamService | PortfolioStream | да | в интерфейсе |
+| OperationsStreamService | PositionsStream | да | в интерфейсе |
+| OrdersStreamService | TradesStream | да | в интерфейсе |
+| OrdersStreamService | OrderStateStream | да | в интерфейсе |
+| OrdersService | PostOrder |  | в интерфейсе |
+| OrdersService | PostOrderAsync |  | через raw() |
+| OrdersService | CancelOrder |  | в интерфейсе |
+| OrdersService | GetOrderState |  | в интерфейсе |
+| OrdersService | GetOrders |  | в интерфейсе |
+| OrdersService | ReplaceOrder |  | в интерфейсе |
+| OrdersService | GetMaxLots |  | через raw() |
+| OrdersService | GetOrderPrice |  | через raw() |
+| SandboxService | OpenSandboxAccount |  | через raw() |
+| SandboxService | GetSandboxAccounts |  | через raw() |
+| SandboxService | CloseSandboxAccount |  | через raw() |
+| SandboxService | PostSandboxOrder |  | через raw() |
+| SandboxService | PostSandboxOrderAsync |  | через raw() |
+| SandboxService | ReplaceSandboxOrder |  | через raw() |
+| SandboxService | GetSandboxOrders |  | через raw() |
+| SandboxService | CancelSandboxOrder |  | через raw() |
+| SandboxService | GetSandboxOrderState |  | через raw() |
+| SandboxService | GetSandboxOrderPrice |  | через raw() |
+| SandboxService | GetSandboxPositions |  | через raw() |
+| SandboxService | GetSandboxOperations |  | через raw() |
+| SandboxService | GetSandboxOperationsByCursor |  | через raw() |
+| SandboxService | GetSandboxPortfolio |  | через raw() |
+| SandboxService | SandboxPayIn |  | через raw() |
+| SandboxService | GetSandboxWithdrawLimits |  | через raw() |
+| SandboxService | GetSandboxMaxLots |  | через raw() |
+| SandboxService | PostSandboxStopOrder |  | через raw() |
+| SandboxService | GetSandboxStopOrders |  | через raw() |
+| SandboxService | CancelSandboxStopOrder |  | через raw() |
+| SignalService | GetStrategies |  | через raw() |
+| SignalService | GetSignals |  | через raw() |
+| StopOrdersService | PostStopOrder |  | в интерфейсе |
+| StopOrdersService | GetStopOrders |  | в интерфейсе |
+| StopOrdersService | CancelStopOrder |  | в интерфейсе |
+| UsersService | GetAccounts |  | в интерфейсе |
+| UsersService | GetMarginAttributes |  | через raw() |
+| UsersService | GetUserTariff |  | через raw() |
+| UsersService | GetInfo |  | через raw() |
+| UsersService | GetBankAccounts |  | через raw() |
+| UsersService | CurrencyTransfer |  | через raw() |
 
 ## Финам
 
 Источник: официальные .proto в `crates/finam-protocol/proto`.
 
-Всего 42: в общем интерфейсе 22, только в клиенте брокера 20, нет 0.
+Всего 42: в интерфейсе 22, через `raw()` 20.
 
 | Сервис | Метод | Поток | Где |
 |---|---|---|---|
-| AccountsService | GetAccount |  | общий |
-| AccountsService | Trades |  | общий |
-| AccountsService | Transactions |  | клиент |
-| AccountsService | SubscribeAccount | да | общий |
-| AssetsService | Exchanges |  | клиент |
-| AssetsService | Assets |  | общий |
-| AssetsService | AllAssets |  | общий |
-| AssetsService | GetAsset |  | общий |
-| AssetsService | GetAssetParams |  | общий |
-| AssetsService | OptionsChain |  | клиент |
-| AssetsService | Schedule |  | общий |
-| AssetsService | Clock |  | клиент |
-| AssetsService | GetConstituents |  | клиент |
-| AuthService | Auth |  | клиент |
-| AuthService | TokenDetails |  | клиент |
-| AuthService | SubscribeJwtRenewal | да | клиент |
-| CorporateActionsService | GetFutureSplits |  | клиент |
-| CorporateActionsService | GetPastSplits |  | клиент |
-| CorporateActionsService | GetFutureBondsEvents |  | клиент |
-| CorporateActionsService | GetPastBondsEvents |  | клиент |
-| CorporateActionsService | GetFutureDividends |  | клиент |
-| CorporateActionsService | GetPastDividends |  | клиент |
-| MarketDataService | Bars |  | общий |
-| MarketDataService | LastQuote |  | клиент |
-| MarketDataService | OrderBook |  | общий |
-| MarketDataService | LatestTrades |  | общий |
-| MarketDataService | SubscribeQuote | да | общий |
-| MarketDataService | SubscribeOrderBook | да | общий |
-| MarketDataService | SubscribeLatestTrades | да | общий |
-| MarketDataService | SubscribeBars | да | общий |
-| UsageMetricsService | GetUsageMetrics |  | клиент |
-| OrdersService | PlaceOrder |  | общий |
-| OrdersService | CancelOrder |  | общий |
-| OrdersService | GetOrders |  | общий |
-| OrdersService | GetOrder |  | общий |
-| OrdersService | SubscribeOrderTrade | да | клиент |
-| OrdersService | SubscribeOrders | да | общий |
-| OrdersService | SubscribeTrades | да | общий |
-| OrdersService | PlaceSLTPOrder |  | общий |
-| ReportsService | CreateAccountReport |  | клиент |
-| ReportsService | GetAccountReportInfo |  | клиент |
-| ReportsService | SubscribeAccountReportInfo | да | клиент |
+| AccountsService | GetAccount |  | в интерфейсе |
+| AccountsService | Trades |  | в интерфейсе |
+| AccountsService | Transactions |  | через raw() |
+| AccountsService | SubscribeAccount | да | в интерфейсе |
+| AssetsService | Exchanges |  | через raw() |
+| AssetsService | Assets |  | в интерфейсе |
+| AssetsService | AllAssets |  | в интерфейсе |
+| AssetsService | GetAsset |  | в интерфейсе |
+| AssetsService | GetAssetParams |  | в интерфейсе |
+| AssetsService | OptionsChain |  | через raw() |
+| AssetsService | Schedule |  | в интерфейсе |
+| AssetsService | Clock |  | через raw() |
+| AssetsService | GetConstituents |  | через raw() |
+| AuthService | Auth |  | через raw() |
+| AuthService | TokenDetails |  | через raw() |
+| AuthService | SubscribeJwtRenewal | да | через raw() |
+| CorporateActionsService | GetFutureSplits |  | через raw() |
+| CorporateActionsService | GetPastSplits |  | через raw() |
+| CorporateActionsService | GetFutureBondsEvents |  | через raw() |
+| CorporateActionsService | GetPastBondsEvents |  | через raw() |
+| CorporateActionsService | GetFutureDividends |  | через raw() |
+| CorporateActionsService | GetPastDividends |  | через raw() |
+| MarketDataService | Bars |  | в интерфейсе |
+| MarketDataService | LastQuote |  | через raw() |
+| MarketDataService | OrderBook |  | в интерфейсе |
+| MarketDataService | LatestTrades |  | в интерфейсе |
+| MarketDataService | SubscribeQuote | да | в интерфейсе |
+| MarketDataService | SubscribeOrderBook | да | в интерфейсе |
+| MarketDataService | SubscribeLatestTrades | да | в интерфейсе |
+| MarketDataService | SubscribeBars | да | в интерфейсе |
+| UsageMetricsService | GetUsageMetrics |  | через raw() |
+| OrdersService | PlaceOrder |  | в интерфейсе |
+| OrdersService | CancelOrder |  | в интерфейсе |
+| OrdersService | GetOrders |  | в интерфейсе |
+| OrdersService | GetOrder |  | в интерфейсе |
+| OrdersService | SubscribeOrderTrade | да | через raw() |
+| OrdersService | SubscribeOrders | да | в интерфейсе |
+| OrdersService | SubscribeTrades | да | в интерфейсе |
+| OrdersService | PlaceSLTPOrder |  | в интерфейсе |
+| ReportsService | CreateAccountReport |  | через raw() |
+| ReportsService | GetAccountReportInfo |  | через raw() |
+| ReportsService | SubscribeAccountReportInfo | да | через raw() |
 
 ## БКС
 
-Источник: документация БКС (trade-api.bcs.ru). Страницы сопоставлены с функциями клиента вручную, использование коннектором ищется по коду. Устаревшие методы (`deprecated`) не считаем.
+Источник: документация БКС (trade-api.bcs.ru). Устаревшие методы (`deprecated`) не считаем.
 
-Всего 33: в общем интерфейсе 22, только в клиенте брокера 11, нет 0.
+Всего 33: в интерфейсе 22, через `raw()` 11.
 
 | Сервис | Метод | Поток | Где |
 |---|---|---|---|
-| REST | POST /trade-api-keycloak/realms/tradeapi/protocol/openid-connect/token (authenticate) |  | общий |
-| REST | GET /api/v1/instruments-discounts (get_instruments_discounts) |  | клиент |
-| REST | POST /api/v1/operations/search (search_operations) |  | клиент |
-| REST | GET /api/v1/trading-schedule/daily-schedule (get_daily_schedule) |  | общий |
-| REST | POST /api/v1/instruments/by-isins (get_instruments_by_isins) |  | общий |
-| REST | POST /api/v1/instruments/by-tickers (get_instruments_by_tickers) |  | общий |
-| REST | GET /api/v1/instruments/by-type (get_instruments_by_type) |  | общий |
-| REST | GET /api/v1/trading-schedule/status (get_trading_status) |  | общий |
-| REST | GET /api/v1/limits (get_limits) |  | клиент |
-| REST | GET /api/v1/candles-chart (get_candles) |  | общий |
-| REST | POST /api/v1/last-trades (get_last_trades) |  | общий |
-| REST | GET /api/v1/order-book (get_order_book) |  | общий |
-| REST | POST /api/v1/quotes (get_quotes) |  | клиент |
-| REST | POST /api/v1/orders/search (search_orders, search_orders_simple) |  | общий |
-| REST | POST /api/v1/orders/cancel (cancel_order_by_id) |  | клиент |
-| REST | POST /api/v1/orders (create_order) |  | клиент |
-| REST | GET /api/v1/orders (get_order) |  | общий |
-| REST | POST /api/v1/orders/cancel/sync (cancel_order_by_id_sync) |  | общий |
-| REST | POST /api/v1/orders/sync (create_order_sync) |  | общий |
-| REST | POST /api/v1/orders/edit/sync (edit_order_sync) |  | общий |
-| REST | POST /api/v1/orders/edit (edit_order) |  | клиент |
-| REST | GET /api/v1/portfolio (get_portfolio) |  | общий |
-| REST | POST /api/v1/trades/search (search_trades) |  | общий |
-| WebSocket | market-data/order-book (connect_market_data) | да | общий |
-| WebSocket | market-data/quotes (connect_market_data) | да | общий |
-| WebSocket | market-data/trades (connect_market_data) | да | общий |
-| WebSocket | market-data/last-candle (connect_market_data) | да | общий |
-| WebSocket | operations/execution-status (connect_order_execution) | да | клиент |
-| WebSocket | operations/status (connect_order_events) | да | общий |
-| WebSocket | operations/transaction-status (connect_order_transaction) | да | клиент |
-| WebSocket | portfolio (connect_portfolio) | да | общий |
-| WebSocket | limits (connect_limits) | да | клиент |
-| WebSocket | marginal-indicators (connect_marginal_indicators) | да | клиент |
+| REST | POST /trade-api-keycloak/realms/tradeapi/protocol/openid-connect/token (authenticate) |  | в интерфейсе |
+| REST | GET /api/v1/instruments-discounts (get_instruments_discounts) |  | через raw() |
+| REST | POST /api/v1/operations/search (search_operations) |  | через raw() |
+| REST | GET /api/v1/trading-schedule/daily-schedule (get_daily_schedule) |  | в интерфейсе |
+| REST | POST /api/v1/instruments/by-isins (get_instruments_by_isins) |  | в интерфейсе |
+| REST | POST /api/v1/instruments/by-tickers (get_instruments_by_tickers) |  | в интерфейсе |
+| REST | GET /api/v1/instruments/by-type (get_instruments_by_type) |  | в интерфейсе |
+| REST | GET /api/v1/trading-schedule/status (get_trading_status) |  | в интерфейсе |
+| REST | GET /api/v1/limits (get_limits) |  | через raw() |
+| REST | GET /api/v1/candles-chart (get_candles) |  | в интерфейсе |
+| REST | POST /api/v1/last-trades (get_last_trades) |  | в интерфейсе |
+| REST | GET /api/v1/order-book (get_order_book) |  | в интерфейсе |
+| REST | POST /api/v1/quotes (get_quotes) |  | через raw() |
+| REST | POST /api/v1/orders/search (search_orders, search_orders_simple) |  | в интерфейсе |
+| REST | POST /api/v1/orders/cancel (cancel_order_by_id) |  | через raw() |
+| REST | POST /api/v1/orders (create_order) |  | через raw() |
+| REST | GET /api/v1/orders (get_order) |  | в интерфейсе |
+| REST | POST /api/v1/orders/cancel/sync (cancel_order_by_id_sync) |  | в интерфейсе |
+| REST | POST /api/v1/orders/sync (create_order_sync) |  | в интерфейсе |
+| REST | POST /api/v1/orders/edit/sync (edit_order_sync) |  | в интерфейсе |
+| REST | POST /api/v1/orders/edit (edit_order) |  | через raw() |
+| REST | GET /api/v1/portfolio (get_portfolio) |  | в интерфейсе |
+| REST | POST /api/v1/trades/search (search_trades) |  | в интерфейсе |
+| WebSocket | market-data/order-book (connect_market_data) | да | в интерфейсе |
+| WebSocket | market-data/quotes (connect_market_data) | да | в интерфейсе |
+| WebSocket | market-data/trades (connect_market_data) | да | в интерфейсе |
+| WebSocket | market-data/last-candle (connect_market_data) | да | в интерфейсе |
+| WebSocket | operations/execution-status (connect_order_execution) | да | через raw() |
+| WebSocket | operations/status (connect_order_events) | да | в интерфейсе |
+| WebSocket | operations/transaction-status (connect_order_transaction) | да | через raw() |
+| WebSocket | portfolio (connect_portfolio) | да | в интерфейсе |
+| WebSocket | limits (connect_limits) | да | через raw() |
+| WebSocket | marginal-indicators (connect_marginal_indicators) | да | через raw() |
 
 ## АЛОР
 
-Источник: описания API брокера (OpenAPI для HTTP и AsyncAPI для WebSocket, alor.dev). Методы сопоставлены с функциями клиента вручную, использование коннектором ищется по коду. Команды канала `/cws` в клиенте есть (`CwsSession`), коннектор ходит за теми же командами по HTTP.
+Источник: описания API брокера (OpenAPI для HTTP и AsyncAPI для WebSocket, alor.dev). Команды канала `/cws` в клиенте есть (`CwsSession`), коннектор ходит за теми же командами по HTTP.
 
-Всего 84: в общем интерфейсе 25, только в клиенте брокера 59, нет 0.
+Всего 84: в интерфейсе 25, через `raw()` 59.
 
 | Сервис | Метод | Поток | Где |
 |---|---|---|---|
-| REST | POST /refresh (get_access_token, refresh_access_token) |  | общий |
-| REST | GET /md/v2/Clients/{exchange}/{portfolio}/orders (get_orders) |  | общий |
-| REST | GET /md/v2/Clients/{exchange}/{portfolio}/orders/{orderId} (get_order) |  | общий |
-| REST | GET /md/v2/Clients/{exchange}/{portfolio}/stoporders (get_stop_orders) |  | общий |
-| REST | GET /md/v2/Clients/{exchange}/{portfolio}/stoporders/{orderId} (get_stop_order) |  | клиент |
-| REST | GET /md/v2/Clients/legacy/{exchange}/{portfolio}/money (get_money_legacy) |  | клиент |
-| REST | GET /md/v2/Clients/{exchange}/{portfolio}/summary (get_summary) |  | клиент |
-| REST | GET /md/v2/Clients/{exchange}/{portfolio}/positions (get_positions) |  | общий |
-| REST | GET /md/v2/Clients/{exchange}/{portfolio}/positions/{symbol} (get_position) |  | клиент |
-| REST | GET /md/v2/Clients/{exchange}/{portfolio}/trades (get_trades) |  | общий |
-| REST | GET /md/v2/Clients/{exchange}/{portfolio}/{symbol}/trades (get_symbol_trades) |  | клиент |
-| REST | GET /md/v2/Clients/{exchange}/{portfolio}/fortsrisk (get_forts_risk) |  | клиент |
-| REST | GET /md/v2/Clients/{exchange}/{portfolio}/risk (get_risk) |  | клиент |
-| REST | GET /md/v2/Clients/{login}/positions (get_login_positions) |  | клиент |
-| REST | GET /md/stats/{exchange}/{portfolio}/history/trades (get_trade_stats) |  | клиент |
-| REST | GET /md/stats/{exchange}/{portfolio}/history/trades/{symbol} (get_trade_stats_by_symbol) |  | клиент |
-| REST | GET /md/v2/Stats/{exchange}/{portfolio}/history/trades (get_history_trades) |  | общий |
-| REST | GET /md/v2/Stats/{exchange}/{portfolio}/history/trades/{symbol} (get_history_trades_by_symbol) |  | клиент |
-| REST | GET /md/v2/Securities (get_securities) |  | общий |
-| REST | GET /md/v2/Securities/{exchange} (get_securities_by_exchange) |  | клиент |
-| REST | GET /md/v2/Securities/{exchange}/{symbol} (get_security) |  | общий |
-| REST | GET /md/v2/Securities/{exchange}/{symbol}/availableBoards (get_available_boards) |  | клиент |
-| REST | GET /md/v2/Securities/{exchange}/{symbol}/alltrades (get_all_trades) |  | общий |
-| REST | GET /md/v2/Securities/{exchange}/{symbol}/alltrades/history (get_all_trades_history) |  | клиент |
-| REST | GET /md/v2/Securities/{exchange}/{symbol}/actualFuturesQuote (get_actual_futures_quote) |  | клиент |
-| REST | GET /md/v2/Securities/{symbols}/quotes (get_quotes) |  | клиент |
-| REST | GET /md/v2/Securities/currencyPairs (get_currency_pairs) |  | клиент |
-| REST | GET /md/v2/orderbooks/{exchange}/{symbol} (get_order_book) |  | общий |
-| REST | GET /md/v2/time (get_time) |  | клиент |
-| REST | GET /md/v2/risk/rates (get_risk_rates) |  | клиент |
-| REST | GET /md/v2/history (get_history) |  | общий |
-| REST | GET /md/status/{exchange}/{market} (get_market_status) |  | клиент |
-| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/actions/market (create_market_order) |  | общий |
-| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/actions/limit (create_limit_order) |  | общий |
-| REST | POST /warptrans/{tradeServerCode}/v2/client/orders/actions/stopLoss (create_stop_loss) |  | клиент |
-| REST | POST /warptrans/{tradeServerCode}/v2/client/orders/actions/takeProfit (create_take_profit) |  | клиент |
-| REST | POST /warptrans/{tradeServerCode}/v2/client/orders/actions/takeProfitLimit (create_take_profit_limit) |  | клиент |
-| REST | POST /warptrans/{tradeServerCode}/v2/client/orders/actions/stopLossLimit (create_stop_loss_limit) |  | клиент |
-| REST | PUT /warptrans/{tradeServerCode}/v2/client/orders/actions/stopLoss/{orderId} (update_stop_loss) |  | клиент |
-| REST | PUT /warptrans/{tradeServerCode}/v2/client/orders/actions/takeProfit/{orderId} (update_take_profit) |  | клиент |
-| REST | PUT /warptrans/{tradeServerCode}/v2/client/orders/actions/takeProfitLimit/{orderId} (update_take_profit_limit) |  | клиент |
-| REST | PUT /warptrans/{tradeServerCode}/v2/client/orders/actions/stopLossLimit/{orderId} (update_stop_loss_limit) |  | клиент |
-| REST | PUT /commandapi/warptrans/TRADE/v2/client/orders/actions/market/{orderId} (update_market_order) |  | клиент |
-| REST | PUT /commandapi/warptrans/TRADE/v2/client/orders/actions/limit/{orderId} (update_limit_order) |  | общий |
-| REST | DELETE /warptrans/{tradeServerCode}/v2/client/orders/{orderId} (cancel_order_legacy) |  | клиент |
-| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/estimate (estimate_order) |  | клиент |
-| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/estimate/all (estimate_orders) |  | клиент |
-| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/actions/stopLimit (create_stop_limit_order) |  | общий |
-| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/actions/stop (create_stop_order) |  | общий |
-| REST | PUT /commandapi/warptrans/TRADE/v2/client/orders/actions/stop/{stopOrderId} (update_stop_order) |  | клиент |
-| REST | PUT /commandapi/warptrans/TRADE/v2/client/orders/actions/stopLimit/{stopOrderId} (update_stop_limit_order) |  | клиент |
-| REST | DELETE /commandapi/warptrans/TRADE/v2/client/orders/{orderId} (cancel_order) |  | общий |
-| REST | DELETE /commandapi/warptrans/TRADE/v2/client/orders/all (cancel_all_orders) |  | клиент |
-| REST | GET /commandapi/api/orderGroups (get_order_groups) |  | клиент |
-| REST | POST /commandapi/api/orderGroups (create_order_group) |  | клиент |
-| REST | GET /commandapi/api/orderGroups/{orderGroupId} (get_order_group) |  | клиент |
-| REST | PUT /commandapi/api/orderGroups/{orderGroupId} (update_order_group) |  | клиент |
-| REST | DELETE /commandapi/api/orderGroups/{orderGroupId} (delete_order_group) |  | клиент |
-| WebSocket | subscribeOrderBook /ws (WsSubscribe::order_book) | да | общий |
-| WebSocket | subscribeBars /ws (WsSubscribe::bars) | да | общий |
-| WebSocket | subscribeQuotes /ws (WsSubscribe::quotes) | да | общий |
-| WebSocket | subscribeTrades /ws (WsSubscribe::trades) | да | общий |
-| WebSocket | subscribeAllTrades /ws (WsSubscribe::all_trades) | да | общий |
-| WebSocket | subscribePositions /ws (WsSubscribe::positions) | да | общий |
-| WebSocket | subscribeSummaries /ws (WsSubscribe::summaries) | да | клиент |
-| WebSocket | subscribeRisks /ws (WsSubscribe::risks) | да | клиент |
-| WebSocket | subscribeSpectraRisks /ws (WsSubscribe::spectra_risks) | да | клиент |
-| WebSocket | subscribeInstruments /ws (WsSubscribe::instruments) | да | клиент |
-| WebSocket | subscribeOrders /ws (WsSubscribe::orders) | да | общий |
-| WebSocket | subscribeStopOrders /ws (WsSubscribe::stop_orders) | да | клиент |
-| WebSocket | unsubscribe /ws (WsSubscribe::unsubscribe) | да | клиент |
-| WebSocket | authorize /cws (CwsSession::authorize) | да | клиент |
-| WebSocket | createMarketOrder /cws (CREATE_MARKET) | да | клиент |
-| WebSocket | createLimitOrder /cws (CREATE_LIMIT) | да | клиент |
-| WebSocket | createStopMarketOrder /cws (CREATE_STOP) | да | клиент |
-| WebSocket | createStopLimitOrder /cws (CREATE_STOP_LIMIT) | да | клиент |
-| WebSocket | updateMarketOrder /cws (UPDATE_MARKET) | да | клиент |
-| WebSocket | updateLimitOrder /cws (UPDATE_LIMIT) | да | клиент |
-| WebSocket | updateStopMarketOrder /cws (UPDATE_STOP) | да | клиент |
-| WebSocket | updateStopLimitOrder /cws (UPDATE_STOP_LIMIT) | да | клиент |
-| WebSocket | deleteMarketOrder /cws (DELETE_MARKET) | да | клиент |
-| WebSocket | deleteLimitOrder /cws (DELETE_LIMIT) | да | клиент |
-| WebSocket | deleteStopMarketOrder /cws (DELETE_STOP) | да | клиент |
-| WebSocket | deleteStopLimitOrder /cws (DELETE_STOP_LIMIT) | да | клиент |
+| REST | POST /refresh (get_access_token, refresh_access_token) |  | в интерфейсе |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/orders (get_orders) |  | в интерфейсе |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/orders/{orderId} (get_order) |  | в интерфейсе |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/stoporders (get_stop_orders) |  | в интерфейсе |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/stoporders/{orderId} (get_stop_order) |  | через raw() |
+| REST | GET /md/v2/Clients/legacy/{exchange}/{portfolio}/money (get_money_legacy) |  | через raw() |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/summary (get_summary) |  | через raw() |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/positions (get_positions) |  | в интерфейсе |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/positions/{symbol} (get_position) |  | через raw() |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/trades (get_trades) |  | в интерфейсе |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/{symbol}/trades (get_symbol_trades) |  | через raw() |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/fortsrisk (get_forts_risk) |  | через raw() |
+| REST | GET /md/v2/Clients/{exchange}/{portfolio}/risk (get_risk) |  | через raw() |
+| REST | GET /md/v2/Clients/{login}/positions (get_login_positions) |  | через raw() |
+| REST | GET /md/stats/{exchange}/{portfolio}/history/trades (get_trade_stats) |  | через raw() |
+| REST | GET /md/stats/{exchange}/{portfolio}/history/trades/{symbol} (get_trade_stats_by_symbol) |  | через raw() |
+| REST | GET /md/v2/Stats/{exchange}/{portfolio}/history/trades (get_history_trades) |  | в интерфейсе |
+| REST | GET /md/v2/Stats/{exchange}/{portfolio}/history/trades/{symbol} (get_history_trades_by_symbol) |  | через raw() |
+| REST | GET /md/v2/Securities (get_securities) |  | в интерфейсе |
+| REST | GET /md/v2/Securities/{exchange} (get_securities_by_exchange) |  | через raw() |
+| REST | GET /md/v2/Securities/{exchange}/{symbol} (get_security) |  | в интерфейсе |
+| REST | GET /md/v2/Securities/{exchange}/{symbol}/availableBoards (get_available_boards) |  | через raw() |
+| REST | GET /md/v2/Securities/{exchange}/{symbol}/alltrades (get_all_trades) |  | в интерфейсе |
+| REST | GET /md/v2/Securities/{exchange}/{symbol}/alltrades/history (get_all_trades_history) |  | через raw() |
+| REST | GET /md/v2/Securities/{exchange}/{symbol}/actualFuturesQuote (get_actual_futures_quote) |  | через raw() |
+| REST | GET /md/v2/Securities/{symbols}/quotes (get_quotes) |  | через raw() |
+| REST | GET /md/v2/Securities/currencyPairs (get_currency_pairs) |  | через raw() |
+| REST | GET /md/v2/orderbooks/{exchange}/{symbol} (get_order_book) |  | в интерфейсе |
+| REST | GET /md/v2/time (get_time) |  | через raw() |
+| REST | GET /md/v2/risk/rates (get_risk_rates) |  | через raw() |
+| REST | GET /md/v2/history (get_history) |  | в интерфейсе |
+| REST | GET /md/status/{exchange}/{market} (get_market_status) |  | через raw() |
+| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/actions/market (create_market_order) |  | в интерфейсе |
+| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/actions/limit (create_limit_order) |  | в интерфейсе |
+| REST | POST /warptrans/{tradeServerCode}/v2/client/orders/actions/stopLoss (create_stop_loss) |  | через raw() |
+| REST | POST /warptrans/{tradeServerCode}/v2/client/orders/actions/takeProfit (create_take_profit) |  | через raw() |
+| REST | POST /warptrans/{tradeServerCode}/v2/client/orders/actions/takeProfitLimit (create_take_profit_limit) |  | через raw() |
+| REST | POST /warptrans/{tradeServerCode}/v2/client/orders/actions/stopLossLimit (create_stop_loss_limit) |  | через raw() |
+| REST | PUT /warptrans/{tradeServerCode}/v2/client/orders/actions/stopLoss/{orderId} (update_stop_loss) |  | через raw() |
+| REST | PUT /warptrans/{tradeServerCode}/v2/client/orders/actions/takeProfit/{orderId} (update_take_profit) |  | через raw() |
+| REST | PUT /warptrans/{tradeServerCode}/v2/client/orders/actions/takeProfitLimit/{orderId} (update_take_profit_limit) |  | через raw() |
+| REST | PUT /warptrans/{tradeServerCode}/v2/client/orders/actions/stopLossLimit/{orderId} (update_stop_loss_limit) |  | через raw() |
+| REST | PUT /commandapi/warptrans/TRADE/v2/client/orders/actions/market/{orderId} (update_market_order) |  | через raw() |
+| REST | PUT /commandapi/warptrans/TRADE/v2/client/orders/actions/limit/{orderId} (update_limit_order) |  | в интерфейсе |
+| REST | DELETE /warptrans/{tradeServerCode}/v2/client/orders/{orderId} (cancel_order_legacy) |  | через raw() |
+| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/estimate (estimate_order) |  | через raw() |
+| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/estimate/all (estimate_orders) |  | через raw() |
+| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/actions/stopLimit (create_stop_limit_order) |  | в интерфейсе |
+| REST | POST /commandapi/warptrans/TRADE/v2/client/orders/actions/stop (create_stop_order) |  | в интерфейсе |
+| REST | PUT /commandapi/warptrans/TRADE/v2/client/orders/actions/stop/{stopOrderId} (update_stop_order) |  | через raw() |
+| REST | PUT /commandapi/warptrans/TRADE/v2/client/orders/actions/stopLimit/{stopOrderId} (update_stop_limit_order) |  | через raw() |
+| REST | DELETE /commandapi/warptrans/TRADE/v2/client/orders/{orderId} (cancel_order) |  | в интерфейсе |
+| REST | DELETE /commandapi/warptrans/TRADE/v2/client/orders/all (cancel_all_orders) |  | через raw() |
+| REST | GET /commandapi/api/orderGroups (get_order_groups) |  | через raw() |
+| REST | POST /commandapi/api/orderGroups (create_order_group) |  | через raw() |
+| REST | GET /commandapi/api/orderGroups/{orderGroupId} (get_order_group) |  | через raw() |
+| REST | PUT /commandapi/api/orderGroups/{orderGroupId} (update_order_group) |  | через raw() |
+| REST | DELETE /commandapi/api/orderGroups/{orderGroupId} (delete_order_group) |  | через raw() |
+| WebSocket | subscribeOrderBook /ws (WsSubscribe::order_book) | да | в интерфейсе |
+| WebSocket | subscribeBars /ws (WsSubscribe::bars) | да | в интерфейсе |
+| WebSocket | subscribeQuotes /ws (WsSubscribe::quotes) | да | в интерфейсе |
+| WebSocket | subscribeTrades /ws (WsSubscribe::trades) | да | в интерфейсе |
+| WebSocket | subscribeAllTrades /ws (WsSubscribe::all_trades) | да | в интерфейсе |
+| WebSocket | subscribePositions /ws (WsSubscribe::positions) | да | в интерфейсе |
+| WebSocket | subscribeSummaries /ws (WsSubscribe::summaries) | да | через raw() |
+| WebSocket | subscribeRisks /ws (WsSubscribe::risks) | да | через raw() |
+| WebSocket | subscribeSpectraRisks /ws (WsSubscribe::spectra_risks) | да | через raw() |
+| WebSocket | subscribeInstruments /ws (WsSubscribe::instruments) | да | через raw() |
+| WebSocket | subscribeOrders /ws (WsSubscribe::orders) | да | в интерфейсе |
+| WebSocket | subscribeStopOrders /ws (WsSubscribe::stop_orders) | да | через raw() |
+| WebSocket | unsubscribe /ws (WsSubscribe::unsubscribe) | да | через raw() |
+| WebSocket | authorize /cws (CwsSession::authorize) | да | через raw() |
+| WebSocket | createMarketOrder /cws (CREATE_MARKET) | да | через raw() |
+| WebSocket | createLimitOrder /cws (CREATE_LIMIT) | да | через raw() |
+| WebSocket | createStopMarketOrder /cws (CREATE_STOP) | да | через raw() |
+| WebSocket | createStopLimitOrder /cws (CREATE_STOP_LIMIT) | да | через raw() |
+| WebSocket | updateMarketOrder /cws (UPDATE_MARKET) | да | через raw() |
+| WebSocket | updateLimitOrder /cws (UPDATE_LIMIT) | да | через raw() |
+| WebSocket | updateStopMarketOrder /cws (UPDATE_STOP) | да | через raw() |
+| WebSocket | updateStopLimitOrder /cws (UPDATE_STOP_LIMIT) | да | через raw() |
+| WebSocket | deleteMarketOrder /cws (DELETE_MARKET) | да | через raw() |
+| WebSocket | deleteLimitOrder /cws (DELETE_LIMIT) | да | через raw() |
+| WebSocket | deleteStopMarketOrder /cws (DELETE_STOP) | да | через raw() |
+| WebSocket | deleteStopLimitOrder /cws (DELETE_STOP_LIMIT) | да | через raw() |
 

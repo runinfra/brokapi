@@ -11,6 +11,9 @@
 usage: llms.py <docs dir> <book dir>
        <docs dir> holds book.toml and src/, <book dir> is the output of `mdbook build` (it gets the files).
 
+Pages for agents (AGENT_PAGES below) are not in SUMMARY.md: mdBook does not build them, so there is no HTML and no search
+entry. This script writes their markdown next to the book and lists them in llms.txt, llms-full.txt and python/llms.txt.
+
 Every page of SUMMARY.md must have a line in DESCRIPTIONS below: a new page without one fails the build, so the index
 for agents cannot fall behind the book.
 """
@@ -31,13 +34,14 @@ SUMMARY_LINE = (
     "brokapi - единый интерфейс к торговым API: один и тот же код бота работает с любым брокером. Начинаем с API брокеров "
     "российского рынка (БКС, Т-Банк, Финам, АЛОР), дальше другие брокеры и биржевые протоколы. Писать можно на Rust (ядро) или на "
     "Python (пакет brokapi, тонкая обертка над ядром): рыночные данные, заявки, сверка со счетом, лимиты запросов. Gateway и "
-    "CLI еще не вышли, их разделы - заглушки. Стадия: открытая альфа, проверено на имитациях, вживую пока нет. Документация: %s/" % BASE_URL
+    "CLI еще не вышли, их разделы - заглушки. Стадия: открытая альфа, на настоящих счетах не запускалось: для боевого счета сначала прочитайте before-live.md и agents/unverified.md. Документация: %s/" % BASE_URL
 )
 INTRO = """Как пользоваться этим набором. Книга написана по задачам и состоит из общей части (как устроено, брокеры, \
 ошибки, события, контракт для агентов) и разделов продуктов: Rust, Python, Gateway, CLI. Писать код можно на Rust или на \
 Python, оба работают сейчас (альфа). Если пользователь пишет на Python, берите отдельный индекс для Python: \
 %s/python/llms.txt, в нем только то, что нужно для Python, и справочник пакета одним файлом. Страницы с пометкой "еще нет" \
-(Gateway, CLI) - заглушки: кода и пакетов там нет, не пытайтесь обращаться к службе Gateway. Если нужно написать код: \
+(Gateway, CLI) - заглушки: кода и пакетов там нет, не пытайтесь обращаться к службе Gateway. Если код пойдет на боевой счет, \
+сначала before-live.md и agents/unverified.md (допущения по документации брокеров, как их обойти). Если нужно написать код: \
 прочитайте "Контракт для агентов" (все обязательные правила на одной странице, они одни для любого языка), затем инструкцию \
 из раздела нужного языка, ближайшую к задаче (торговый бот, несколько брокеров и счетов, история или исследовательский \
 движок), и копируйте код оттуда: каждый пример - рабочий тест против имитаций. Общие страницы (круги механики, заявки, \
@@ -55,8 +59,9 @@ SECTION_NOTES = {
 
 # path of the page in src/ -> one line for llms.txt
 DESCRIPTIONS = {
-    "README.md": "Что такое brokapi, выбор пути (Rust, Python, Gateway, CLI) и статус каждого, три главных правила, честный статус",
+    "README.md": "Что такое brokapi, выбор пути (Rust, Python, Gateway, CLI) и статус каждого, три главных правила",
     "install.md": "Установка: cargo add brokapi и pip install brokapi, самая свежая версия из репозитория, проверка и частые ошибки",
+    "before-live.md": "Перед боевым счетом: с чего начать на настоящем счете, песочницы, первая заявка",
     "architecture.md": "Карта: коннекторы MD и UD, счетчик лимитов, канал событий и три круга механики со схемами",
     "streams.md": "Круг событий: подписки, режимы буфера (Conflate, DropNewest, Lossless), Overflow, Resync, обрывы",
     "orders.md": "Круг команд: cid, порядок проверок place, исходы команды, почему нет автоповтора, машина состояний заявки",
@@ -69,7 +74,7 @@ DESCRIPTIONS = {
     "brokers/finam.md": "Финам: секрет и JWT, символ SBER@MISX, количество в штуках, нет replace",
     "brokers/alor.md": "АЛОР: refresh-токен, портфель и биржа, тикер и режим торгов, лоты и штуки, X-REQID и cid, нет расписания",
     "rust/index.md": "Раздел Rust (работает сейчас, альфа): как подключить крейт и таблица инструкций по задачам",
-    "rust/quickstart.md": "Rust: от нуля до первой заявки на БКС, Т-Банке и Финаме: подключение, сверка, подписки, заявка, отмена",
+    "rust/quickstart.md": "Rust: от нуля до первой заявки на БКС, Т-Банке, Финаме и АЛОРе: подключение, сверка, подписки, заявка, отмена",
     "rust/howto-trading-bot.md": "Rust: как написать торгового бота на событиях: стакан, сигнал, заявка, статусы, выход из Unknown, остановка",
     "rust/howto-infrastructure.md": "Rust: как собрать один процесс на несколько брокеров и счетов: журнал заявок в файле, рестарт со сверкой",
     "rust/howto-research.md": "Rust: как собрать исследовательский движок: выгрузка длинной истории свечей по лимитам, запись и воспроизведение событий",
@@ -85,7 +90,7 @@ DESCRIPTIONS = {
     "python/howto-infrastructure.md": "Python: несколько брокеров и счетов в одном процессе: общий limiter, merge событий, журнал в файле, рестарт со сверкой",
     "python/howto-history.md": "Python: выгрузка длинной истории свечей в файлы по лимитам брокера с продолжением после сбоя (candle_pages)",
     "python/testing.md": "Python: тесты против имитаций brokapi.testing (mock_bcs, mock_tbank, mock_finam, mock_alor), fill, ожидание событий без sleep",
-    "python/stop-orders.md": "Python: стоп-заявки (place_stop, cancel_stop, active_stop_orders), потерянный ответ Unknown, различия брокеров, что проверено",
+    "python/stop-orders.md": "Python: стоп-заявки (place_stop, cancel_stop, active_stop_orders), потерянный ответ Unknown, различия брокеров",
     "python/raw.md": "Python: любой метод API брокера через client.raw(имя, словарь): Т-Банк и Финам по имени из .proto, БКС по таблице или пути, квота, command=True, чего raw не делает",
     "python/record.md": "Python: запись потока событий в файл и проигрыш (brokapi.record: EnvelopeWriter, EnvelopeReader, replay, LogError), формат файла как у Rust",
     "python/design.md": "Объяснение: как пакет Python связан с ядром, мост tokio и asyncio, Decimal, ошибки, отличия от Rust",
@@ -98,9 +103,13 @@ DESCRIPTIONS = {
     "api.md": "Справочник API Rust (rustdoc): список крейтов и ссылки на страницы справочника",
     "api-python.md": "Справочник API Python (pdoc, из docstring): модули brokapi, models, errors, numbers, record, testing и ссылки на страницы справочника",
     "api-gateway.md": "ЕЩЕ НЕТ, заглушка: справочник gRPC-интерфейса Gateway (из .proto), появится вместе со службой",
-    "readiness.md": "Готовность: что проверено в коде, на имитации и вживую",
-    "live.md": "Живые прогоны: вопросы, на которые ответит только настоящий счет",
-    "changelog.md": "Журнал изменений для пользователей, в том числе когда появятся Gateway и CLI",
+    "changelog.md": "Журнал изменений по выпускам, в том числе когда появятся Gateway и CLI",
+}
+
+# pages for agents that are not in SUMMARY.md: no HTML, no search, only the markdown next to the book, llms.txt, llms-full.txt and
+# python/llms.txt (path in src/ -> one line for the index)
+AGENT_PAGES = {
+    "agents/unverified.md": "Допущения по документации брокеров, которые не проверены на настоящих счетах, и как подстраховаться в коде (для боевого счета)",
 }
 
 # the reference (rustdoc) pages for the "Справочник API" section of llms.txt
@@ -203,8 +212,12 @@ def read_redirects(docs):
 PYTHON_COMMON = [
     "install.md", "agent-contract.md", "architecture.md", "streams.md", "orders.md", "reconcile.md", "limits.md", "numbers.md",
     "errors.md", "events.md", "brokers/README.md", "brokers/bcs.md", "brokers/tbank.md", "brokers/finam.md", "brokers/alor.md",
-    "coverage.md", "readiness.md", "live.md", "changelog.md",
+    "coverage.md", "before-live.md", "changelog.md",
 ]
+
+
+# the title of a page for agents is the first heading of its file (filled in by main)
+agent_titles = {}
 
 
 def python_index(sections, book):
@@ -215,7 +228,7 @@ def python_index(sections, book):
         "",
         "> Пакет brokapi для Python (pip install brokapi, Python 3.10+) - тонкая обертка над ядром brokapi на Rust: БКС, Т-Банк, "
         "Финам, АЛОР. События через async for, деньги и цены через decimal.Decimal, ошибки с теми же именами и текстом, что у ядра "
-        "(Unknown, Rejected, RateLimited, NotReconciled, Degraded). Стадия: открытая альфа, проверено на имитациях, вживую нет. "
+        "(Unknown, Rejected, RateLimited, NotReconciled, Degraded). Стадия: открытая альфа, на настоящих счетах не запускалось: для боевого счета сначала прочитайте before-live.md и agents/unverified.md. "
         "Ставится с PyPI: pip install brokapi. Самая свежая версия - из репозитория (pip install \"git+https://github.com/runinfra/brokapi#subdirectory=crates/python\", нужен Rust). Документация: %s/" % BASE_URL,
         "",
         "Как писать код. 1) Прочитайте \"Контракт для агентов\": обязательные правила одни для любого языка (торговля только после "
@@ -235,6 +248,9 @@ def python_index(sections, book):
     for path in PYTHON_COMMON:
         md = "index.md" if path == "README.md" else path
         out.append("- [%s](%s/%s): %s" % (titles[path], BASE_URL, md, DESCRIPTIONS[path]))
+    out += ["", "## Для агентов", ""]
+    for path, about in AGENT_PAGES.items():
+        out.append("- [%s](%s/%s): %s" % (agent_titles[path], BASE_URL, path, about))
     out += [
         "",
         "## Справочник API Python (английский)",
@@ -266,6 +282,12 @@ def main():
     if unused:
         raise SystemExit("llms.py: DESCRIPTIONS has pages that are not in SUMMARY.md: " + ", ".join(unused))
 
+    for path in AGENT_PAGES:
+        if path in {p for _, p, _ in pages}:
+            raise SystemExit("llms.py: %s is in SUMMARY.md, it belongs to the book, not to AGENT_PAGES" % path)
+        first = open(os.path.join(src, path), encoding="utf-8").readline()
+        agent_titles[path] = first.lstrip("# ").strip()
+
     for old, new in read_redirects(docs).items():
         if new not in {p for _, p, _ in pages}:
             raise SystemExit("llms.py: redirect %s points to %s, which is not a page of SUMMARY.md" % (old, new))
@@ -285,6 +307,15 @@ def main():
                 f.write(text if text.endswith("\n") else text + "\n")
         full.append("<!-- page: %s | %s/%s -->\n\n%s" % (path, BASE_URL, html_name(path), text.strip("\n")))
 
+    for path in AGENT_PAGES:  # the pages for agents: the markdown next to the book and in llms-full.txt
+        page_src = os.path.join(src, path)
+        text = expand(open(page_src, encoding="utf-8").read(), os.path.dirname(page_src))
+        out = os.path.join(book, path)
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(text if text.endswith("\n") else text + "\n")
+        full.append("<!-- page: %s | %s/%s -->\n\n%s" % (path, BASE_URL, path, text.strip("\n")))
+
     # llms.txt
     out = ["# %s" % TITLE, "", "> " + SUMMARY_LINE, "", INTRO, ""]
     for title, items in sections:
@@ -294,6 +325,11 @@ def main():
             md = "index.md" if path == "README.md" else path
             out.append("- [%s](%s/%s): %s" % (page_title, BASE_URL, md, DESCRIPTIONS[path]))
         out.append("")
+    out.append("## Для агентов (страница не в меню книги)")
+    out.append("")
+    for path, about in AGENT_PAGES.items():
+        out.append("- [%s](%s/%s): %s" % (agent_titles[path], BASE_URL, path, about))
+    out.append("")
     out.append("## Справочник API (rustdoc, английский)")
     out.append("")
     out.append(

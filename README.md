@@ -3,8 +3,7 @@
 Библиотека на Rust и пакет для Python: один интерфейс к API брокеров (БКС, Т-Банк, Финам, АЛОР). Рыночные данные, заявки, сверка со счетом,
 лимиты запросов. Сеть и деньги в тестах не используются: все примеры идут против имитаций брокеров.
 
-**Стадия: открытая альфа.** Проверено только на имитациях, вживую нет, интерфейс до беты может меняться.
-Что проверено и что нет: [Готовность](https://brokapi.ru/docs/readiness.html).
+**Открытая альфа.** Интерфейс до беты может меняться. Перед боевым счетом: [документация](https://brokapi.ru/docs/before-live.html).
 
 Документация: <https://brokapi.ru/docs/>. Справочник API собирается из кода (rustdoc) и лежит рядом с книгой.
 Для ИИ-агентов: [llms.txt](https://brokapi.ru/docs/llms.txt) и [llms-full.txt](https://brokapi.ru/docs/llms-full.txt), страницы книги в markdown рядом с HTML.
@@ -37,13 +36,9 @@ pip install brokapi
 | `brokapi-bcs-protocol`, `brokapi-tbank-protocol`, `brokapi-finam-protocol`, `brokapi-alor-protocol` | клиенты протоколов брокеров |
 | `brokapi-mocks`, `brokapi-conformance` | имитации и общие сценарии для тестов, не публикуются |
 
-## Проверка перед пушем
+## Участие
 
-```bash
-tools/check   # fmt, clippy, тесты, doctest-ы, rustdoc, примеры, сборка книги
-```
-
-Нужен Rust 1.88 или новее, [mdBook](https://rust-lang.github.io/mdBook/) с `mdbook-mermaid` и python 3 (файлы для ИИ-агентов собирает `docs/llms.py`, только стандартная библиотека).
+Правила и проверка перед пушем: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Безопасность
 
