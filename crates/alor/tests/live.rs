@@ -16,8 +16,7 @@
 //! ```
 //!
 //! Order: read-only tests first (`live_md_*`, `live_ud_*`), then `live_order_roundtrip`. The test contour is the
-//! safe place for the round trip; the production contour is a real account. What these runs must answer is in the
-//! live runs page of the book (ALOR section).
+//! safe place for the round trip; the production contour is a real account.
 
 #![cfg(feature = "integration-live")]
 

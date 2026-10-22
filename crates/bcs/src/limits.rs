@@ -1,7 +1,7 @@
 //! Loads `limits.toml` (section `[bcs]`) through `BrokerLimits::from_toml_section`.
 //!
-//! BCS publishes no numbers of its own, so the bundled values are cautious starting points, to be checked
-//! on a live account (the live runs page of the book, BCS section). One `BrokerLimiter` per token: give every
+//! BCS publishes no numbers of its own, so the bundled values are cautious starting points, to be
+//! lowered if `RateLimited` comes too early. One `BrokerLimiter` per token: give every
 //! connector of one BCS account the same `Arc<BrokerLimiter>`.
 
 use brokapi_core::ConfigError;

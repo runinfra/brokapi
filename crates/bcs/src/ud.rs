@@ -1094,8 +1094,7 @@ impl PortfolioSource for UserDataConnector {
 /// Stop orders are BCS conditional orders (`orderType = "5"`): `stopPrice` for a stop-loss and
 /// stop-limit, `takePrice` for a take-profit, market or limit execution. How the request is built, and
 /// every choice the docs leave open (lifetime, trigger direction, the meaning of `price`, TP+SL pairs),
-/// is in [`crate::map::stop`]; each of them is a live question (the live runs page of the book, BCS section,
-/// question 12). Both commands use the synchronous methods, for the reasons given at `place`.
+/// is in [`crate::map::stop`]; each of them is a choice made from the docs. Both commands use the synchronous methods, for the reasons given at `place`.
 ///
 /// There is no stream of stop order statuses: `orders/events/ws` documents only order types 1 and 2,
 /// whether it carries conditional orders is a live question, so `subscribe_stop_orders` is `Unsupported`.

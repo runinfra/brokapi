@@ -5,8 +5,7 @@ Each ``mock_*`` function starts a real server on ``127.0.0.1`` that speaks the w
 placed on it can be listed, cancelled and filled (``mock.fill``).
 
 What the imitations do **not** prove: that the live broker answers the same. They are written from the documentation
-of the brokers, and every example in the book runs against them. The readiness page of the book says what was
-checked on the live brokers.
+of the brokers, and every example in the book runs against them.
 
 >>> import asyncio
 >>> from brokapi.testing import mock_bcs

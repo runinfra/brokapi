@@ -18,8 +18,9 @@
 //! | `finam` | Finam connectors; `finam::protocol` is the gRPC client | `finam` |
 //! | `alor` | ALOR connectors; `alor::protocol` is the HTTP and WebSocket client | `alor` |
 //!
-//! The guide, the rules for orders and the readiness table are in the book:
-//! <https://brokapi.ru/docs/>. The stage is open alpha: checked on broker imitations only.
+//! The guide and the rules for orders are in the book:
+//! <https://brokapi.ru/docs/>. The stage is open alpha: the interface can change before the beta. Before you trade with real
+//! money, read <https://brokapi.ru/docs/before-live.html>.
 //!
 //! # Example
 //!

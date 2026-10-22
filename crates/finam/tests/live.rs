@@ -6,7 +6,6 @@
 //! far below the market that will not execute, valid for the symbol's price step).
 //!
 //! Run: `cargo test -p brokapi-finam --features integration-live --test live -- --nocapture`.
-//! What these runs should answer is listed on the live runs page of the book (<https://brokapi.ru/docs/live.html>).
 
 use brokapi_core::Decimal;
 use std::time::Duration;

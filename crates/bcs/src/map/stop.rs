@@ -1,8 +1,7 @@
 //! Stop orders: `PlaceStopOrderRequest` -> BCS conditional order (`orderType = "5"`).
 //!
 //! The mapping follows the current docs (`POST /orders`, checked 2026-10-19). What the docs do NOT say
-//! is settled here in the safest way and every such choice is a live question
-//! (the live runs page of the book, BCS section, question 12):
+//! is settled here in the safest way:
 //!
 //! - **Trigger direction.** Not a field of the request. The broker decides it, from the side and the
 //!   kind (stop-loss of a SELL = price falls to `stopPrice`, take-profit of a SELL = price rises to

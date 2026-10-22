@@ -2,7 +2,7 @@
 //!
 //! A mock is a real server on `127.0.0.1` that speaks the wire protocol of one broker, so a `brokapi` client
 //! connects to it exactly as it connects to the broker. What the mocks do not prove: that the live broker answers
-//! the same. They are written from the documentation of the brokers (see the readiness page of the book).
+//! the same. They are written from the documentation of the brokers.
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};

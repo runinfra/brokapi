@@ -10,7 +10,7 @@
 //!
 //! The tests open their own sandbox account, top it up with 1 000 000 rub, trade a far-from-market
 //! limit order and close the account. They refuse to run against production (`TBANK_SANDBOX` must be
-//! true). Questions these tests are meant to answer are listed on the live runs page of the book (<https://brokapi.ru/docs/live.html>).
+//! true).
 
 #![cfg(feature = "integration-live")]
 

@@ -16,8 +16,7 @@
 //!
 //! The servers keep real state (placed orders can be listed, cancelled, filled through a test hook), so
 //! a scenario written for the mock reads the same as one for the live API. What they do **not** prove
-//! is that the live broker behaves the same: the mocks are written from the broker documentation, and
-//! each connector's live status is on the readiness page of the book.
+//! is that the live broker behaves the same: the mocks are written from the broker documentation.
 //!
 //! # Examples
 //!

@@ -1065,7 +1065,7 @@ impl MarketDataConnector {
             InstrumentKind::Option => {
                 // `Options` is marked deprecated in the proto, but its replacement `OptionsBy` demands a
                 // base asset, which a whole-kind query does not have. If T-Bank removes it, this becomes
-                // Unsupported (a live question, see the live runs page of the book).
+                // Unsupported.
                 #[allow(deprecated)]
                 let r = c.options(req);
                 query(t, r)

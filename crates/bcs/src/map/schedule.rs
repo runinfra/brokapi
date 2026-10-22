@@ -7,8 +7,7 @@
 //! QUIK`, `Не рабочее время/Выходной/Праздник`) and `tradingSessionStatus` is `OPEN` or `CLOSE`.
 //!
 //! The answer is for ONE day (today), so the intervals are put on the day of `range.from`. The time
-//! zone of the times is not stated: they are read as Moscow time (UTC+3), which is an assumption
-//! (the live runs page of the book, BCS section). A full datetime (the form older samples had) is read as it is.
+//! zone of the times is not stated: they are read as Moscow time (UTC+3), which is an assumption. A full datetime (the form older samples had) is read as it is.
 
 use std::time::Instant;
 

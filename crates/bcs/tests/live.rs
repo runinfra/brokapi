@@ -17,7 +17,7 @@
 //! Order: read-only tests first (`live_md_*`, `live_ud_*`), then `live_order_roundtrip` and
 //! `live_stop_order_roundtrip` with a trade token.
 //! There is no sandbox, the round trip uses the real account: one limit buy far from the market,
-//! then replace and cancel. What these runs must answer is in the live runs page of the book (BCS section).
+//! then replace and cancel.
 
 #![cfg(feature = "integration-live")]
 
