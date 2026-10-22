@@ -43,6 +43,9 @@
   - [Торговый бот на событиях, Python](python/howto-trading-bot.md)
   - [Несколько брокеров и счетов, Python](python/howto-infrastructure.md)
   - [История свечей](python/howto-history.md)
+  - [Стоп-заявки, Python](python/stop-orders.md)
+  - [Любой метод брокера, Python](python/raw.md)
+  - [Запись событий и проигрыш, Python](python/record.md)
   - [Тесты против имитаций, Python](python/testing.md)
   - [Как Python связан с ядром](python/design.md)
 

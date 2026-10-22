@@ -212,3 +212,101 @@ async def test_history_is_downloaded_and_goes_on_where_the_file_ends(tmp_path: P
 
 
 
+
+
+# ---------------------------------------------------------------------------------------------------- stops, raw, record
+
+import raw as raw_example  # noqa: E402
+import record as record_example  # noqa: E402
+import stops  # noqa: E402
+
+
+@pytest.mark.parametrize("mock_of", [testing.mock_bcs, testing.mock_tbank, testing.mock_finam])
+async def test_stops_example_protects_lists_and_releases(mock_of: object, capsys: pytest.CaptureFixture[str]) -> None:
+    async with await mock_of() as mock:  # type: ignore[operator]
+        client = await mock.connect()
+        await stops.run(client)
+    out = capsys.readouterr().out
+    assert "stop StopLoss Active at 100" in out
+    assert "cancelled, 0 waiting" in out
+
+
+async def test_a_lost_answer_of_place_stop_is_looked_up_not_repeated() -> None:
+    async with await testing.mock_bcs() as mock:
+        client = await mock.connect()
+        await client.reconcile()
+        sber = await client.instrument("SBER")
+        real = client.place_stop
+        sent: list[uuid.UUID] = []
+
+        async def lost_answer(**kw: object) -> brokapi.OrderAck:
+            sent.append(kw["cid"])  # type: ignore[arg-type]
+            await real(**kw)  # type: ignore[arg-type]  # it reached the broker
+            raise brokapi.Unknown()  # but the answer was lost
+
+        client.place_stop = lost_answer  # type: ignore[method-assign]
+        found = await stops.protect_once(client, sber, Decimal("100"))
+        assert len(sent) == 1  # sent once, never again
+        assert found is not None and found.cid == sent[0]  # and found at the broker by its cid
+        await stops.release(client, found)
+        assert await client.active_stop_orders() == []
+
+
+async def test_a_refused_stop_leaves_nothing_behind() -> None:
+    async with await testing.mock_bcs() as mock:
+        client = await mock.connect()
+        await client.reconcile()
+        sber = await client.instrument("SBER")
+        # BCS has no lifetime but "until cancelled": this stays a plain refusal and the helper reports "no stop".
+        real = client.place_stop
+
+        async def refused(**kw: object) -> brokapi.OrderAck:
+            return await real(**{**kw, "expiry": brokapi.StopExpiry.end_of_day()})  # type: ignore[arg-type]
+
+        client.place_stop = refused  # type: ignore[method-assign]
+        assert await stops.protect_once(client, sber, Decimal("100")) is None
+        assert await client.active_stop_orders() == []
+
+
+async def test_raw_examples_read_each_broker(
+    bcs: tuple[testing.MockBroker, brokapi.Client],
+    tbank: tuple[testing.MockBroker, brokapi.Client],
+    finam: tuple[testing.MockBroker, brokapi.Client],
+) -> None:
+    assert (await raw_example.bcs_quotes(bcs[1]))["SBER"] > 0
+    prices = await raw_example.tbank_prices(tbank[1])
+    assert prices["SBER"] == "274.050000000"
+    assert Decimal(await raw_example.finam_quote(finam[1])) > 0
+    assert await raw_example.raw_read(bcs[1], "GetPortfolio", {}) == await bcs[1].raw("GetPortfolio")
+
+
+async def test_raw_command_example_does_not_hide_an_unknown_outcome() -> None:
+    async with await testing.mock_tbank() as mock:
+        client = await mock.connect()
+
+        async def lost(*a: object, **kw: object) -> object:
+            raise brokapi.Unknown()
+
+        client.raw = lost  # type: ignore[method-assign]
+        with pytest.raises(brokapi.Unknown):
+            await raw_example.raw_command(client, "CancelOrder", {"account_id": "acc-a", "order_id": "x"})
+
+
+async def test_record_example_one_analysis_for_the_live_stream_and_for_the_file(tmp_path: Path) -> None:
+    async with await testing.mock_bcs() as mock:
+        client = await mock.connect()
+        sber = await client.instrument("SBER")
+        qty = (await client.trading_params(sber)).min_qty
+        await client.subscribe_order_state()
+        await client.subscribe_executions()
+        await client.reconcile()
+        cid = brokapi.new_cid()
+        await client.place(cid=cid, instrument=sber, side=brokapi.Side.BUY, qty=qty, price=Decimal("250.25"))
+        mock.fill(cid, qty=qty, price=Decimal("250.25"))
+
+        path = tmp_path / "run.jsonl"
+        live = await asyncio.wait_for(record_example.record_run(client, path, count=4), 10)
+
+    assert live.traded == qty * Decimal("250.25")
+    assert await record_example.analyze_file(path) == live  # the file says the same as the live run
+    assert record_example.sources(path) == {"bcs-ud"}

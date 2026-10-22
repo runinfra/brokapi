@@ -26,6 +26,16 @@ fn main() {
     let fds = protox::compile(PROTOS, ["proto"]).expect("compile T-Bank .proto files");
 
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
+    // The same descriptors without the comments, for code that calls a method by its name (`FILE_DESCRIPTOR_SET`).
+    let mut bare = fds.clone();
+    for file in &mut bare.file {
+        file.source_code_info = None;
+    }
+    std::fs::write(
+        out.join("descriptor.bin"),
+        prost::Message::encode_to_vec(&bare),
+    )
+    .expect("write the file descriptor set");
     let server = env::var_os("CARGO_FEATURE_SERVER").is_some();
     tonic_prost_build::configure()
         .build_client(true)

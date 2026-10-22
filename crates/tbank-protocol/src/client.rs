@@ -187,6 +187,14 @@ impl TbankClient {
         InterceptedService::new(self.channel.clone(), self.interceptor.clone())
     }
 
+    /// A generic gRPC client over the same channel and token, for a call that is not made through a
+    /// generated client: the method is named by a path (`/package.Service/Method`) and the messages are
+    /// whatever codec you give it. With [`FILE_DESCRIPTOR_SET`](crate::FILE_DESCRIPTOR_SET) it calls any
+    /// method of the API by name.
+    pub fn grpc(&self) -> tonic::client::Grpc<Authed> {
+        tonic::client::Grpc::new(self.with_auth())
+    }
+
     /// Client of `MarketDataService`: unary market data: order book snapshot, last trades, candles, trading status.
     ///
     /// Returns a fresh generated client on the shared channel. It is cheap, create one per call.

@@ -52,6 +52,11 @@ pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/all.rs"));
 }
 
+/// The descriptors of every service and message of the API, as a serialized `FileDescriptorSet` (the
+/// `.proto` files this crate is built from, with their imports). Load it into a descriptor pool to call a
+/// method by its name, see [`FinamApi::grpc`].
+pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/descriptor.bin"));
+
 pub use auth::{GrpcTokenApi, TokenApi, TokenInfo, TokenManager};
 pub use client::{ApiEndpoint, Authorized, DEFAULT_ENDPOINT, FinamApi, start_token_manager};
 pub use error::FinamError;

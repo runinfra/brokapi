@@ -31,6 +31,9 @@ python -c "import brokapi; print(brokapi.__version__)"
 | Написать торгового бота на событиях | [Торговый бот на событиях, Python](howto-trading-bot.md) |
 | Держать несколько брокеров и счетов в одном процессе | [Несколько брокеров и счетов](howto-infrastructure.md) |
 | Выгрузить длинную историю свечей | [История свечей](howto-history.md) |
+| Поставить стоп-заявку, найти ее и снять | [Стоп-заявки, Python](stop-orders.md) |
+| Вызвать метод брокера, которого нет в общем интерфейсе | [Любой метод брокера, Python](raw.md) |
+| Записать поток событий в файл и проиграть его из файла | [Запись событий и проигрыш, Python](record.md) |
 | Проверить свой код без сети и денег | [Тесты против имитаций, Python](testing.md) |
 | Понять, как Python связан с ядром, и чем отличается от Rust | [Как это устроено](design.md) |
 | Найти класс, метод или поле до последней подробности | [Справочник API: Python](../api-python.md) |
@@ -43,14 +46,17 @@ python -c "import brokapi; print(brokapi.__version__)"
 | Стакан, сделки рынка, котировки, свечи | `order_book`, `last_trades`, `candles`, подписки `subscribe_*`, история по окнам `candle_pages` |
 | Свои заявки и исполнения | `subscribe_order_state`, `subscribe_executions`, `executions` |
 | Заявки | `reconcile`, `place`, `cancel`, `replace` (где брокер умеет), `order_state`, `active_orders` |
+| Стоп-заявки | `place_stop`, `cancel_stop`, `active_stop_orders`, `subscribe_stop_orders` (потока статусов нет ни у кого: `Unsupported`) |
+| Любой метод API брокера | `await client.raw("GetLastPrices", {...})`: имя метода и словарь, ответ словарем, квота общая с клиентом |
+| Запись и проигрыш событий | `brokapi.record`: `EnvelopeWriter`, `EnvelopeReader`, `replay`. Файл тот же, что у Rust |
 | Справочник, лот, шаг цены, статус торгов, расписание | `instrument`, `find`, `trading_params`, `trading_status`, `schedule` |
 | Портфель | `portfolio`, `positions`, `balances`, подписка `subscribe_portfolio` |
 | События | `async for envelope in client.events`, один поток на клиента, `brokapi.merge` для нескольких |
 | Ошибки | исключения с теми же именами и текстом, что у `Error` в Rust: `Unknown`, `Rejected`, `RateLimited`, `NotReconciled`, `Degraded` и другие |
 | Тесты | `brokapi.testing.mock_bcs()`, `mock_tbank()`, `mock_finam()`: имитации брокеров, на них идет каждый пример книги |
 
-Чего в первой версии нет, и это можно добавить по запросу: стоп-заявки, любой метод брокера через `raw()`, запись и
-проигрыш потока событий в файл. Для них пока есть [Rust](../rust/index.md).
+Python повторяет Rust по возможностям. Отличие одно: `raw` не отдает потоки (метод, который открывает поток, и WebSocket-каналы БКС), их
+читает общий интерфейс. Подробности: [Любой метод брокера, Python](raw.md).
 
 ## Правила, которые остаются
 

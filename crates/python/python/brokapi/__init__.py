@@ -27,13 +27,14 @@ environment. The book at https://brokapi.ru/docs/ has the quick start, the how-t
 
 from __future__ import annotations
 
-from . import errors, models, numbers, testing
+from . import errors, models, numbers, record, testing
 from .client import CandlePager, Client, EventStream, Limiter, connect, merge, new_cid
 from .errors import (
     BrokapiError,
     Config,
     Degraded,
     ErrorClass,
+    LogError,
     NotReconciled,
     RateLimited,
     Rejected,
@@ -83,6 +84,12 @@ from .models import (
     SessionKind,
     ShutdownReport,
     Side,
+    StopExpiry,
+    StopOrderKind,
+    StopOrderRef,
+    StopOrderSnapshot,
+    StopOrderState,
+    StopOrderStateKind,
     StreamingCaps,
     Timeframe,
     Timestamps,
@@ -119,6 +126,7 @@ __all__ = [
     "InstrumentKind",
     "InstrumentQuery",
     "Limiter",
+    "LogError",
     "MarketDataCaps",
     "MarketTrade",
     "NativeId",
@@ -150,6 +158,12 @@ __all__ = [
     "ShutdownReport",
     "ShuttingDown",
     "Side",
+    "StopExpiry",
+    "StopOrderKind",
+    "StopOrderRef",
+    "StopOrderSnapshot",
+    "StopOrderState",
+    "StopOrderStateKind",
     "StreamingCaps",
     "Timeframe",
     "Timestamps",
@@ -167,6 +181,7 @@ __all__ = [
     "models",
     "new_cid",
     "numbers",
+    "record",
     "round_to_step",
     "testing",
 ]

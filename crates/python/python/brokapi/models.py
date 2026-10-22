@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import enum
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Optional, Union
 
-from ._codec import decode, from_nanos
+from ._codec import cid_text, decode, from_nanos, to_nanos
 
 __all__ = [
     "Backpressure",
@@ -60,6 +60,12 @@ __all__ = [
     "SessionKind",
     "ShutdownReport",
     "Side",
+    "StopExpiry",
+    "StopOrderKind",
+    "StopOrderRef",
+    "StopOrderSnapshot",
+    "StopOrderState",
+    "StopOrderStateKind",
     "StreamingCaps",
     "Timeframe",
     "Timestamps",
@@ -172,6 +178,38 @@ class OrderStateKind(enum.Enum):
     FILLED = "Filled"
     CANCELLED = "Cancelled"
     REJECTED = "Rejected"
+
+
+class StopOrderKind(enum.Enum):
+    """What a stop order is for. With the side it fixes the direction of the trigger."""
+
+    STOP_LOSS = "StopLoss"
+    """Protects a position: a sell triggers when the price falls to ``stop_price``, a buy when it rises."""
+    TAKE_PROFIT = "TakeProfit"
+    """Takes a profit: a sell triggers when the price rises to ``stop_price``, a buy when it falls."""
+    STOP_LIMIT = "StopLimit"
+    """Triggers like ``STOP_LOSS`` and always puts a limit order, so ``limit_price`` is required."""
+
+    def triggers_on_rise(self, side: "Side") -> bool:
+        """``True`` when the stop triggers on a RISING price for this side. Falling otherwise."""
+        if self is StopOrderKind.TAKE_PROFIT:
+            return side is Side.SELL
+        return side is Side.BUY
+
+
+class StopOrderStateKind(enum.Enum):
+    """Where a stop order is in its life."""
+
+    ACTIVE = "Active"
+    """Waiting for the trigger."""
+    TRIGGERED = "Triggered"
+    """Triggered: the exchange order was put."""
+    CANCELLED = "Cancelled"
+    """Cancelled before it triggered, by you or by the broker."""
+    EXPIRED = "Expired"
+    """The lifetime ended without a trigger."""
+    OTHER = "Other"
+    """The status of the broker does not fit the others: its text is on :attr:`StopOrderState.text`."""
 
 
 # ---------------------------------------------------------------------------------------------------- time
@@ -516,6 +554,113 @@ class Execution:
 
 
 @dataclass(frozen=True, slots=True)
+class StopExpiry:
+    """How long a stop order lives. Build it with the class methods."""
+
+    kind: str
+    """``GoodTillCancel``, ``EndOfDay`` or ``GoodTillDate``."""
+    until: Optional[datetime] = None
+    """Set when ``kind`` is ``GoodTillDate``."""
+
+    @classmethod
+    def good_till_cancel(cls) -> "StopExpiry":
+        """Until cancelled."""
+        return cls("GoodTillCancel")
+
+    @classmethod
+    def end_of_day(cls) -> "StopExpiry":
+        """Until the end of the trading day (not every broker has it)."""
+        return cls("EndOfDay")
+
+    @classmethod
+    def good_till_date(cls, moment: datetime) -> "StopExpiry":
+        """Until the given moment (an aware ``datetime``). Not every broker has it for every kind."""
+        return cls("GoodTillDate", moment)
+
+    def _to_json(self) -> Any:
+        if self.kind == "GoodTillDate":
+            if self.until is None:
+                raise ValueError("good_till_date needs a moment")
+            return {"GoodTillDate": to_nanos(self.until)}
+        return self.kind
+
+    @classmethod
+    def _from_json(cls, value: Any) -> "StopExpiry":
+        if isinstance(value, str):
+            return cls(value)
+        return cls("GoodTillDate", from_nanos(value["GoodTillDate"]))
+
+
+@dataclass(frozen=True, slots=True)
+class StopOrderState:
+    """Where a stop order is: :attr:`kind`, and the broker's own text when it is ``OTHER``."""
+
+    kind: StopOrderStateKind
+    text: Optional[str] = None
+
+    @property
+    def is_final(self) -> bool:
+        """The stop order cannot change any more: triggered, cancelled or expired."""
+        return self.kind in (
+            StopOrderStateKind.TRIGGERED,
+            StopOrderStateKind.CANCELLED,
+            StopOrderStateKind.EXPIRED,
+        )
+
+    @classmethod
+    def _from_json(cls, value: Any) -> "StopOrderState":
+        if isinstance(value, str):
+            return cls(StopOrderStateKind(value))
+        return cls(StopOrderStateKind.OTHER, value["Other"])
+
+
+@dataclass(frozen=True, slots=True)
+class StopOrderRef:
+    """Which stop order a command is about. Build it with :meth:`cid` or :meth:`broker`."""
+
+    kind: str
+    """``Cid`` or ``Broker``."""
+    value: str
+
+    @classmethod
+    def cid(cls, cid: uuid.UUID | str) -> "StopOrderRef":
+        """The ``cid`` given to ``place_stop``. The connector knows it only for stops it saw in this run: after a
+        restart T-Bank refuses it with ``Rejected`` (``unknown_stop_order``), use :meth:`broker` then."""
+        return cls("Cid", cid_text(cid))
+
+    @classmethod
+    def broker(cls, broker_id: str) -> "StopOrderRef":
+        """The id of the broker, from ``OrderAck.broker_id`` or ``StopOrderSnapshot.broker_id``."""
+        return cls("Broker", broker_id)
+
+    def _to_json(self) -> Any:
+        return {self.kind: self.value}
+
+
+@dataclass(frozen=True, slots=True)
+class StopOrderSnapshot:
+    """A stop order as the broker shows it (``active_stop_orders``)."""
+
+    broker_id: str
+    """The id of the broker. Use it with ``StopOrderRef.broker``."""
+    instrument: InstrumentId
+    side: Side
+    kind: StopOrderKind
+    qty: Decimal
+    """In units of the instrument, not lots."""
+    stop_price: Decimal
+    """The trigger price."""
+    expiry: StopExpiry
+    state: StopOrderState
+    ts: Timestamps
+    cid: Optional[uuid.UUID] = None
+    """``None`` when the connector cannot tie the stop order to a ``cid`` (placed by someone else, or by an earlier run
+    of the program, at a broker that does not echo it)."""
+    limit_price: Optional[Decimal] = None
+    """The price of the exchange order put at the trigger. ``None`` is a market order."""
+
+
+@dataclass(frozen=True, slots=True)
 class ReconcileReport:
     """What ``reconcile`` found."""
 
@@ -656,16 +801,25 @@ class Envelope:
     ts: Timestamps
     payload: Event
     schema: int = 1
+    _text: Optional[str] = field(default=None, repr=False, compare=False)
+    """The JSON line the envelope was made from (the form of the event log), kept so that it can be written back."""
 
     @classmethod
-    def _from_json(cls, value: dict[str, Any]) -> "Envelope":
+    def _from_json(cls, value: dict[str, Any], text: Optional[str] = None) -> "Envelope":
         return cls(
             schema=value["schema"],
             source=value["source"],
             sub=value.get("sub"),
             ts=Timestamps._from_json(value["ts"]),
             payload=_decode_event(value["payload"]),
+            _text=text,
         )
+
+    @classmethod
+    def _from_text(cls, text: str) -> "Envelope":
+        from ._codec import loads
+
+        return cls._from_json(loads(text), text)
 
 
 # ---------------------------------------------------------------------------------------------------- options
