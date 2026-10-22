@@ -27,6 +27,8 @@ environment. The book at https://brokapi.ru/docs/ has the quick start, the how-t
 
 from __future__ import annotations
 
+from importlib import metadata as _metadata
+
 from . import errors, models, numbers, record, testing
 from .client import CandlePager, Client, EventStream, Limiter, connect, merge, new_cid
 from .errors import (
@@ -101,7 +103,11 @@ from .models import (
 )
 from .numbers import RoundMode, round_to_step
 
-__version__ = "0.1.0a3"
+try:
+    # The one number of the library is `version` in [workspace.package] of Cargo.toml; maturin writes it into the metadata of the package.
+    __version__ = _metadata.version("brokapi")
+except _metadata.PackageNotFoundError:  # run from a source tree that was never installed (the reference is built like this)
+    __version__ = "0+unknown"
 
 __all__ = [
     "Backpressure",

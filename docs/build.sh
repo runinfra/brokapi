@@ -29,6 +29,8 @@ rm -rf "$NEW"
 
 echo "==> book"
 mdbook build docs --dest-dir "$(pwd)/$NEW"
+# The version in the strip of every page (theme/index.hbs) is put in here, from Cargo.toml (docs/brokapi_version.py).
+python3 docs/brokapi_version.py stamp "$NEW"
 
 echo "==> files for AI agents (llms.txt, llms-full.txt, page.md)"
 python3 docs/llms.py docs "$NEW"

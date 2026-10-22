@@ -29,7 +29,7 @@ cargo add --git https://github.com/runinfra/brokapi brokapi --features tbank
 
 ```toml
 [dependencies]
-brokapi = { git = "https://github.com/runinfra/brokapi", version = "0.1.0-alpha.3", features = ["tbank"] }   # после беты без git
+brokapi = { git = "https://github.com/runinfra/brokapi", version = "{{brokapi_version}}", features = ["tbank"] }   # после беты без git
 tokio   = { version = "1", features = ["full"] }
 dotenvy = "0.15"
 ```

@@ -47,6 +47,11 @@ command = "mdbook-mermaid"
 command = "python3 dedent_code.py"
 after = ["links"]
 
+# Ставит номер версии на место {{brokapi_version}} и {{brokapi_version_py}}. Номер один, в [workspace.package] файла ../Cargo.toml
+# (docs/brokapi_version.py). Плашку в шапке (theme/index.hbs) заполняет `brokapi_version.py stamp` после сборки: docs/build.sh и tools/check.
+[preprocessor.version]
+command = "python3 brokapi_version.py"
+
 # Страницы readiness и live убраны из книги: их адреса ведут на "Перед боевым счетом".
 # Страницы раздела Rust переехали в rust/ (21.10.2026). Старые адреса остаются рабочими: mdBook кладет на их место
 # страницу с переадресацией. Переадресация и для markdown-копий агентов: docs/llms.py читает эту таблицу и пишет

@@ -22,6 +22,8 @@ import re
 import sys
 import textwrap
 
+from brokapi_version import substitute as put_version  # the number of the library, one source: ../Cargo.toml
+
 try:
     import tomllib  # python 3.11+
 except ImportError:  # pragma: no cover
@@ -176,7 +178,7 @@ def expand(text, page_dir):
             return "\n".join(lines[lo:hi])
         return "\n".join(line for line in lines if not ANCHOR_LINE.match(line)).rstrip("\n")
 
-    return INCLUDE.sub(one, text)
+    return put_version(INCLUDE.sub(one, text))
 
 
 def html_name(path):

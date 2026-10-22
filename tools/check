@@ -54,6 +54,7 @@ cargo build --examples --workspace
 
 step "7/10 mdbook build docs"
 mdbook build docs
+python3 docs/brokapi_version.py stamp docs/book
 
 step "8/10 files for AI agents (docs/llms.py)"
 python3 docs/llms.py docs docs/book
