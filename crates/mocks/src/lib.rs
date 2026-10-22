@@ -1,4 +1,4 @@
-//! In-process imitations of the three brokers, for tests and examples.
+//! In-process imitations of the brokers, for tests and examples.
 //!
 //! **Not part of the library's public promise.** This crate exists so that every example in the
 //! documentation (`cargo test --doc`), every program in `examples/` and the integration tests can run
@@ -12,6 +12,7 @@
 //! | [`bcs`] | BCS | HTTP + WebSocket (axum) | [`bcs::MockServer::start`] |
 //! | [`tbank`] | T-Bank | gRPC (tonic) | [`tbank::MockServer::start`] |
 //! | [`finam`] | Finam | gRPC (tonic) | [`finam::MockServer::start`] |
+//! | [`alor`] | ALOR | HTTP + WebSocket (axum) | [`alor::MockServer::start`] |
 //!
 //! The servers keep real state (placed orders can be listed, cancelled, filled through a test hook), so
 //! a scenario written for the mock reads the same as one for the live API. What they do **not** prove
@@ -33,6 +34,7 @@
 
 #![allow(missing_docs)]
 
+pub mod alor;
 pub mod bcs;
 pub mod finam;
 pub mod live;

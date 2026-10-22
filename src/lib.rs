@@ -1,11 +1,11 @@
-//! One interface to the APIs of Russian brokers: BCS, T-Bank and Finam.
+//! One interface to the APIs of Russian brokers: BCS, T-Bank, Finam and ALOR.
 //!
 //! This is the crate you depend on. It re-exports the library and switches brokers on with
 //! features, the way `tokio` does:
 //!
 //! ```toml
 //! [dependencies]
-//! brokapi = { version = "0.1.0-alpha.1", features = ["bcs"] }   # or "tbank", "finam"
+//! brokapi = { version = "0.1.0-alpha.1", features = ["bcs"] }   # or "tbank", "finam", "alor"
 //! ```
 //!
 //! | Path | What is there | Feature |
@@ -16,6 +16,7 @@
 //! | `bcs` | BCS connectors (`MarketDataConnector`, `UserDataConnector`); `bcs::protocol` is the wire client | `bcs` |
 //! | `tbank` | T-Bank connectors; `tbank::protocol` is the gRPC client | `tbank` |
 //! | `finam` | Finam connectors; `finam::protocol` is the gRPC client | `finam` |
+//! | `alor` | ALOR connectors; `alor::protocol` is the HTTP and WebSocket client | `alor` |
 //!
 //! The guide, the rules for orders and the readiness table are in the book:
 //! <https://brokapi.ru/docs/>. The stage is closed alpha: checked on broker imitations only.
@@ -58,4 +59,12 @@ pub mod finam {
     pub use brokapi_finam::*;
     /// The Finam Trade API gRPC client (lower layer).
     pub use brokapi_finam_protocol as protocol;
+}
+
+/// ALOR connectors and the ALOR wire client.
+#[cfg(feature = "alor")]
+pub mod alor {
+    pub use brokapi_alor::*;
+    /// The ALOR HTTP and WebSocket client (lower layer).
+    pub use brokapi_alor_protocol as protocol;
 }

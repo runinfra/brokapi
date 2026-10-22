@@ -1,0 +1,57 @@
+# ALOR Broker API rate limits for brokapi-alor.
+#
+# Source: the article "Ограничения и рекомендации" and the page "HTTP API" of the ALOR documentation: up to 100
+# HTTP requests a second per user, up to 10 WebSocket connections, up to 5000 subscriptions on a connection, up to
+# 5000 unprocessed messages in the buffer of a connection. The articles give no other numbers.
+#
+# What is NOT published and not verified against a live account: the social rating (the broker counts "points" for
+# actions, blocks a login for 2 hours when the limit is reached, and does not say the limit; a request for an order
+# that does not exist costs 100 points and a request that is not valid JSON costs 5000, a WebSocket connection and a
+# subscription cost 1), and on the futures market the counters of errors that the exchange fines. The limiter below
+# only keeps the plain request rate. Whether "per user" means per login (all portfolios of it) is read from the
+# article on the rating ("counters are bound to the login"), so one limiter should serve every connector of one
+# login, and the daily counters of the broker are not visible to it.
+#
+# One bucket of 100 a second for every HTTP method (the broker does not split them), a smaller soft bucket for
+# placements so that a flood of new orders can never use all of the budget and leave no room for a cancel.
+
+[alor.buckets.http]
+# All HTTP requests of one user: 100 a second.
+rate = 100
+per = "1s"
+burst = 100
+
+[alor.buckets.place]
+# Not a limit of the broker: placements (and replacements, stop orders) go through this bucket too, so that they
+# can never use all of the 100 a second. At least 40 a second are left for cancels and reads.
+rate = 60
+per = "1s"
+burst = 30
+
+[alor.route]
+# "*" = any method with no route below (raw() calls). It spends the plain budget, so a call is never free.
+"*" = ["http"]
+PlaceOrder = ["http", "place"]
+ReplaceOrder = ["http", "place"]
+PlaceStopOrder = ["http", "place"]
+CancelOrder = ["http"]
+CancelStopOrder = ["http"]
+GetOrder = ["http"]
+GetOrders = ["http"]
+GetStopOrders = ["http"]
+GetTrades = ["http"]
+GetPositions = ["http"]
+GetSummary = ["http"]
+GetOrderBook = ["http"]
+GetLastTrades = ["http"]
+GetCandles = ["http"]
+GetSecurity = ["http"]
+GetSecurities = ["http"]
+GetTradingStatus = ["http"]
+Reconcile = ["http"]
+
+[alor.conns]
+# The data channel `/ws` carries every subscription of a connector (market data and the user's own streams).
+max_conns = 10
+max_subs_per_conn = 5000
+supports_multiplex = true

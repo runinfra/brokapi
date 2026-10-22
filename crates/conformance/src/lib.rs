@@ -1248,6 +1248,43 @@ pub async fn market_data_history<M: MarketDataSource + InstrumentSource + ?Sized
     schedule_range: TimeRange,
 ) {
     const S: &str = "market_data_history";
+    market_data_history_without_schedule(md, id, tf, candle_range).await;
+    let sched = md
+        .schedule(schedule_key, schedule_range)
+        .await
+        .unwrap_or_else(|e| fail(S, format!("schedule({schedule_key:?}) failed: {e:?}")));
+    if sched.sessions.is_empty() {
+        fail(S, "the mock must serve at least one session");
+    }
+    if sched
+        .sessions
+        .iter()
+        .any(|x| x.start.as_nanos() >= x.end.as_nanos())
+    {
+        fail(
+            S,
+            format!("a session starts after it ends: {:?}", sched.sessions),
+        );
+    }
+}
+
+/// The tape, candles and trading status of one instrument: [`market_data_history`] without the schedule, for a
+/// broker whose API has no timetable of sessions (its `schedule` answers `Unsupported`, which this scenario
+/// does not call).
+///
+/// # Panics
+///
+/// With `[conformance:market_data_history] <reason>` when a call fails or a check of
+/// [`market_data_history`] (the first three) fails.
+pub async fn market_data_history_without_schedule<
+    M: MarketDataSource + InstrumentSource + ?Sized,
+>(
+    md: &M,
+    id: &InstrumentId,
+    tf: Timeframe,
+    candle_range: TimeRange,
+) {
+    const S: &str = "market_data_history";
     let trades = md
         .last_trades(id, 2)
         .await
@@ -1314,24 +1351,6 @@ pub async fn market_data_history<M: MarketDataSource + InstrumentSource + ?Sized
     }
     if st.availability == TradingAvailability::Unknown {
         fail(S, "the mock status must be a known one");
-    }
-
-    let sched = md
-        .schedule(schedule_key, schedule_range)
-        .await
-        .unwrap_or_else(|e| fail(S, format!("schedule({schedule_key:?}) failed: {e:?}")));
-    if sched.sessions.is_empty() {
-        fail(S, "the mock must serve at least one session");
-    }
-    if sched
-        .sessions
-        .iter()
-        .any(|x| x.start.as_nanos() >= x.end.as_nanos())
-    {
-        fail(
-            S,
-            format!("a session starts after it ends: {:?}", sched.sessions),
-        );
     }
 }
 

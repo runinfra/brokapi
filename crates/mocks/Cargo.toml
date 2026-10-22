@@ -1,6 +1,6 @@
 [package]
 name = "brokapi-mocks"
-description = "In-process broker imitations (BCS, T-Bank, Finam) for tests and examples. Not part of the library's public promise."
+description = "In-process broker imitations (BCS, T-Bank, Finam, ALOR) for tests and examples. Not part of the library's public promise."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,0 +1,48 @@
+[package]
+name = "brokapi-alor-protocol"
+description = "Low-level ALOR Broker wire protocol: HTTP + WebSocket client, serde models, parsing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+documentation.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+base64 = "0.22"
+chrono.workspace = true
+dotenvy.workspace = true
+futures-util.workspace = true
+kanal.workspace = true
+reqwest.workspace = true
+rust_decimal = { workspace = true, features = ["serde-with-arbitrary-precision"] }
+serde.workspace = true
+# arbitrary_precision: numbers of the broker's JSON are read as text, so 244.30 is never an f64.
+serde_json = { workspace = true, features = ["arbitrary_precision"] }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros", "net"] }
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+rust_decimal_macros.workspace = true
+mockito = "1.5"
+proptest.workspace = true
+# Doctests run against the in-process ALOR imitation (a dev-dependency cycle is fine for doctests).
+brokapi-mocks.workspace = true
+
+[features]
+default = []
+# Level-3 integration tests against the live ALOR API (never run in CI).
+integration-live = []
+
+[lib]
+name = "brokapi_alor_protocol"
+path = "src/lib.rs"
