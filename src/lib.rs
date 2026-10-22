@@ -19,7 +19,7 @@
 //! | `alor` | ALOR connectors; `alor::protocol` is the HTTP and WebSocket client | `alor` |
 //!
 //! The guide, the rules for orders and the readiness table are in the book:
-//! <https://brokapi.ru/docs/>. The stage is closed alpha: checked on broker imitations only.
+//! <https://brokapi.ru/docs/>. The stage is open alpha: checked on broker imitations only.
 //!
 //! # Example
 //!

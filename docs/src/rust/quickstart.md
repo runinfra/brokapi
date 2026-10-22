@@ -11,7 +11,7 @@
 ## Шаг 1. Получить библиотеку
 
 Нужен Rust 1.88 или новее (редакция 2024). Подключается один крейт `brokapi`, брокеры включаются флагами, как у `tokio`
-(`tbank`, `bcs`, `finam`, `alor`, можно несколько). Целевые команды, когда крейт опубликован (открытая бета):
+(`tbank`, `bcs`, `finam`, `alor`, можно несколько):
 
 ```bash
 cargo add brokapi --features tbank
@@ -19,8 +19,7 @@ cargo add tokio --features full
 cargo add dotenvy
 ```
 
-Закрытая альфа: крейта на crates.io еще нет. Сейчас первая строка такая (репозиторий откроется вместе с открытой бетой,
-подробности и проверка - на странице [Установка](../install.md)):
+Самая свежая версия из репозитория - вместо первой строки (подробности и проверка - на странице [Установка](../install.md)):
 
 ```bash
 cargo add --git https://github.com/runinfra/brokapi brokapi --features tbank
@@ -30,7 +29,7 @@ cargo add --git https://github.com/runinfra/brokapi brokapi --features tbank
 
 ```toml
 [dependencies]
-brokapi = { git = "https://github.com/runinfra/brokapi", version = "0.1.0-alpha.1", features = ["tbank"] }   # после беты без git
+brokapi = { git = "https://github.com/runinfra/brokapi", version = "0.1.0-alpha.2", features = ["tbank"] }   # после беты без git
 tokio   = { version = "1", features = ["full"] }
 dotenvy = "0.15"
 ```

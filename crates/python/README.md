@@ -4,7 +4,7 @@ One interface to the APIs of Russian brokers (BCS, T-Bank, Finam, ALOR): market 
 A thin layer over the Rust core of [brokapi](https://brokapi.ru/): `asyncio` for the events, `decimal.Decimal` for money,
 the same errors and the same rules as the core.
 
-**Closed alpha.** Checked against the imitations of the brokers, not yet on live accounts. The interface can change
+**Open alpha.** Checked against the imitations of the brokers, not yet on live accounts. The interface can change
 before the beta.
 
 ```python

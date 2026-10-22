@@ -3,8 +3,8 @@
 # wheels are uploaded as artifacts of the run, putting them on PyPI is a separate decision and a separate step.
 #
 # Made from `maturin generate-ci github` (maturin 1.15) and cut down: one abi3 wheel covers every Python from 3.10, so no
-# free-threaded and no per-version wheels, and no 32-bit or exotic targets. NOT RUN YET: the first run may need small fixes
-# (runner names, the cross toolchain of aarch64). The Linux x86_64 wheel is built and checked on the build machine of the
+# free-threaded and no per-version wheels, and no 32-bit or exotic targets. Linux aarch64 is built on an ARM runner, not by
+# cross compilation: the cross toolchain of manylinux cannot build the assembly of `ring`. The Linux x86_64 wheel is also built and checked on the build machine of the
 # project; the other systems are this file's job.
 name: python
 
@@ -26,7 +26,7 @@ jobs:
       matrix:
         include:
           - { os: linux, runner: ubuntu-22.04, target: x86_64, manylinux: auto }
-          - { os: linux, runner: ubuntu-22.04, target: aarch64, manylinux: auto }
+          - { os: linux, runner: ubuntu-24.04-arm, target: aarch64, manylinux: auto }
           - { os: macos, runner: macos-15-intel, target: x86_64 }
           - { os: macos, runner: macos-latest, target: aarch64 }
           - { os: windows, runner: windows-latest, target: x64 }
@@ -50,7 +50,7 @@ jobs:
           path: crates/python/dist
 
   # Install the wheel in a clean environment and run the tests of the package against the imitations of the brokers.
-  # Only where the runner can run the wheel it built (not aarch64 Linux, it is built by cross compilation).
+  # On every system the wheels are built for.
   smoke:
     name: smoke ${{ matrix.os }} ${{ matrix.python }}
     needs: wheels
@@ -61,6 +61,7 @@ jobs:
         include:
           - { os: linux, runner: ubuntu-22.04, target: x86_64, python: "3.10" }
           - { os: linux, runner: ubuntu-22.04, target: x86_64, python: "3.14" }
+          - { os: linux, runner: ubuntu-24.04-arm, target: aarch64, python: "3.12" }
           - { os: macos, runner: macos-latest, target: aarch64, python: "3.13" }
           - { os: windows, runner: windows-latest, target: x64, python: "3.12" }
     steps:
@@ -93,7 +94,7 @@ jobs:
           $PY -m pytest tests -q
 
   sdist:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
       - name: Build the sdist

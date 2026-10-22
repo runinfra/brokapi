@@ -23,7 +23,8 @@ def line(n: int, source: str = "bcs-md") -> str:
 
 
 def write_log(path: Path, *lines: str, header: str = HEADER) -> Path:
-    path.write_text("\n".join([header, *lines]) + "\n")
+    # newline="\n": the format is LF on every system, as the Rust library writes it (text mode would write CRLF on Windows).
+    path.write_text("\n".join([header, *lines]) + "\n", newline="\n")
     return path
 
 
