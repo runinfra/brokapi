@@ -271,7 +271,6 @@ async fn fills_at_different_prices_arrive_with_their_own_prices() {
     let opts = Arc::new(MockOptions::default());
     let (server, ud, mut rx) = ud(&opts).await;
     reconcile_of(&ud, &[]).await;
-    brokapi_mocks::time::wait_until("order events socket", || opts.event_sockets() > 0).await;
     ud.subscribe_executions().await.unwrap();
     let req = limit_buy(100, dec!(120));
     let cid = req.cid;
@@ -299,7 +298,6 @@ async fn a_cancel_that_is_only_started_is_not_a_cancel() {
     opts.cancel_pending.store(true, Ordering::SeqCst);
     let (server, ud, mut rx) = ud(&opts).await;
     reconcile_of(&ud, &[]).await;
-    brokapi_mocks::time::wait_until("order events socket", || opts.event_sockets() > 0).await;
     ud.subscribe_order_state().await.unwrap();
     let req = limit_buy(100, dec!(120));
     let cid = req.cid;
@@ -350,7 +348,6 @@ async fn an_order_that_fills_while_it_is_cancelling_is_filled() {
     opts.cancel_pending.store(true, Ordering::SeqCst);
     let (server, ud, mut rx) = ud(&opts).await;
     reconcile_of(&ud, &[]).await;
-    brokapi_mocks::time::wait_until("order events socket", || opts.event_sockets() > 0).await;
     ud.subscribe_order_state().await.unwrap();
     let req = limit_buy(10, dec!(120));
     let cid = req.cid;

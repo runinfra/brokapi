@@ -4,6 +4,8 @@ mod mock_server;
 
 use brokapi_core::Price;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use brokapi_conformance as conf;
 use brokapi_core::{
@@ -136,10 +138,66 @@ async fn own_orders_events_active_replace_and_executions() {
     ud.shutdown(ShutdownMode::Immediate).await;
 }
 
-// ─── guarantees of the command path ───────────────────────────────────────────
+/// The broker is slow to open a stream: `subscribe_*` waits for it, and a stream that does not open is an error
+/// with nothing left behind.
+#[tokio::test]
+async fn subscribe_returns_when_the_stream_is_open() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (ud, mut rx) = ud(&server).await;
+    conf::reconcile(&ud).await;
+    opts.stream_gate.hold();
+    conf::subscribe_waits_for_the_stream(
+        &ud,
+        &mut rx,
+        "tbank-ud",
+        &sber(),
+        Price::from(1),
+        |call| {
+            brokapi_mocks::time::elapse_when(
+                "the stream request reached the broker",
+                || opts.stream_gate.waiting() > 0,
+                Duration::from_secs(120),
+                call,
+            )
+        },
+        || async { opts.stream_gate.release() },
+        |cid| {
+            server.fill(ACCOUNT_A, &cid.hyphenated().to_string());
+            async {}
+        },
+    )
+    .await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
 
-use std::sync::atomic::Ordering;
-use std::time::Duration;
+/// The market data stream of T-Bank answers each subscribe with a status: without it the call is an error.
+#[tokio::test]
+async fn market_subscribe_returns_when_the_broker_has_confirmed() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (md, mut rx) = md(&server).await;
+    opts.md_silent.store(true, Ordering::SeqCst);
+    let id = sber();
+    conf::market_subscribe_waits_for_the_stream(
+        &md,
+        &mut rx,
+        &id,
+        |call| {
+            brokapi_mocks::time::elapse_when(
+                "the subscribe reached the broker",
+                || !opts.md_requests.lock().unwrap().is_empty(),
+                Duration::from_secs(120),
+                call,
+            )
+        },
+        || async { opts.md_silent.store(false, Ordering::SeqCst) },
+    )
+    .await;
+    md.shutdown(ShutdownMode::Immediate).await;
+}
+
+// ─── guarantees of the command path ───────────────────────────────────────────
 
 async fn ud_timeout(
     server: &MockServer,

@@ -38,10 +38,16 @@ pub struct MarketDataConfig {
     /// Upper bound of the pause (default 30 s). The pause returns to `reconnect_min` once a connection
     /// has lived 10 seconds.
     pub reconnect_max: Duration,
+    /// How long a `subscribe_*` call waits for the broker to confirm the subscription (default 3 s). The call
+    /// returns when the broker has confirmed: what happens after that is delivered. A refusal is returned as
+    /// `Rejected` (`subscription_refused`). If nothing comes in time, the call fails with `Transport` and the
+    /// subscription is taken back, so the call can be repeated.
+    pub subscribe_ack_timeout: Duration,
 }
 
 impl MarketDataConfig {
-    /// Creates a config with the default reconnect pauses (0.5 s up to 30 s).
+    /// Creates a config with the default reconnect pauses (0.5 s up to 30 s) and a 3 s wait for the
+    /// confirmation of a subscription.
     ///
     /// `source` is the label put in every [`Envelope`](brokapi_core::Envelope) this connector emits,
     /// so a bot with several connectors can tell them apart.
@@ -51,6 +57,7 @@ impl MarketDataConfig {
             source: source.into(),
             reconnect_min: DEFAULT_RECONNECT_MIN,
             reconnect_max: DEFAULT_RECONNECT_MAX,
+            subscribe_ack_timeout: Duration::from_secs(3),
         }
     }
 }
@@ -87,6 +94,11 @@ pub struct UserDataConfig {
     /// Upper bound of the pause (default 30 s). The pause returns to `reconnect_min` once a connection
     /// has lived 10 seconds.
     pub reconnect_max: Duration,
+    /// How long a `subscribe_*` call waits for the WebSocket of its channel to be open (default 3 s). The
+    /// call returns when the socket is open: an order placed right after it is not missed. If the socket does
+    /// not open in time, the call fails with `Transport` and the subscription is taken back, so the call can
+    /// be repeated.
+    pub subscribe_ack_timeout: Duration,
     /// Price steps the connector checks order prices against (default: empty, nothing is checked).
     /// Fill it with [`PriceGrid::learn`] from the trading parameters of the instruments you trade. A
     /// price off the step is then refused with `Rejected` (`price_off_step`) before anything is sent.
@@ -94,8 +106,8 @@ pub struct UserDataConfig {
 }
 
 impl UserDataConfig {
-    /// Creates a config with the default buffer (1024 events) and the default reconnect pauses
-    /// (0.5 s up to 30 s).
+    /// Creates a config with the default buffer (1024 events), the default reconnect pauses
+    /// (0.5 s up to 30 s) and a 3 s wait for the socket in `subscribe_*`.
     ///
     /// `source` is the label put in every [`Envelope`](brokapi_core::Envelope) this connector emits.
     pub fn new(bcs: BcsConfig, source: impl Into<Arc<str>>) -> Self {
@@ -105,6 +117,7 @@ impl UserDataConfig {
             order_state_buffer: 1024,
             reconnect_min: DEFAULT_RECONNECT_MIN,
             reconnect_max: DEFAULT_RECONNECT_MAX,
+            subscribe_ack_timeout: Duration::from_secs(3),
             price_grid: PriceGrid::default(),
         }
     }

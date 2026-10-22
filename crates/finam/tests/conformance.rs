@@ -153,6 +153,92 @@ async fn own_orders_events_active_replace_and_executions() {
     ud.shutdown(ShutdownMode::Immediate).await;
 }
 
+/// The broker is slow to open a stream: `subscribe_*` waits for it, and a stream that does not open is an error
+/// with nothing left behind.
+#[tokio::test]
+async fn subscribe_returns_when_the_stream_is_open() {
+    let server = MockServer::start().await;
+    let (ud, mut rx) = ud(&server, "ACC1").await;
+    conf::reconcile(&ud).await;
+    server.state.options.stream_gate.hold();
+    conf::subscribe_waits_for_the_stream(
+        &ud,
+        &mut rx,
+        "finam-ud-ACC1",
+        &sber(),
+        Price::from(1),
+        |call| {
+            brokapi_mocks::time::elapse_when(
+                "the stream request reached the broker",
+                || server.state.options.stream_gate.waiting() > 0,
+                std::time::Duration::from_secs(10),
+                call,
+            )
+        },
+        || async { server.state.options.stream_gate.release() },
+        |cid| {
+            let server = &server;
+            async move {
+                // The cid travels in the order's comment; find our order by it.
+                let comment = brokapi_finam::cid::FinamCidCodec
+                    .encode(cid)
+                    .unwrap()
+                    .as_str()
+                    .to_string();
+                let order = server
+                    .state
+                    .orders_of("ACC1")
+                    .into_iter()
+                    .find(|o| o.order.as_ref().is_some_and(|x| x.comment == comment))
+                    .expect("our order at the mock");
+                let dec = |v: &str| {
+                    Some(brokapi_finam_protocol::pb::google::r#type::Decimal { value: v.into() })
+                };
+                server.state.push_trade(
+                    "ACC1",
+                    brokapi_finam_protocol::pb::grpc::tradeapi::v1::AccountTrade {
+                        trade_id: "TR-SLOW".into(),
+                        symbol: "SBER@MISX".into(),
+                        price: dec("1"),
+                        size: dec("2"),
+                        side: brokapi_finam_protocol::pb::grpc::tradeapi::v1::Side::Buy as i32,
+                        order_id: order.order_id.clone(),
+                        comment,
+                        account_id: "ACC1".into(),
+                        ..Default::default()
+                    },
+                );
+            }
+        },
+    )
+    .await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn market_subscribe_returns_when_the_stream_is_open() {
+    let server = MockServer::start().await;
+    let (md, mut rx) = md(&server).await;
+    server.state.options.stream_gate.hold();
+    let id = sber();
+    conf::market_subscribe_waits_for_the_stream(
+        &md,
+        &mut rx,
+        &id,
+        |call| {
+            brokapi_mocks::time::elapse_when(
+                "the stream request reached the broker",
+                || server.state.options.stream_gate.waiting() > 0,
+                std::time::Duration::from_secs(10),
+                call,
+            )
+        },
+        || async { server.state.options.stream_gate.release() },
+    )
+    .await;
+    md.shutdown(ShutdownMode::Immediate).await;
+}
+
 // ─── guarantees of the command path ───────────────────────────────────────────
 
 use std::sync::atomic::Ordering;

@@ -61,8 +61,7 @@ use brokapi_mocks::bcs::{MockOptions, MockServer};
 
 let opts: Arc<MockOptions> = Arc::default();
 let server = MockServer::start(opts.clone()).await;
-// ... после подписки на статусы дождаться, пока сокет событий подключится:
-brokapi_mocks::time::wait_until("сокет событий подключен", || opts.event_sockets() > 0).await;
+// ... рычаги и счетчики лежат в `opts`, например `opts.event_sockets()` - сколько сокетов событий открыто.
 ```
 
 `BrokerLimiter::new` возвращает `Arc<BrokerLimiter>`: передавайте его дальше через `.clone()`.
@@ -126,6 +125,7 @@ brokapi_mocks::time::wait_until("сокет событий подключен", 
 | `Rejected` на постановке (цена задается в тесте, не берется из стакана) | лимитная цена `brokapi_conformance::REJECT_PRICE` (13.37), в теле ответа 200 - цена 13.38 (`mbcs::REJECT_IN_BODY_PRICE`) | `REJECT_PRICE` (13.37) | `REJECT_PRICE` (13.37) | `REJECT_PRICE` (13.37), ответ HTTP 400 |
 | `Unknown` на постановке | `opts.order_delay_ms` больше, чем `cfg.request_timeout` клиента (имитация держит команду это время по часам теста). Пример: `a_place_without_an_answer_is_unknown` в `crates/bcs/tests/conformance.rs` | `opts.post_delay_ms` больше, чем `with_request_timeout(...)` клиента. Либо `opts.post_fail` с кодом gRPC | `opts.place_delay_ms` больше таймаута клиента, либо `opts.place_error` | `opts.order_delay_ms` больше, чем `request_timeout` клиента |
 | Обрыв потока стакана | `opts.disconnect_after_data_frames` | `opts.md_cut_after` | `opts.book_drop_after` | `opts.disconnect_after_data_frames` |
+| Брокер медленно открывает поток (`subscribe_*` должен ждать, а не вернуться раньше) | `opts.stream_gate.hold()` до старта коннектора: рукопожатие сокетов заявок и портфеля не отвечается. `opts.stream_gate.release()` отпускает. `opts.stream_gate.waiting()` - сколько запросов держится. Подписка рынка держится так же | `opts.stream_gate.hold()`: потоки заявок, исполнений и портфеля не открываются. Рынок: `opts.md_silent = true`, подтверждения подписок не приходят | `server.state.options.stream_gate.hold()`: открытие любого потока не возвращается | `opts.stream_gate.hold()`: подписки на сокете не обрабатываются и не подтверждаются |
 | Обрыв потоков своих заявок и исполнений (`Event::Reconnected`) | `server.cut_event_sockets()`, подключения считает `opts.ws_connections()` | `server.cut_user_streams()`, открытия считает `opts.user_stream_opens` | `server.state.cut_user_streams()`, открытия считает `server.state.order_stream_opens` | `server.cut_event_sockets()`, подключения считает `opts.ws_connections()` |
 | Статус 6 «Отменяется» | `opts.cancel_pending`, закончить отмену `server.finish_cancel(cid)` | нет | нет | - |
 | Исполнения с накопленными итогами | `server.fill(cid, qty, price)` шлет `executedQuantity`, `executionValue`, `averagePrice` как брокер | нет | нет | - |
@@ -143,8 +143,9 @@ brokapi_mocks::time::wait_until("сокет событий подключен", 
 
 ## Ловушки тестов
 
-- **Подписка на статусы заявок у БКС подключается в фоне.** Событие, случившееся до подключения сокета, теряется. Перед заявкой
-  дождитесь `opts.event_sockets() > 0` через `wait_until` (так сделано в примерах из справочника), либо читайте состояние через `order_state`.
+- **`subscribe_*` возвращается, когда поток открыт.** Ждать подключения сокета (`event_sockets()`) после `subscribe_order_state` и
+  `subscribe_executions` не нужно: заявка, поставленная сразу после возврата, не пропадет. Событие, случившееся до подписки, теряется,
+  его читают через `order_state` или `active_orders`. Подписка раньше заявки - правило и для имитации.
 - **Имитация сервера должна жить столько же, сколько коннекторы.** Положите ее в переменную, которая не уходит из области раньше.
 - **Рестарт процесса** проверяется двумя жизнями коннекторов при одной имитации: имитация помнит заявки между ними
   ([инфраструктура](howto-infrastructure.md)).

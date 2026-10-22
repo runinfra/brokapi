@@ -622,9 +622,9 @@ impl UserDataConnector {
 
     /// State of a subscription's stream (connecting, active, reconnecting, failed).
     ///
-    /// `None` for an id this connector does not know. Use it after `subscribe_*` returned and the
-    /// stream may still be opening. A stream that the broker refuses (no permission) shows as
-    /// [`SubStatus::Failed`] and is retried slowly.
+    /// `None` for an id this connector does not know. `subscribe_*` returns when the stream is open, so
+    /// this shows what the stream does later: reconnecting after a break. A stream that the broker
+    /// refuses (no permission) after it had been open shows as [`SubStatus::Failed`] and is retried slowly.
     ///
     /// # Examples
     ///
@@ -846,31 +846,33 @@ impl UserDataConnector {
             .expect("streams poisoned")
             .insert(id, handle);
 
-        match tokio::time::timeout(self.inner.ack_timeout, first_rx).await {
-            Ok(Ok(Err(e))) => {
-                let h = self
-                    .inner
-                    .streams
-                    .lock()
-                    .expect("streams poisoned")
-                    .remove(&id);
-                if let Some(h) = h {
-                    h.stop(Duration::from_secs(2)).await;
-                }
-                self.inner
-                    .core
-                    .lock()
-                    .expect("core poisoned")
-                    .unregister(id);
-                self.inner
-                    .backpressure
-                    .lock()
-                    .expect("backpressure poisoned")
-                    .unregister(id);
-                Err(map_protocol_err(&e))
-            }
-            _ => Ok(id),
+        // Returns when the broker has opened the stream: what happens after that is delivered. A refusal, or no
+        // answer in time, takes the subscription back: nothing stays half open.
+        let failure = match tokio::time::timeout(self.inner.ack_timeout, first_rx).await {
+            Ok(Ok(Ok(()))) => return Ok(id),
+            Ok(Ok(Err(e))) => map_protocol_err(&e),
+            _ => brokapi_runtime::not_confirmed(self.inner.ack_timeout),
+        };
+        let h = self
+            .inner
+            .streams
+            .lock()
+            .expect("streams poisoned")
+            .remove(&id);
+        if let Some(h) = h {
+            h.stop(Duration::from_secs(2)).await;
         }
+        self.inner
+            .core
+            .lock()
+            .expect("core poisoned")
+            .unregister(id);
+        self.inner
+            .backpressure
+            .lock()
+            .expect("backpressure poisoned")
+            .unregister(id);
+        Err(failure)
     }
 
     fn wrap<M: Send + 'static>(sub: SubscriptionId, data: fn(M) -> UdEvent) -> UdWrap<M> {

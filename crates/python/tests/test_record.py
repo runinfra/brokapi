@@ -28,6 +28,11 @@ def write_log(path: Path, *lines: str, header: str = HEADER) -> Path:
     return path
 
 
+# How long a test waits for the events of a run. It waits for the events, not for time: the limit is only for the day when
+# an event does not come, so that the test fails and says which events it got, instead of hanging until the job is killed.
+EVENTS_LIMIT = 10.0
+
+
 async def one_run(mock: testing.MockBroker, client: brokapi.Client, path: Path, count: int) -> list[brokapi.Envelope]:
     """A bot that subscribes, places an order that is filled, and records the first `count` events it reads."""
     sber = await client.instrument("SBER")
@@ -39,11 +44,19 @@ async def one_run(mock: testing.MockBroker, client: brokapi.Client, path: Path, 
     await client.place(cid=cid, instrument=sber, side=brokapi.Side.BUY, qty=qty, price=Decimal("250.25"))
     mock.fill(cid, qty=qty, price=Decimal("250.25"))
     seen: list[brokapi.Envelope] = []
-    async with contextlib.aclosing(record.record_events(client.events, path)) as stream:
-        async for envelope in stream:
-            seen.append(envelope)
-            if len(seen) == count:
-                break
+
+    async def read() -> None:
+        async with contextlib.aclosing(record.record_events(client.events, path)) as stream:
+            async for envelope in stream:
+                seen.append(envelope)
+                if len(seen) == count:
+                    return
+
+    try:
+        await asyncio.wait_for(read(), EVENTS_LIMIT)
+    except asyncio.TimeoutError:
+        kinds = [type(e.payload).__name__ for e in seen]
+        raise AssertionError(f"got {len(seen)} of {count} events in {EVENTS_LIMIT} s: {kinds}") from None
     return seen
 
 

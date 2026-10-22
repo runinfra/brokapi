@@ -157,6 +157,70 @@ async fn own_orders_events_active_replace_and_executions() {
     ud.shutdown(ShutdownMode::Immediate).await;
 }
 
+/// The broker is slow to confirm a subscription: `subscribe_*` waits for it, and a subscription that is not
+/// confirmed is an error with nothing left behind.
+#[tokio::test]
+async fn subscribe_returns_when_the_broker_has_confirmed() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (ud, mut rx) = ud(&server).await;
+    conf::reconcile(&ud).await;
+    opts.stream_gate.hold();
+    conf::subscribe_waits_for_the_stream(
+        &ud,
+        &mut rx,
+        "alor-ud",
+        &sber(),
+        Price::new(dec!(100.0)),
+        |call| {
+            brokapi_mocks::time::elapse_when(
+                "the subscribe reached the broker",
+                || opts.stream_gate.waiting() > 0,
+                Duration::from_secs(10),
+                call,
+            )
+        },
+        || async { opts.stream_gate.release() },
+        |cid| {
+            let fill = server.fill(
+                &cid.hyphenated().to_string(),
+                brokapi_core::Qty::from(20),
+                Price::from(100),
+            );
+            async move {
+                let _ = fill;
+            }
+        },
+    )
+    .await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn market_subscribe_returns_when_the_broker_has_confirmed() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (md, mut rx) = md(&server).await;
+    opts.stream_gate.hold();
+    let id = sber();
+    conf::market_subscribe_waits_for_the_stream(
+        &md,
+        &mut rx,
+        &id,
+        |call| {
+            brokapi_mocks::time::elapse_when(
+                "the subscribe reached the broker",
+                || opts.stream_gate.waiting() > 0,
+                Duration::from_secs(10),
+                call,
+            )
+        },
+        || async { opts.stream_gate.release() },
+    )
+    .await;
+    md.shutdown(ShutdownMode::Immediate).await;
+}
+
 // ─── guarantees of the command path ───────────────────────────────────────────
 
 /// A connector whose lot is known to the grid, on a mock with the given options.

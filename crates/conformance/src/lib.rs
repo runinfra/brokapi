@@ -1542,13 +1542,6 @@ async fn cancel_patient<U: OrderExecutor + ?Sized>(ud: &U, scenario: &str, cid: 
 /// # let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), BrokerLimiter::new(&default_limits()), tx).await?;
 /// # let sber = InstrumentId::new(InstrumentKey::new("SBER", "TQBR"), NativeId::TickerClass { ticker: "SBER".into(), class_code: "TQBR".into() });
 /// brokapi_conformance::reconcile(&ud).await;
-/// # // The order-events socket connects in the background: events sent before that are not delivered.
-/// # tokio::time::timeout(std::time::Duration::from_secs(8), async {
-/// #     while opts.event_sockets() == 0 {
-/// #         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-/// #     }
-/// # })
-/// # .await?;
 /// brokapi_conformance::order_state_events(&ud, &mut rx, "bcs-ud", &sber, Price::from(100)).await;
 /// # ud.shutdown(ShutdownMode::Immediate).await;
 /// # Ok(())
@@ -1880,13 +1873,6 @@ pub async fn replace_order<U: OrderExecutor + ?Sized>(
 /// # let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), BrokerLimiter::new(&default_limits()), tx).await?;
 /// # let sber = InstrumentId::new(InstrumentKey::new("SBER", "TQBR"), NativeId::TickerClass { ticker: "SBER".into(), class_code: "TQBR".into() });
 /// brokapi_conformance::reconcile(&ud).await;
-/// # // The order-events socket connects in the background: events sent before that are not delivered.
-/// # tokio::time::timeout(std::time::Duration::from_secs(8), async {
-/// #     while opts.event_sockets() == 0 {
-/// #         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-/// #     }
-/// # })
-/// # .await?;
 /// brokapi_conformance::executions(&ud, &mut rx, "bcs-ud", &sber, Price::from(100), |cid| {
 ///     // The BCS mock executes an order when told: cid, quantity, price.
 ///     let _ = server.fill(&cid.hyphenated().to_string(), brokapi_core::Qty::from(20), brokapi_core::Price::from(100));
@@ -1965,6 +1951,220 @@ pub async fn executions<U, F, Fut>(
             format!("a history entry without price, quantity or trade id: {hist:?}"),
         );
     }
+}
+
+// ─── a subscription is made when the stream is open ───────────────────────────
+
+/// The future of one `subscribe_*` call, as the scenarios of this section hand it to the adapter.
+pub type SubscribeCall<'a> =
+    std::pin::Pin<Box<dyn Future<Output = Result<SubscriptionId, Error>> + 'a>>;
+
+/// `subscribe_order_state` and `subscribe_executions` return when the stream is open, not before.
+///
+/// A bot places an order right after `subscribe_*` returns. If the call returned before the broker had opened
+/// the stream, an order that is filled in that window would never be reported: the event happened while nobody
+/// was listening. So a call returns `Ok` only when the stream is live, and a stream that does not open in time
+/// is an error, with nothing left half open.
+///
+/// The adapter holds the opening of the streams at the broker before the call (the mock's `stream_gate`; for a
+/// connector that opens its sockets at start, before the connector is started). Then:
+/// 1. `drive` runs the `subscribe_order_state` future to its end while the broker holds the stream and the clock
+///    moves past the connector's wait (`brokapi_mocks::time::elapse_when`). The outcome is
+///    [`Error::Transport`], not `Ok`: the stream is not open.
+/// 2. The same for `subscribe_executions`.
+/// 3. `release` lets the broker open the streams.
+/// 4. Both calls are repeated and succeed: the failed calls left nothing behind that blocks them.
+/// 5. An order is placed and then filled by `fill`: the `Order` event arrives on the order state subscription,
+///    and the `Execution` event on the executions subscription. Both came after the calls returned.
+///
+/// The command gate must be open, so call [`reconcile`] first. The order is bought far from the market, two lots.
+///
+/// # Panics
+///
+/// With `[conformance:subscribe_waits_for_the_stream] <reason>`.
+///
+/// # Examples
+///
+/// ```
+/// # use std::time::Duration;
+/// # use brokapi_bcs::limits::default_limits;
+/// # use brokapi_bcs::{UserDataConfig, UserDataConnector};
+/// # use brokapi_core::{InstrumentId, InstrumentKey, NativeId, Price, Qty, ShutdownMode};
+/// # use brokapi_runtime::BrokerLimiter;
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # let opts = std::sync::Arc::new(brokapi_mocks::bcs::MockOptions::default());
+/// # let server = brokapi_mocks::bcs::MockServer::start(std::sync::Arc::clone(&opts)).await;
+/// # let cfg = brokapi_bcs_protocol::config::BcsConfig::for_mock("mock-refresh-token", &server.http_base).with_write(true);
+/// # let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+/// # let sber = InstrumentId::new(InstrumentKey::new("SBER", "TQBR"), NativeId::TickerClass { ticker: "SBER".into(), class_code: "TQBR".into() });
+/// // The broker is slow to open its sockets: held before the connector starts, as BCS opens them at start.
+/// opts.stream_gate.hold();
+/// # let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), BrokerLimiter::new(&default_limits()), tx).await?;
+/// brokapi_conformance::reconcile(&ud).await;
+/// brokapi_conformance::subscribe_waits_for_the_stream(
+///     &ud,
+///     &mut rx,
+///     "bcs-ud",
+///     &sber,
+///     Price::from(100),
+///     |call| {
+///         brokapi_mocks::time::elapse_when(
+///             "the socket request reached the broker",
+///             || opts.stream_gate.waiting() > 0,
+///             Duration::from_secs(10),
+///             call,
+///         )
+///     },
+///     || async { opts.stream_gate.release() },
+///     |cid| {
+///         let _ = server.fill(&cid.hyphenated().to_string(), Qty::from(20), Price::from(100));
+///         async {}
+///     },
+/// )
+/// .await;
+/// # ud.shutdown(ShutdownMode::Immediate).await;
+/// # Ok(())
+/// # }
+/// ```
+#[allow(clippy::too_many_arguments)]
+pub async fn subscribe_waits_for_the_stream<'a, U, D, DFut, R, RFut, F, FFut>(
+    ud: &'a U,
+    rx: &mut mpsc::Receiver<Envelope>,
+    source: &str,
+    id: &InstrumentId,
+    price: Price,
+    mut drive: D,
+    release: R,
+    fill: F,
+) where
+    U: OrderExecutor + ExecutionSource + ?Sized,
+    D: FnMut(SubscribeCall<'a>) -> DFut,
+    DFut: Future<Output = Result<SubscriptionId, Error>> + 'a,
+    R: FnOnce() -> RFut,
+    RFut: Future<Output = ()>,
+    F: FnOnce(ClientOrderId) -> FFut,
+    FFut: Future<Output = ()>,
+{
+    const S: &str = "subscribe_waits_for_the_stream";
+    let orders: SubscribeCall<'a> = Box::pin(ud.subscribe_order_state());
+    match drive(orders).await {
+        Err(Error::Transport(_)) => {}
+        other => fail(
+            S,
+            format!(
+                "subscribe_order_state returned before the stream was open: expected Transport, got {other:?}"
+            ),
+        ),
+    }
+    let fills: SubscribeCall<'a> = Box::pin(ud.subscribe_executions());
+    match drive(fills).await {
+        Err(Error::Transport(_)) => {}
+        other => fail(
+            S,
+            format!(
+                "subscribe_executions returned before the stream was open: expected Transport, got {other:?}"
+            ),
+        ),
+    }
+    release().await;
+    let orders_sub = ud.subscribe_order_state().await.unwrap_or_else(|e| {
+        fail(
+            S,
+            format!("subscribe_order_state after the open failed: {e:?}"),
+        )
+    });
+    let fills_sub = ud.subscribe_executions().await.unwrap_or_else(|e| {
+        fail(
+            S,
+            format!("subscribe_executions after the open failed: {e:?}"),
+        )
+    });
+    let cid = place_limit(ud, S, id, price, lots(2)).await;
+    fill(cid).await;
+    let env = next_matching(
+        S,
+        rx,
+        |e| matches!(&e.payload, Event::Order(o) if o.cid == cid),
+    )
+    .await;
+    if env.source.as_ref() != source || env.sub != Some(orders_sub) {
+        fail(
+            S,
+            format!(
+                "order event envelope: source {:?} sub {:?}, expected {source:?} / {orders_sub:?}",
+                env.source, env.sub
+            ),
+        );
+    }
+    let env = next_matching(
+        S,
+        rx,
+        |e| matches!(&e.payload, Event::Execution(x) if x.cid == Some(cid)),
+    )
+    .await;
+    if env.sub != Some(fills_sub) {
+        fail(
+            S,
+            format!(
+                "the execution is on sub {:?}, expected {fills_sub:?}",
+                env.sub
+            ),
+        );
+    }
+}
+
+/// `subscribe_order_book` returns when the stream is open, and a stream that does not open is an error.
+///
+/// The adapter holds the opening of the stream at the broker (the mock's `stream_gate`, or `md_silent` at
+/// T-Bank). Then:
+/// 1. `drive` runs the `subscribe_order_book` future to its end while the broker holds the stream and the clock
+///    moves past the connector's wait. The outcome is [`Error::Transport`], not `Ok`.
+/// 2. `release` lets the broker open the stream.
+/// 3. The call is repeated and succeeds, and a book arrives on the new subscription: the failed call left
+///    nothing behind that blocks it.
+///
+/// # Panics
+///
+/// With `[conformance:market_subscribe_waits_for_the_stream] <reason>`.
+pub async fn market_subscribe_waits_for_the_stream<'a, M, D, DFut, R, RFut>(
+    md: &'a M,
+    rx: &mut mpsc::Receiver<Envelope>,
+    id: &'a InstrumentId,
+    mut drive: D,
+    release: R,
+) where
+    M: OrderBookSource + ?Sized,
+    D: FnMut(SubscribeCall<'a>) -> DFut,
+    DFut: Future<Output = Result<SubscriptionId, Error>> + 'a,
+    R: FnOnce() -> RFut,
+    RFut: Future<Output = ()>,
+{
+    const S: &str = "market_subscribe_waits_for_the_stream";
+    let call: SubscribeCall<'a> = Box::pin(md.subscribe_order_book(id, SubscribeOpts::conflate()));
+    match drive(call).await {
+        Err(Error::Transport(_)) => {}
+        other => fail(
+            S,
+            format!(
+                "subscribe_order_book returned before the stream was open: expected Transport, got {other:?}"
+            ),
+        ),
+    }
+    release().await;
+    let sub = md
+        .subscribe_order_book(id, SubscribeOpts::conflate())
+        .await
+        .unwrap_or_else(|e| {
+            fail(
+                S,
+                format!("subscribe_order_book after the open failed: {e:?}"),
+            )
+        });
+    next_matching(S, rx, |e| {
+        matches!(e.payload, Event::OrderBook(_)) && e.sub == Some(sub)
+    })
+    .await;
 }
 
 // ─── guarantees of the command path ───────────────────────────────────────────

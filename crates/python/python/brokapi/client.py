@@ -383,11 +383,15 @@ class Client:
 
     async def subscribe_order_state(self) -> int:
         """Events about your orders (``OrderSnapshot``). Always lossless. Subscribe BEFORE :meth:`reconcile`, so no
-        event between the snapshot of the reconcile and the subscription is lost."""
+        event between the snapshot of the reconcile and the subscription is lost.
+
+        Returns when the stream is open at the broker, so an order placed right after it cannot be missed. A stream
+        that does not open within three seconds raises :class:`~brokapi.Transport` and leaves nothing half open:
+        call again."""
         return await self._call("subscribe_order_state")
 
     async def subscribe_executions(self) -> int:
-        """Events about your fills (``Execution``)."""
+        """Events about your fills (``Execution``). Returns when the stream is open, like :meth:`subscribe_order_state`."""
         return await self._call("subscribe_executions")
 
     async def subscribe_portfolio(self, *, backpressure: Optional[Backpressure] = None) -> int:

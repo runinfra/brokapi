@@ -5,6 +5,7 @@ mod mock_server;
 use brokapi_core::Price;
 use brokapi_core::{Decimal, dec};
 use std::sync::Arc;
+use std::time::Duration;
 
 use brokapi_bcs::limits::default_limits;
 use brokapi_bcs::{MarketDataConfig, MarketDataConnector, UserDataConfig, UserDataConnector};
@@ -134,9 +135,6 @@ async fn own_orders_events_active_replace_and_executions() {
     let server = MockServer::start(Arc::clone(&opts)).await;
     let (ud, mut rx) = ud(&server).await;
     conf::reconcile(&ud).await;
-    // The order-events socket connects in the background: events before that are not delivered.
-    brokapi_mocks::time::wait_until("order events socket connected", || opts.event_sockets() > 0)
-        .await;
     conf::order_state_events(&ud, &mut rx, "bcs-ud", &sber(), Price::new(dec!(100.0))).await;
     conf::active_orders_lifecycle(&ud, &sber(), Price::new(dec!(100.0))).await;
     assert!(ud.caps().supports_replace);
@@ -162,10 +160,73 @@ async fn own_orders_events_active_replace_and_executions() {
     ud.shutdown(ShutdownMode::Immediate).await;
 }
 
+/// The broker is slow to open its sockets: `subscribe_*` waits for them, and a socket that does not open is an
+/// error with nothing left behind. The sockets are held before the connector starts, as BCS opens them at start.
+#[tokio::test]
+async fn subscribe_returns_when_the_sockets_are_open() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    opts.stream_gate.hold();
+    let (ud, mut rx) = ud(&server).await;
+    conf::reconcile(&ud).await;
+    conf::subscribe_waits_for_the_stream(
+        &ud,
+        &mut rx,
+        "bcs-ud",
+        &sber(),
+        Price::new(dec!(100.0)),
+        |call| {
+            brokapi_mocks::time::elapse_when(
+                "the socket request reached the broker",
+                || opts.stream_gate.waiting() > 0,
+                Duration::from_secs(10),
+                call,
+            )
+        },
+        || async { opts.stream_gate.release() },
+        |cid| {
+            let fill = server.fill(
+                &cid.hyphenated().to_string(),
+                brokapi_core::Qty::from(20),
+                Price::from(100),
+            );
+            async move {
+                let _ = fill;
+            }
+        },
+    )
+    .await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn market_subscribe_returns_when_the_broker_has_confirmed() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (md, mut rx) = md(&server).await;
+    opts.stream_gate.hold();
+    let id = sber();
+    conf::market_subscribe_waits_for_the_stream(
+        &md,
+        &mut rx,
+        &id,
+        |call| {
+            brokapi_mocks::time::elapse_when(
+                "the subscribe reached the broker",
+                || opts.stream_gate.waiting() > 0,
+                Duration::from_secs(10),
+                call,
+            )
+        },
+        || async { opts.stream_gate.release() },
+    )
+    .await;
+    md.shutdown(ShutdownMode::Immediate).await;
+}
+
 // ─── guarantees of the command path ───────────────────────────────────────────
 
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 /// A connector whose lot is known to the grid, on a mock with the given options.
 async fn ud_with(

@@ -21,6 +21,8 @@ jobs:
   wheels:
     name: wheel ${{ matrix.os }} ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
+    # A hung job must end by itself, not hold the machine for the six hours that GitHub gives by default.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -55,6 +57,9 @@ jobs:
     name: smoke ${{ matrix.os }} ${{ matrix.python }}
     needs: wheels
     runs-on: ${{ matrix.runner }}
+    # The tests of the package run in less than a minute. A test that waits for an event that does not come must
+    # end the job, not hold the machine.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -89,12 +94,14 @@ jobs:
       - name: Tests of the package
         shell: bash
         working-directory: crates/python
+        timeout-minutes: 10
         run: |
           if [ -d ../../venv/Scripts ]; then PY=../../venv/Scripts/python; else PY=../../venv/bin/python; fi
           $PY -m pytest tests -q
 
   sdist:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - name: Build the sdist

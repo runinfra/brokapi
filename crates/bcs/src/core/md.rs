@@ -1,6 +1,7 @@
 //! Market-data sans-io core.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use brokapi_bcs_protocol::models::instrument::InstrumentKey as BcsInstrumentKey;
@@ -13,6 +14,7 @@ use brokapi_sansio::{
     BrokerCore, CoreEvent, DesiredSubscription, EventSink, Outbound, SubscriptionKind,
     SubscriptionSet,
 };
+use tokio::sync::Notify;
 
 use crate::map::market::{map_ws_market_data, parse_subscribe_error};
 
@@ -79,6 +81,11 @@ pub struct MdCore {
     heartbeat_deadline: Option<Instant>,
     /// How many times the WebSocket session has connected (the first connect included).
     connections: u32,
+    /// Why a subscription failed, in the words of the broker.
+    failures: HashMap<SubscriptionId, String>,
+    /// Woken whenever a subscription changes state (confirmed or refused): the connector waits on it in
+    /// `subscribe_*` until the broker has answered.
+    ack: Arc<Notify>,
 }
 
 impl Default for MdCore {
@@ -98,7 +105,20 @@ impl MdCore {
             book_seq: HashMap::new(),
             heartbeat_deadline: None,
             connections: 0,
+            failures: HashMap::new(),
+            ack: Arc::new(Notify::new()),
         }
+    }
+
+    /// The signal that is given whenever a subscription is confirmed or refused. A connector waits on it
+    /// (with [`brokapi_runtime::wait_ack`]) to hold `subscribe_*` until the broker has answered.
+    pub fn notifier(&self) -> Arc<Notify> {
+        Arc::clone(&self.ack)
+    }
+
+    /// Why subscription `id` failed, in the words of the broker, if it did.
+    pub fn failure(&self, id: SubscriptionId) -> Option<&str> {
+        self.failures.get(&id).map(String::as_str)
     }
 
     /// Subscriptions the connector asked for (input of the last `apply`).
@@ -193,6 +213,7 @@ impl MdCore {
         self.outbound
             .push_back(Outbound::WsText(serde_json::to_string(&msg).unwrap()));
         self.actual.remove(&sub.id);
+        self.failures.remove(&sub.id);
         self.sub_by_id.remove(&sub.id);
         self.book_seq.remove(&sub.id);
     }
@@ -205,6 +226,7 @@ impl MdCore {
             | MarketDataMessage::LastCandleSuccess(_) => {
                 if let Some(sub_id) = self.match_success(&md) {
                     self.actual.insert(sub_id, SubState::Active);
+                    self.ack.notify_waiters();
                 }
                 return;
             }
@@ -223,6 +245,13 @@ impl MdCore {
 
         if let Some(mapped) = map_ws_market_data(&md, now, None) {
             let sub_id = self.match_data_sub(&md);
+            // Data that comes for a pending subscription proves it: the confirmation can be late or lost.
+            if let Some(id) = sub_id
+                && self.actual.get(&id) == Some(&SubState::Pending)
+            {
+                self.actual.insert(id, SubState::Active);
+                self.ack.notify_waiters();
+            }
             let payload = mapped.event;
             if let (Some(sub), Event::OrderBook(_)) = (sub_id, &payload) {
                 let seq = self.book_seq.entry(sub).or_insert(0);
@@ -337,7 +366,9 @@ impl MdCore {
         };
         for id in failed {
             self.actual.insert(id, SubState::Failed);
+            self.failures.insert(id, reason.to_string());
         }
+        self.ack.notify_waiters();
     }
 
     /// Feeds one raw text frame of the market data WebSocket.
@@ -365,6 +396,13 @@ impl BrokerCore for MdCore {
         match frame {
             IncomingMessage::MarketData(md) => self.handle_market_data(md, now, out),
             IncomingMessage::Error(err) => self.fail_pending(&err.message),
+            // A refusal of a subscribe has an `errors` list in place of data. The parser of the session does not
+            // know that shape and hands it over as text.
+            IncomingMessage::Unknown(text) => {
+                if let Some(reason) = parse_subscribe_error(&text) {
+                    self.fail_pending(&reason);
+                }
+            }
             IncomingMessage::Reconnected => self.on_reconnected(out),
             _ => {}
         }

@@ -285,15 +285,21 @@ async fn partial_subscribe_failure_does_not_crash_connector() {
     .await
     .expect("md start");
 
-    md.subscribe_order_book(
-        &bad_instrument(),
-        SubscribeOpts {
-            backpressure: Backpressure::Conflate,
-            depth: Some(20),
-        },
-    )
-    .await
-    .expect("subscribe call succeeds; error arrives async on WS");
+    // The broker refuses the subscription with an error frame: the call returns the refusal, and nothing of the
+    // subscription is left behind.
+    let refused = md
+        .subscribe_order_book(
+            &bad_instrument(),
+            SubscribeOpts {
+                backpressure: Backpressure::Conflate,
+                depth: Some(20),
+            },
+        )
+        .await;
+    assert!(
+        matches!(&refused, Err(Error::Rejected { code, .. }) if code == "subscription_refused"),
+        "a refused subscription is Rejected, got {refused:?}"
+    );
 
     // Good instrument still works on REST.
     md.order_book(&sber(), 5).await.expect("rest still works");
@@ -340,11 +346,6 @@ async fn executions_stream_from_the_order_events_socket() {
         .subscribe_executions()
         .await
         .expect("subscribe_executions");
-    // The socket connects in the background: push only when it is there.
-    brokapi_mocks::time::wait_until("order events socket connected", || {
-        options.event_sockets() > 0
-    })
-    .await;
 
     let fill = std::fs::read_to_string(format!(
         "{}/../bcs-protocol/tests/fixtures/ws/order_execution_fill.json",
@@ -412,10 +413,6 @@ async fn lossless_overflow_is_visible_and_degrades_until_reconcile() {
         .subscribe_executions()
         .await
         .expect("subscribe_executions");
-    brokapi_mocks::time::wait_until("order events socket connected", || {
-        options.event_sockets() > 0
-    })
-    .await;
 
     ud.reconcile(&[])
         .await

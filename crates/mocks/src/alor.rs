@@ -84,6 +84,9 @@ pub struct MockOptions {
     pub refresh_calls: AtomicU32,
     /// Subscribe requests containing this text get a 400 status frame.
     pub fail_subscribe_text: tokio::sync::Mutex<Option<String>>,
+    /// Holds every subscribe request of the data socket (the subscription is not made and not confirmed) until
+    /// `stream_gate.release()`. For a broker that is slow to open its streams.
+    pub stream_gate: crate::gate::StreamGate,
     /// Orders, trades and open sockets of all accounts.
     book: std::sync::Mutex<Book>,
 }
@@ -1113,6 +1116,8 @@ async fn handle_ws(socket: WebSocket, state: MockState) {
                     let _ = write.send(status(200, "Handled successfully")).await;
                     continue;
                 }
+                // The subscription is made and confirmed when the broker gets to it.
+                state.options.stream_gate.pass().await;
                 let refuse = state.options.fail_subscribe_text.lock().await.clone();
                 if refuse.is_some_and(|r| text.contains(&r)) {
                     let _ = write

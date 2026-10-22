@@ -10,6 +10,7 @@
 //! | Refuse trading before the first reconcile, after an overflow, during shutdown | [`CommandGate`] |
 //! | Compare the client's order ledger with the broker | [`reconcile_ledger`] |
 //! | Send events to the consumer without blocking, with a loss policy per subscription | [`Emitter`], [`BackpressureManager`], [`SubscriptionBuffer`], [`PushResult`] |
+//! | Hold `subscribe_*` until the broker has confirmed the stream | [`wait_ack`], [`AckState`] |
 //! | Never send the same place twice, track unanswered orders | [`OrderRuntime`] |
 //! | Finish a command even when the caller stops waiting | [`run_detached`] |
 //! | One command at a time per instrument, in order | [`InstrumentLocks`] |
@@ -63,6 +64,7 @@
 
 #![warn(missing_docs)]
 
+mod ack;
 mod backpressure;
 mod clock;
 mod command_gate;
@@ -81,6 +83,7 @@ pub mod record;
 mod shutdown;
 mod supervisor;
 
+pub use ack::{AckState, SUBSCRIPTION_REFUSED, not_confirmed, wait_ack};
 pub use backpressure::{BackpressureManager, PushResult, SubscriptionBuffer};
 pub use clock::now;
 pub use command_gate::CommandGate;

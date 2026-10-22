@@ -65,6 +65,9 @@ pub type SeenInterval = (&'static str, Option<i64>, Option<i64>);
 /// Knobs a test can turn while the server runs.
 #[derive(Default)]
 pub struct MockOptions {
+    /// Holds the opening of every stream (orders, trades, account, quotes, order book, trades tape, bars): the
+    /// call does not return a stream until `stream_gate.release()`. For a broker that is slow to open its streams.
+    pub stream_gate: crate::gate::StreamGate,
     /// `Bars` answers a series for the range asked, one bar per step of the timeframe. Off: three fixed bars.
     pub synthetic_candles: std::sync::atomic::AtomicBool,
     /// Streams and unary calls for this symbol answer PERMISSION_DENIED.
@@ -516,6 +519,7 @@ impl AccountsService for Mock {
         &self,
         req: Request<pa::GetAccountRequest>,
     ) -> Result<Response<Self::SubscribeAccountStream>, Status> {
+        self.0.options.stream_gate.pass().await;
         self.0.check_auth(&req)?;
         let id = req.into_inner().account_id;
         self.0.record(format!("SubscribeAccount:{id}"));
@@ -670,6 +674,7 @@ impl OrdersService for Mock {
         &self,
         req: Request<po::SubscribeOrdersRequest>,
     ) -> Result<Response<Self::SubscribeOrdersStream>, Status> {
+        self.0.options.stream_gate.pass().await;
         self.0.check_auth(&req)?;
         let id = req.into_inner().account_id;
         self.0.record(format!("SubscribeOrders:{id}"));
@@ -704,6 +709,7 @@ impl OrdersService for Mock {
         &self,
         req: Request<po::SubscribeTradesRequest>,
     ) -> Result<Response<Self::SubscribeTradesStream>, Status> {
+        self.0.options.stream_gate.pass().await;
         self.0.check_auth(&req)?;
         let id = req.into_inner().account_id;
         self.0.record(format!("SubscribeTrades:{id}"));
@@ -978,6 +984,7 @@ impl MarketDataService for Mock {
         &self,
         req: Request<pm::SubscribeQuoteRequest>,
     ) -> Result<Response<Self::SubscribeQuoteStream>, Status> {
+        self.0.options.stream_gate.pass().await;
         self.0.check_auth(&req)?;
         let symbol = req
             .into_inner()
@@ -1009,6 +1016,7 @@ impl MarketDataService for Mock {
         &self,
         req: Request<pm::SubscribeOrderBookRequest>,
     ) -> Result<Response<Self::SubscribeOrderBookStream>, Status> {
+        self.0.options.stream_gate.pass().await;
         self.0.check_auth(&req)?;
         let symbol = req.into_inner().symbol;
         self.0.record(format!("SubscribeOrderBook:{symbol}"));
@@ -1065,6 +1073,7 @@ impl MarketDataService for Mock {
         &self,
         req: Request<pm::SubscribeLatestTradesRequest>,
     ) -> Result<Response<Self::SubscribeLatestTradesStream>, Status> {
+        self.0.options.stream_gate.pass().await;
         self.0.check_auth(&req)?;
         let symbol = req.into_inner().symbol;
         self.0.denied(&symbol)?;
@@ -1104,6 +1113,7 @@ impl MarketDataService for Mock {
         &self,
         req: Request<pm::SubscribeBarsRequest>,
     ) -> Result<Response<Self::SubscribeBarsStream>, Status> {
+        self.0.options.stream_gate.pass().await;
         self.0.check_auth(&req)?;
         let r = req.into_inner();
         let symbol = r.symbol;

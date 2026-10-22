@@ -46,3 +46,5 @@ asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-p no:cacheprovider"
+# A test that hangs prints where every thread stands after this many seconds (the tests take less than one).
+faulthandler_timeout = 120

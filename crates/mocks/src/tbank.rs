@@ -54,6 +54,10 @@ type Out<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send + 'static>>;
 /// Knobs a test can turn.
 #[derive(Default)]
 pub struct MockOptions {
+    /// Holds the opening of the streams of orders, fills, portfolio and positions (the call does not return a
+    /// stream) until `stream_gate.release()`. For a broker that is slow to open its streams. The market data
+    /// stream has its own switch, `md_silent`.
+    pub stream_gate: crate::gate::StreamGate,
     /// `GetCandles` answers a series of bars for the range asked (one per interval step) and refuses a range
     /// longer than the T-Invest limit for the interval with `INVALID_ARGUMENT` 30014. Off: two fixed bars.
     pub synthetic_candles: AtomicBool,
@@ -830,6 +834,7 @@ impl OrdersStreamService for Mock {
         &self,
         request: Request<pb::TradesStreamRequest>,
     ) -> Result<Response<Out<pb::TradesStreamResponse>>, Status> {
+        self.0.opts.stream_gate.pass().await;
         let account = account_of(&request.into_inner().accounts);
         let mut events = self.0.events.subscribe();
         let mut cut = self.0.cut.subscribe();
@@ -875,6 +880,7 @@ impl OrdersStreamService for Mock {
         &self,
         request: Request<pb::OrderStateStreamRequest>,
     ) -> Result<Response<Out<pb::OrderStateStreamResponse>>, Status> {
+        self.0.opts.stream_gate.pass().await;
         if let Some((code, message)) = self.0.opts.user_stream_refuse.lock().unwrap().clone() {
             return Err(Status::new(code, message));
         }
@@ -1037,6 +1043,7 @@ impl OperationsStreamService for Mock {
         &self,
         request: Request<pb::PortfolioStreamRequest>,
     ) -> Result<Response<Out<pb::PortfolioStreamResponse>>, Status> {
+        self.0.opts.stream_gate.pass().await;
         let account = account_of(&request.into_inner().accounts);
         let (tx, rx) = mpsc::channel(16);
         tokio::spawn(async move {
@@ -1068,6 +1075,7 @@ impl OperationsStreamService for Mock {
         &self,
         request: Request<pb::PositionsStreamRequest>,
     ) -> Result<Response<Out<pb::PositionsStreamResponse>>, Status> {
+        self.0.opts.stream_gate.pass().await;
         let account = account_of(&request.into_inner().accounts);
         let (tx, rx) = mpsc::channel(16);
         tokio::spawn(async move {

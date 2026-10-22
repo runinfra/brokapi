@@ -95,14 +95,6 @@ fn stop_req(kind: StopOrderKind, stop: Decimal, limit: Option<Decimal>) -> Place
     }
 }
 
-/// Waits until the order-events socket is connected (the session connects in the background).
-async fn events_connected(opts: &MockOptions, n: usize) {
-    brokapi_mocks::time::wait_until("order events socket connected", || {
-        opts.event_sockets() >= n
-    })
-    .await;
-}
-
 async fn next_event(rx: &mut mpsc::Receiver<Envelope>, pred: impl Fn(&Event) -> bool) -> Envelope {
     timeout(Duration::from_secs(8), async {
         while let Some(env) = rx.recv().await {
@@ -344,7 +336,6 @@ async fn order_events_stream_follows_place_fill_and_cancel_with_our_cid() {
     let opts = Arc::new(MockOptions::default());
     let server = MockServer::start(Arc::clone(&opts)).await;
     let (ud, mut rx) = ud(&server).await;
-    events_connected(&opts, 1).await;
     let sub = ud.subscribe_order_state().await.unwrap();
     let exec_sub = ud.subscribe_executions().await.unwrap();
 
@@ -591,7 +582,6 @@ async fn two_accounts_with_two_tokens_see_only_their_own_orders_and_events() {
     let server = MockServer::start(Arc::clone(&opts)).await;
     let (a, mut rx_a) = ud_for(&server, "mock-refresh-token", "bcs-a").await;
     let (b, mut rx_b) = ud_for(&server, "mock-refresh-second", "bcs-b").await;
-    events_connected(&opts, 2).await;
     a.subscribe_order_state().await.unwrap();
     b.subscribe_order_state().await.unwrap();
 

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use brokapi_bcs_protocol::error::BcsApiError;
@@ -65,6 +65,8 @@ struct UdShared {
     shutdown: Mutex<ShutdownController>,
     cancel: CancellationToken,
     order_state_buffer: usize,
+    /// How long a `subscribe_*` call waits for its WebSocket to be open.
+    ack_timeout: Duration,
 }
 
 /// BCS user data connector: orders, stop orders, portfolio and the history of fills for one account.
@@ -173,8 +175,9 @@ pub struct UserDataConnector {
     inner: Arc<UdShared>,
     pump: JoinHandle<()>,
     /// `orders/events/ws`: status changes and fills of orders in one channel.
-    _ws_events: WsSession,
-    _ws_portfolio: WsSession,
+    ws_events: WsSession,
+    /// `portfolio/ws`: the positions of the account.
+    ws_portfolio: WsSession,
 }
 
 impl UserDataConnector {
@@ -283,6 +286,7 @@ impl UserDataConnector {
             shutdown: Mutex::new(ShutdownController::new(gate)),
             cancel: cancel.clone(),
             order_state_buffer: cfg.order_state_buffer,
+            ack_timeout: cfg.subscribe_ack_timeout,
         });
 
         let pump = tokio::spawn(run_ud_pump(core, emitter, event_rx, cancel));
@@ -290,8 +294,8 @@ impl UserDataConnector {
         Ok(Self {
             inner,
             pump,
-            _ws_events: ws_events,
-            _ws_portfolio: ws_portfolio,
+            ws_events,
+            ws_portfolio,
         })
     }
 
@@ -448,6 +452,27 @@ impl UserDataConnector {
         self.inner.limiter.acquire(method, brokapi_runtime::now())
     }
 
+    /// Tells the core the whole set of subscriptions: applying one alone would drop the others.
+    async fn apply_desired(&self) {
+        let desired = SubscriptionSet::with_subscriptions(
+            self.inner
+                .subs
+                .read()
+                .await
+                .values()
+                .map(|s| DesiredSubscription {
+                    id: s.id,
+                    kind: match s.kind {
+                        UdSubKind::OrderState => SubscriptionKind::OrderState,
+                        UdSubKind::Portfolio => SubscriptionKind::Portfolio,
+                        UdSubKind::Executions => SubscriptionKind::Executions,
+                    },
+                })
+                .collect(),
+        );
+        self.inner.core.lock().await.apply(&desired);
+    }
+
     async fn register_ud_sub(
         &self,
         kind: UdSubKind,
@@ -470,24 +495,27 @@ impl UserDataConnector {
             .await
             .insert(id, UdSubscription { id, kind, opts });
 
-        // The core gets the whole set: applying one subscription alone would drop the others.
-        let desired = SubscriptionSet::with_subscriptions(
-            self.inner
-                .subs
-                .read()
-                .await
-                .values()
-                .map(|s| DesiredSubscription {
-                    id: s.id,
-                    kind: match s.kind {
-                        UdSubKind::OrderState => SubscriptionKind::OrderState,
-                        UdSubKind::Portfolio => SubscriptionKind::Portfolio,
-                        UdSubKind::Executions => SubscriptionKind::Executions,
-                    },
-                })
-                .collect(),
-        );
-        self.inner.core.lock().await.apply(&desired);
+        self.apply_desired().await;
+
+        // Returns when the WebSocket of the channel is open: the broker pushes order events and positions as soon
+        // as it is, there is nothing to send. Whatever happens at the broker after that is delivered. Before it,
+        // an order that is placed and filled would be missed.
+        let socket = match kind {
+            UdSubKind::Portfolio => &self.ws_portfolio,
+            UdSubKind::OrderState | UdSubKind::Executions => &self.ws_events,
+        };
+        let limit = self.inner.ack_timeout;
+        if tokio::time::timeout(limit, socket.wait_connected())
+            .await
+            .is_err()
+        {
+            // Not open in time: take the subscription back, nothing stays half open. The socket keeps
+            // connecting in the background, and a later subscribe finds it open.
+            self.inner.subs.write().await.remove(&id);
+            self.apply_desired().await;
+            self.inner.emitter.unregister(id);
+            return Err(brokapi_runtime::not_confirmed(limit));
+        }
         Ok(id)
     }
 }

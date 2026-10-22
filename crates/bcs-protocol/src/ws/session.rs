@@ -12,10 +12,10 @@ use futures_util::{SinkExt, StreamExt};
 use kanal::{AsyncReceiver, AsyncSender};
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::net::TcpStream;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, watch};
 use tokio::time::{self, sleep};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
@@ -150,7 +150,7 @@ pub struct WsSession {
     /// The number of the next subscribe command.
     next_seq: AtomicU64,
     /// Set while the link is up.
-    is_connected: Arc<AtomicBool>,
+    is_connected: Arc<watch::Sender<bool>>,
     /// Frames dropped because the downstream channel was full.
     dropped_events: Arc<AtomicU64>,
     /// Handle of the background task.
@@ -217,7 +217,7 @@ impl WsSession {
         let user_rx = Arc::new(user_rx);
         let subscriptions: Arc<RwLock<Vec<(u64, WsOutgoing)>>> = Arc::new(RwLock::new(Vec::new()));
 
-        let is_connected = Arc::new(AtomicBool::new(false));
+        let is_connected = Arc::new(watch::channel(false).0);
         let dropped_events = Arc::new(AtomicU64::new(0));
 
         let _handle = tokio::spawn(Self::run_loop(
@@ -297,7 +297,39 @@ impl WsSession {
     /// # }
     /// ```
     pub fn is_connected(&self) -> bool {
-        self.is_connected.load(Ordering::Acquire)
+        *self.is_connected.borrow()
+    }
+
+    /// Waits until the link is up and the subscriptions have been sent again ([`is_connected`](Self::is_connected)
+    /// is `true`). Returns at once when it already is.
+    ///
+    /// It has no limit of its own: it waits for a connect that may never come (the broker is unreachable). Put
+    /// your own timeout around it, as [`tokio::time::timeout`]. The session keeps trying in the background
+    /// either way. A session that has ended for good never comes up, so the wait then ends only with your timeout.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let server = brokapi_mocks::bcs::MockServer::start(Default::default()).await;
+    /// # let cfg = brokapi_bcs_protocol::config::BcsConfig::for_mock("mock-refresh-token", &server.http_base);
+    /// use std::time::Duration;
+    /// use brokapi_bcs_protocol::models::messages::IncomingMessage;
+    /// use brokapi_bcs_protocol::ws::client::BcsWsClient;
+    ///
+    /// let ws = BcsWsClient::new(cfg)?;
+    /// let (tx, _rx) = kanal::bounded_async::<IncomingMessage>(16);
+    /// let session = ws.connect_limits(tx);
+    /// tokio::time::timeout(Duration::from_secs(5), session.wait_connected()).await?;
+    /// assert!(session.is_connected());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn wait_connected(&self) {
+        let mut up = self.is_connected.subscribe();
+        // The sender lives as long as this value does, so the wait cannot end in an error.
+        let _ = up.wait_for(|connected| *connected).await;
     }
 
     /// The channel this session is on.
@@ -460,7 +492,7 @@ impl WsSession {
         options: WsOptions,
         subscriptions: Arc<RwLock<Vec<(u64, WsOutgoing)>>>,
         user_rx: Arc<AsyncReceiver<Queued>>,
-        is_connected: Arc<AtomicBool>,
+        is_connected: Arc<watch::Sender<bool>>,
         dropped_events: Arc<AtomicU64>,
     ) {
         let ws_base = http_client.ws_base_url().to_string();
@@ -539,7 +571,7 @@ impl WsSession {
                 }
             }
 
-            is_connected.store(true, Ordering::Release); // ← UP: подписки восстановлены, готов к работе
+            is_connected.send_replace(true); // ← UP: подписки восстановлены, готов к работе
 
             // 5. Единый event loop: read + write + heartbeat в одном select
             let mut heartbeat = time::interval(WS_HEARTBEAT_INTERVAL);
@@ -645,7 +677,7 @@ impl WsSession {
                 }
             }
 
-            is_connected.store(false, Ordering::Release); // ← DOWN (при любом выходе из inner)
+            is_connected.send_replace(false); // ← DOWN (при любом выходе из inner)
             // Соединение, которое тут же рвется, не должно давить на сервер с минимальной паузой.
             if connected_at.elapsed() >= WS_HEALTHY_AFTER {
                 backoff = backoff_min;
@@ -657,7 +689,7 @@ impl WsSession {
             sleep(backoff).await;
             backoff = (backoff * 2).min(backoff_max);
         }
-        is_connected.store(false, Ordering::Release); // ← DOWN (выход из session loop)
+        is_connected.send_replace(false); // ← DOWN (выход из session loop)
     }
 
     async fn connect(url: &str, access_token: &str) -> Result<WsStream, BcsApiError> {

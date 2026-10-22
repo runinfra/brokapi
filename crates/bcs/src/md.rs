@@ -19,7 +19,7 @@ use brokapi_core::{
     ShutdownMode, ShutdownReport, StreamingCaps, SubscribeOpts, SubscriptionId, TimeRange,
     Timeframe, TradingParams, TradingStatus,
 };
-use brokapi_runtime::{BrokerLimiter, Emitter};
+use brokapi_runtime::{AckState, BrokerLimiter, Emitter, wait_ack};
 use brokapi_sansio::{BrokerCore, DesiredSubscription, SubscriptionKind, SubscriptionSet};
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::task::JoinHandle;
@@ -52,6 +52,8 @@ struct MdShared {
     subs: RwLock<HashMap<SubscriptionId, MdSubscription>>,
     sub_ids: SubIdGen,
     cancel: CancellationToken,
+    /// How long a `subscribe_*` call waits for the broker to confirm.
+    ack_timeout: Duration,
 }
 
 /// BCS market data connector: order books, trades, quotes, candles and the instrument directory.
@@ -188,6 +190,7 @@ impl MarketDataConnector {
             subs: RwLock::new(HashMap::new()),
             sub_ids: SubIdGen::new(0),
             cancel: cancel.clone(),
+            ack_timeout: cfg.subscribe_ack_timeout,
         });
 
         let pump = tokio::spawn(run_md_pump(core, emitter, event_rx, cancel));
@@ -356,10 +359,32 @@ impl MarketDataConnector {
         // The core attributes incoming data to this subscription (Envelope::sub, backpressure).
         // It is told before the WS subscribe, so the success ack cannot overtake it.
         self.set_core_sub(id, Some(core_kind)).await;
+        let notify = self.inner.core.lock().await.notifier();
         if let Err(e) = self.inner.ws.subscribe(ws.clone()).await {
             self.set_core_sub(id, None).await;
             self.inner.emitter.unregister(id);
             return Err(map_err(e));
+        }
+        // Returns when the broker has confirmed the subscription: what happens after that is delivered. A
+        // subscription that is refused or not confirmed in time is taken back, nothing stays half open.
+        let confirmed = wait_ack(
+            &self.inner.core,
+            notify,
+            self.inner.ack_timeout,
+            |c: &MdCore| match c.actual_state(id) {
+                Some(crate::core::SubState::Active) => AckState::Confirmed,
+                Some(crate::core::SubState::Failed) => {
+                    AckState::Refused(c.failure(id).unwrap_or_default().to_string())
+                }
+                _ => AckState::Pending,
+            },
+        )
+        .await;
+        if let Err(e) = confirmed {
+            let _ = self.inner.ws.unsubscribe(ws).await;
+            self.set_core_sub(id, None).await;
+            self.inner.emitter.unregister(id);
+            return Err(e);
         }
         self.inner.subs.write().await.insert(
             id,

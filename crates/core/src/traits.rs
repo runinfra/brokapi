@@ -184,7 +184,7 @@ pub trait OrderBookSource: Send + Sync {
 
     /// Starts a stream of the order book of one instrument.
     ///
-    /// Returns when the broker accepted the subscription. Books then arrive as
+    /// Returns when the stream is open at the broker (see **Contract**). Books then arrive as
     /// [`Event::OrderBook`](crate::Event::OrderBook) with `Envelope::sub` equal to the returned id.
     /// The stream restores itself after a reconnect and announces it with
     /// [`Event::Resync`](crate::Event::Resync). `opts.depth` is the number of levels
@@ -195,6 +195,11 @@ pub trait OrderBookSource: Send + Sync {
     /// # Contract
     ///
     /// - **When:** at any time, no reconcile is needed (the market data connector has no trading gate).
+    /// - **Guarantee:** the call returns only when the stream is open: the broker has confirmed the
+    ///   subscription, or, where the protocol has no confirmation, the connection of the stream is up. What
+    ///   the broker sends after the return reaches you. A stream that is not open within the connector's
+    ///   `subscribe_ack_timeout` (3 seconds by default) is [`Error::Transport`], and nothing is left half
+    ///   open, so the call can be repeated.
     /// - **Guarantee:** the stream restores itself after a reconnect. Each restore is announced with
     ///   [`Event::Resync`](crate::Event::Resync): drop the book you hold for that instrument and wait
     ///   for the next snapshot.
@@ -204,8 +209,10 @@ pub trait OrderBookSource: Send + Sync {
     /// - [`Error::Config`] when `id.native` is of a kind this broker does not use.
     /// - [`Error::Unsupported`] when the connector has no order book stream
     ///   ([`StreamingCaps::order_book`](crate::StreamingCaps::order_book) is `false`).
-    /// - [`Error::RateLimited`], [`Error::Transport`] when the subscription could not be made. The
-    ///   subscription does not exist, ask again later.
+    /// - [`Error::RateLimited`], [`Error::Transport`] when the subscription could not be made, also when
+    ///   the stream did not open in time. The subscription does not exist, ask again later.
+    /// - [`Error::Rejected`] with code `subscription_refused` when the broker refused it (an unknown
+    ///   instrument, no permission). Repeating the call unchanged will not help.
     ///
     /// # Examples
     ///
@@ -398,7 +405,10 @@ pub trait MarketDataSource: Send + Sync {
     /// - [`Error::Config`] when `id.native` is of a kind this broker does not use.
     /// - [`Error::Unsupported`] when [`StreamingCaps::market_trades`](crate::StreamingCaps::market_trades)
     ///   is `false`.
-    /// - [`Error::RateLimited`], [`Error::Transport`] when the subscription could not be made.
+    /// - [`Error::RateLimited`], [`Error::Transport`] when the subscription could not be made, also when
+    ///   the stream did not open in time (see [`OrderBookSource::subscribe_order_book`]: the call returns when
+    ///   the stream is open, the same for every `subscribe_*`).
+    /// - [`Error::Rejected`] with code `subscription_refused` when the broker refused it.
     ///
     /// # Examples
     ///
@@ -441,7 +451,9 @@ pub trait MarketDataSource: Send + Sync {
     ///
     /// - [`Error::Config`] when `id.native` is of a kind this broker does not use.
     /// - [`Error::Unsupported`] when [`StreamingCaps::quotes`](crate::StreamingCaps::quotes) is `false`.
-    /// - [`Error::RateLimited`], [`Error::Transport`] when the subscription could not be made.
+    /// - [`Error::RateLimited`], [`Error::Transport`] when the subscription could not be made, also when
+    ///   the stream did not open in time (as in [`OrderBookSource::subscribe_order_book`]).
+    /// - [`Error::Rejected`] with code `subscription_refused` when the broker refused it.
     ///
     /// # Examples
     ///
@@ -527,7 +539,9 @@ pub trait MarketDataSource: Send + Sync {
     /// - [`Error::Unsupported`] when [`StreamingCaps::candles`](crate::StreamingCaps::candles) is
     ///   `false`, or the broker has no such timeframe (BCS has no [`Timeframe::M10`]).
     /// - [`Error::Config`] when `id.native` is of a kind this broker does not use.
-    /// - [`Error::RateLimited`], [`Error::Transport`] when the subscription could not be made.
+    /// - [`Error::RateLimited`], [`Error::Transport`] when the subscription could not be made, also when
+    ///   the stream did not open in time (as in [`OrderBookSource::subscribe_order_book`]).
+    /// - [`Error::Rejected`] with code `subscription_refused` when the broker refused it.
     ///
     /// # Examples
     ///
@@ -829,14 +843,7 @@ pub trait InstrumentSource: Send + Sync {
 /// assert!(report.confirmed.is_empty() && report.foreign.is_empty());
 ///
 /// // 2. Subscribe BEFORE placing, so no event of our order is missed.
-/// let _sub = ud.subscribe_order_state().await?;
-/// # // The event socket connects in the background: wait for it, or the first event could be missed.
-/// # tokio::time::timeout(Duration::from_secs(8), async {
-/// #     while mock_options.event_sockets() == 0 {
-/// #         tokio::time::sleep(Duration::from_millis(20)).await;
-/// #     }
-/// # })
-/// # .await?;
+/// let _sub = ud.subscribe_order_state().await?; // returns when the stream is open
 ///
 /// // 3. Place a limit order far below the market, so it stays working.
 /// let cid = ClientOrderId::new_v4();
@@ -1230,8 +1237,9 @@ pub trait OrderExecutor: Send + Sync {
     /// [`Event::Overflow`](crate::Event::Overflow) is sent and trading is refused with
     /// [`Error::Degraded`] until [`reconcile`](Self::reconcile). Keep draining your channel.
     ///
-    /// Subscribe BEFORE you place. The stream connects in the background, and changes that happened
-    /// before it was open are not delivered. To catch up, read [`order_state`](Self::order_state) or
+    /// Subscribe BEFORE you place. The call returns when the stream is open (see **Contract**), so an
+    /// order placed right after it cannot be missed. Changes that happened before the call are not
+    /// delivered: to catch up, read [`order_state`](Self::order_state) or
     /// [`active_orders`](Self::active_orders). There is no way to end this subscription except
     /// shutting the connector down.
     ///
@@ -1239,6 +1247,11 @@ pub trait OrderExecutor: Send + Sync {
     ///
     /// - **When:** once per connector, before [`reconcile`](Self::reconcile) and before the first
     ///   [`place`](Self::place). Allowed while the gate is closed.
+    /// - **Guarantee:** the call returns only when the stream is open at the broker. The broker's own
+    ///   confirmation where the protocol has one (T-Bank, ALOR), else the open connection of the stream
+    ///   (BCS, Finam). Everything that happens to your orders after the return reaches you. A stream that is
+    ///   not open within `subscribe_ack_timeout` (3 seconds by default) is [`Error::Transport`] and nothing
+    ///   is left half open, so the call can be repeated.
     /// - **Guarantee:** every change of your orders arrives, in order, or the loss is announced with
     ///   [`Event::Overflow`](crate::Event::Overflow) and trading stops until a reconcile. The
     ///   subscription cannot be ended before shutdown.
@@ -1246,7 +1259,8 @@ pub trait OrderExecutor: Send + Sync {
     /// # Errors
     ///
     /// - [`Error::Unsupported`] when the connector has no order stream.
-    /// - [`Error::Transport`] when the subscription could not be made.
+    /// - [`Error::Transport`] when the subscription could not be made, also when the stream did not open
+    ///   in time.
     ///
     /// # Examples
     ///
@@ -1366,12 +1380,6 @@ pub trait OrderExecutor: Send + Sync {
 ///
 /// // Follow the fills as they happen.
 /// let sub = ud.subscribe_executions().await?;
-/// # tokio::time::timeout(Duration::from_secs(8), async {
-/// #     while mock_options.event_sockets() == 0 {
-/// #         tokio::time::sleep(Duration::from_millis(20)).await;
-/// #     }
-/// # })
-/// # .await?;
 ///
 /// let cid = ClientOrderId::new_v4();
 /// ud.place(PlaceOrderRequest {
@@ -1457,23 +1465,26 @@ pub trait ExecutionSource: Send + Sync {
     ///
     /// Each fill arrives once as [`Event::Execution`](crate::Event::Execution), tagged with the
     /// returned id. The stream is lossless and has a buffer size from the connector config: keep
-    /// draining your channel. Subscribe before you place, because fills that happened before the
-    /// stream was open are not delivered (read [`executions`](Self::executions) to catch up). There is
-    /// no way to end this subscription except shutting the connector down.
+    /// draining your channel. Subscribe before you place: the call returns when the stream is open, so a
+    /// fill after it cannot be missed, but fills that happened before are not delivered (read
+    /// [`executions`](Self::executions) to catch up). There is no way to end this subscription except
+    /// shutting the connector down.
     ///
     /// # Contract
     ///
     /// - **When:** once per connector, before the first [`OrderExecutor::place`]. Allowed while the gate
     ///   is closed.
-    /// - **Guarantee:** lossless like [`OrderExecutor::subscribe_order_state`]: a loss is announced
-    ///   with [`Event::Overflow`](crate::Event::Overflow).
+    /// - **Guarantee:** returns only when the stream is open, like
+    ///   [`OrderExecutor::subscribe_order_state`]. Lossless like it: a loss is announced with
+    ///   [`Event::Overflow`](crate::Event::Overflow).
     ///
     /// # Errors
     ///
     /// - [`Error::Unsupported`] when the broker has no fill stream
     ///   ([`UserDataCaps::streams_executions`](crate::UserDataCaps::streams_executions) is `false`).
     ///   Poll [`executions`](Self::executions) yourself then.
-    /// - [`Error::Transport`] when the subscription could not be made.
+    /// - [`Error::Transport`] when the subscription could not be made, also when the stream did not open
+    ///   in time.
     ///
     /// # Examples
     ///
@@ -1640,7 +1651,8 @@ pub trait PortfolioSource: Send + Sync {
     /// # Errors
     ///
     /// - [`Error::Unsupported`] when the connector has no portfolio stream.
-    /// - [`Error::Transport`] when the subscription could not be made.
+    /// - [`Error::Transport`] when the subscription could not be made, also when the stream did not open
+    ///   in time (the call returns when the stream is open, as `subscribe_order_state`).
     ///
     /// # Examples
     ///

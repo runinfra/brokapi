@@ -38,9 +38,10 @@ pub struct MarketDataConfig {
     /// Upper bound of the pause (default 30 s). The pause returns to `reconnect_min` once a connection has
     /// lived 10 seconds.
     pub reconnect_max: Duration,
-    /// How long a `subscribe_*` call waits for the broker to confirm the subscription (default 3 s). A refusal
-    /// inside that time is returned as an error. If nothing comes in time, the call returns and the subscription
-    /// goes on opening in the background.
+    /// How long a `subscribe_*` call waits for the broker to confirm the subscription (default 3 s). The call
+    /// returns when the broker has confirmed: what happens after that is delivered. A refusal is returned as
+    /// `Rejected`. If nothing comes in time, the call fails with `Transport` and the subscription is taken back, so
+    /// the call can be repeated.
     pub subscribe_ack_timeout: Duration,
 }
 

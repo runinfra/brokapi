@@ -206,6 +206,43 @@ fn md_core_subscription_error_marks_failed() {
     assert!(sink.is_empty());
 }
 
+/// What the connector really feeds the core: the session parses the frame, and the refusal of a subscribe
+/// (a list `errors` where the data should be) is a shape the parser does not know, so it arrives as text. The
+/// subscription must still fail, with the reason of the broker.
+#[test]
+fn md_core_refusal_that_arrives_as_text_marks_failed_with_its_reason() {
+    use brokapi_bcs_protocol::ws::parse_incoming;
+
+    let mut core = MdCore::new();
+    let sub_id = SubscriptionId::new(7);
+    core.apply(&SubscriptionSet::with_subscriptions(vec![
+        DesiredSubscription {
+            id: sub_id,
+            kind: SubscriptionKind::Quotes { instrument: sber() },
+        },
+    ]));
+
+    let frame = parse_incoming(
+        &fixture("ws/order_book_error.json"),
+        BcsWsChannel::MarketData,
+    );
+    assert!(
+        matches!(frame, IncomingMessage::Unknown(_)),
+        "the shape the parser does not know"
+    );
+    let mut sink = brokapi_sansio::EventSink::new();
+    core.on_frame(frame, now(), &mut sink);
+    assert_eq!(
+        core.actual_state(sub_id),
+        Some(brokapi_bcs::core::md::SubState::Failed)
+    );
+    assert!(
+        core.failure(sub_id)
+            .is_some_and(|r| r.contains("instruments"))
+    );
+    assert!(sink.is_empty());
+}
+
 // ─── UD core ─────────────────────────────────────────────────────────────────
 
 #[test]

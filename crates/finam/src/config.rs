@@ -161,11 +161,11 @@ pub struct MarketDataConfig {
     pub api: FinamApiConfig,
     /// Envelope source label, e.g. `"finam-md"`.
     pub source: Arc<str>,
-    /// How long `subscribe_*` waits for the stream to open before returning (still pending).
+    /// How long `subscribe_*` waits for the stream to open (default 3 seconds).
     ///
-    /// A refusal that arrives within this time (unknown symbol, no permission) is returned as an error.
-    /// A slow or unreachable server leaves the subscription connecting: check
-    /// [`MarketDataConnector::sub_status`](crate::MarketDataConnector::sub_status). Default 3 seconds.
+    /// The call returns when the broker has opened the stream: what happens after that is delivered. A
+    /// refusal (unknown symbol, no permission) is returned as `Rejected`. A stream that does not open in
+    /// time is returned as `Transport`, and the subscription is taken back, so the call can be repeated.
     pub subscribe_ack_timeout: Duration,
 }
 
@@ -200,8 +200,8 @@ pub struct UserDataConfig {
     ///
     /// `executions(range)` returns at most this many trades.
     pub executions_limit: i32,
-    /// How long `subscribe_*` waits for the stream to open before returning (still pending).
-    /// Same meaning as in [`MarketDataConfig`]. Default 3 seconds.
+    /// How long `subscribe_*` waits for the stream to open (default 3 seconds). Same meaning as in
+    /// [`MarketDataConfig`].
     pub subscribe_ack_timeout: Duration,
     /// Price steps the connector checks order prices against (default: empty, nothing is checked).
     /// Fill it with [`PriceGrid::learn`] from the trading parameters of the instruments you trade. A

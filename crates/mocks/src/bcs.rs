@@ -114,6 +114,10 @@ pub struct MockOptions {
     pub cancel_pending: AtomicBool,
     /// Every `(page, size)` the trades list was asked for.
     pub trades_asked: std::sync::Mutex<Vec<(Option<usize>, Option<usize>)>>,
+    /// Holds the opening of the user data sockets (`orders/events/ws` and `portfolio/ws`: the handshake is not
+    /// answered) and the answer to the commands of the market data socket, until `stream_gate.release()`. For a
+    /// broker that is slow to open its streams.
+    pub stream_gate: crate::gate::StreamGate,
     /// Orders, trades and open event sockets of all accounts.
     book: std::sync::Mutex<Book>,
 }
@@ -547,7 +551,27 @@ async fn ws_handler(
 ) -> impl IntoResponse {
     let path = uri.path().to_string();
     let owner = bearer(&headers).unwrap_or_default();
-    ws.on_upgrade(move |socket| handle_ws(socket, path, owner, state))
+    // A socket of orders or positions is live for the client when the handshake is answered: the broker that is
+    // slow to open it answers late.
+    if matches!(
+        channel_from_path(&path),
+        BcsWsChannel::OrderEvents | BcsWsChannel::Portfolio
+    ) {
+        state.options.stream_gate.pass().await;
+    }
+    // The socket is registered for the events of its account before the handshake is answered, so a client that sees
+    // the connection open is already known to the mock: an event pushed right after is not lost.
+    let pushes = tokio::sync::mpsc::unbounded_channel::<String>();
+    if channel_from_path(&path) == BcsWsChannel::OrderEvents {
+        state
+            .options
+            .book
+            .lock()
+            .unwrap()
+            .sockets
+            .push((owner.clone(), pushes.0.clone()));
+    }
+    ws.on_upgrade(move |socket| handle_ws(socket, path, owner, state, pushes))
 }
 
 fn bearer(headers: &HeaderMap) -> Option<String> {
@@ -1213,7 +1237,16 @@ fn handle_orders(
     Some(json_response(StatusCode::OK, &resp.to_string()))
 }
 
-async fn handle_ws(socket: WebSocket, path: String, owner: String, state: MockState) {
+async fn handle_ws(
+    socket: WebSocket,
+    path: String,
+    _owner: String,
+    state: MockState,
+    mut pushes: (
+        tokio::sync::mpsc::UnboundedSender<String>,
+        tokio::sync::mpsc::UnboundedReceiver<String>,
+    ),
+) {
     state.options.ws_connections.fetch_add(1, Ordering::Relaxed);
     let channel = channel_from_path(&path);
     let (mut write, mut read) = socket.split();
@@ -1234,17 +1267,6 @@ async fn handle_ws(socket: WebSocket, path: String, owner: String, state: MockSt
         let first = r#"{"portfolioCurrentValue":{"currentValueRub":512000.0,"dailyPortfolioChangeRub":1200.0,
             "collateralAvailable":300000.0},"cashByCurrency":[{"currency":"RUB","sum":50000.0}]}"#;
         let _ = write.send(Message::Text(first.into())).await;
-    }
-
-    let mut pushes = tokio::sync::mpsc::unbounded_channel::<String>();
-    if channel == BcsWsChannel::OrderEvents {
-        state
-            .options
-            .book
-            .lock()
-            .unwrap()
-            .sockets
-            .push((owner, pushes.0.clone()));
     }
 
     let mut frames_sent = 0u32;
@@ -1272,6 +1294,8 @@ async fn handle_ws(socket: WebSocket, path: String, owner: String, state: MockSt
                     .lock()
                     .unwrap()
                     .push(text.to_string());
+                // The answer to a subscribe is what makes it live for the client.
+                state.options.stream_gate.pass().await;
                 let req: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
                 // Unsubscribe (subscribeType 1) gets no answer.
                 if req["subscribeType"].as_i64() == Some(1) {
