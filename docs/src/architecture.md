@@ -72,7 +72,7 @@ flowchart TB
   CORE[brokapi-core<br>общие типы и трейты:<br>то, что видит бот]
   CONN --> PROTO & RT & SANS
   RT --> SANS --> CORE
-  MOCK[brokapi-mocks<br>имитации трех брокеров] -. для тестов .-> PROTO
+  MOCK[brokapi-mocks<br>имитации брокеров] -. для тестов .-> PROTO
   CONF[brokapi-conformance<br>общие сценарии] -. проверяет .-> CONN
 ```
 
