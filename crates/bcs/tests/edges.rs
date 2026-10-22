@@ -378,3 +378,143 @@ mod mapping {
         assert_eq!(rejection_reason(&acked), None);
     }
 }
+
+// --- the connectors ---
+
+mod connectors {
+    use std::sync::Arc;
+
+    use brokapi_bcs::error::{map_cid_err, map_command_err, map_err};
+    use brokapi_bcs::limits::default_limits;
+    use brokapi_bcs::{MarketDataConfig, MarketDataConnector, UserDataConfig, UserDataConnector};
+    use brokapi_bcs_protocol::config::BcsConfig;
+    use brokapi_bcs_protocol::error::BcsApiError;
+    use brokapi_core::{
+        CidError, Connector, Envelope, Error, InstrumentKind, InstrumentQuery, InstrumentSource,
+        MarketDataSource, OrderBookSource, PortfolioSource, ShutdownMode, SubscribeOpts,
+    };
+    use brokapi_mocks::bcs::{MockOptions, MockServer};
+    use brokapi_runtime::BrokerLimiter;
+    use tokio::sync::mpsc;
+
+    use super::*;
+
+    fn limiter() -> Arc<BrokerLimiter> {
+        BrokerLimiter::new(&default_limits())
+    }
+
+    async fn md(
+        server: &MockServer,
+    ) -> (brokapi_bcs::MarketDataConnector, mpsc::Receiver<Envelope>) {
+        let (tx, rx) = mpsc::channel(256);
+        let cfg = BcsConfig::for_mock("mock-refresh-token", &server.http_base);
+        let md = MarketDataConnector::start(MarketDataConfig::new(cfg, "bcs-md"), limiter(), tx)
+            .await
+            .expect("md start");
+        (md, rx)
+    }
+
+    async fn ud(server: &MockServer) -> (brokapi_bcs::UserDataConnector, mpsc::Receiver<Envelope>) {
+        let (tx, rx) = mpsc::channel(256);
+        let cfg = BcsConfig::for_mock("mock-refresh-token", &server.http_base).with_write(true);
+        let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), limiter(), tx)
+            .await
+            .expect("ud start");
+        (ud, rx)
+    }
+
+    #[test]
+    fn a_failure_of_the_protocol_becomes_the_error_the_caller_can_act_on() {
+        let http = |status| BcsApiError::HttpError {
+            status,
+            message: "text".into(),
+            trace_id: None,
+        };
+        // Reads: a 429 is a limit, anything else is a transport failure.
+        assert!(matches!(
+            map_err(http(Some(429))),
+            Error::RateLimited { .. }
+        ));
+        assert!(matches!(map_err(http(Some(500))), Error::Transport(_)));
+        // Commands: only an answer that proves the broker did not act is a definite error.
+        assert!(matches!(map_command_err(http(None)), Error::Unknown));
+        assert!(matches!(map_command_err(http(Some(503))), Error::Unknown));
+        assert!(matches!(
+            map_command_err(http(Some(422))),
+            Error::Rejected { ref code, .. } if code == "http_422"
+        ));
+        assert!(matches!(
+            map_command_err(http(Some(429))),
+            Error::RateLimited { .. }
+        ));
+        // A cid that cannot be written in the form of the broker is a configuration error.
+        assert!(matches!(
+            map_cid_err(CidError::TooLong { len: 40, max: 36 }),
+            Error::Config(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_capabilities_are_the_same_through_the_connector_trait() {
+        let server = MockServer::start(Arc::default()).await;
+        let (md, _rx) = md(&server).await;
+        assert_eq!(Connector::caps(&md).streaming, md.caps().streaming);
+        Connector::shutdown(md, ShutdownMode::Immediate).await;
+        let (ud, _rx) = ud(&server).await;
+        assert_eq!(
+            Connector::caps(&ud).supports_replace,
+            ud.caps().supports_replace
+        );
+        Connector::shutdown(ud, ShutdownMode::Immediate).await;
+    }
+
+    #[tokio::test]
+    async fn a_kind_the_broker_has_no_type_for_is_unsupported_and_a_future_is_listed() {
+        let server = MockServer::start(Arc::default()).await;
+        let (md, _rx) = md(&server).await;
+        for kind in [InstrumentKind::Option, InstrumentKind::Other] {
+            assert!(matches!(
+                md.find(InstrumentQuery::ByKind(kind)).await,
+                Err(Error::Unsupported { .. })
+            ));
+        }
+        assert!(
+            md.find(InstrumentQuery::ByKind(InstrumentKind::Future))
+                .await
+                .is_ok()
+        );
+        md.shutdown(ShutdownMode::Immediate).await;
+    }
+
+    #[tokio::test]
+    async fn a_graceful_shutdown_takes_back_every_subscription_and_a_cancelled_one_is_gone() {
+        let opts = Arc::new(MockOptions::default());
+        let server = MockServer::start(Arc::clone(&opts)).await;
+        let (md, _rx) = md(&server).await;
+        let first = md
+            .subscribe_quotes(&sber(), SubscribeOpts::conflate())
+            .await
+            .unwrap();
+        md.subscribe_market_trades(&sber(), SubscribeOpts::conflate())
+            .await
+            .unwrap();
+        md.unsubscribe(first).await.unwrap();
+        let report = md
+            .shutdown(ShutdownMode::Graceful {
+                deadline: std::time::Duration::from_secs(1),
+            })
+            .await;
+        assert_eq!(report.unsubscribed, 1, "{report:?}");
+        assert_eq!(report.unsubscribe_failed, 0);
+    }
+
+    #[tokio::test]
+    async fn positions_and_balances_are_the_two_halves_of_the_portfolio() {
+        let server = MockServer::start(Arc::default()).await;
+        let (ud, _rx) = ud(&server).await;
+        let whole = ud.portfolio().await.unwrap();
+        assert_eq!(ud.positions().await.unwrap().len(), whole.positions.len());
+        assert_eq!(ud.balances().await.unwrap().len(), whole.balances.len());
+        ud.shutdown(ShutdownMode::Immediate).await;
+    }
+}

@@ -60,7 +60,7 @@ impl AuthInterceptor {
     /// # Errors
     ///
     /// [`ProtocolError::Config`] when the token or the app name contains characters a header value
-    /// cannot carry (control characters, non-ASCII). The message does not repeat the token.
+    /// cannot carry (control characters such as a line break). The message does not repeat the token.
     pub fn new(token: &str, app_name: Option<&str>) -> Result<Self, ProtocolError> {
         let mut auth: MetadataValue<Ascii> = format!("Bearer {token}").parse().map_err(|_| {
             ProtocolError::Config("token contains characters not allowed in a header".into())

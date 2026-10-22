@@ -1,6 +1,8 @@
 //! Edges of the Finam mapping and of the small public parts: what a type string means, a timeframe on the wire, the status
 //! of a refused order, the codec check and the config that must not show its secret.
 
+mod mock_server;
+
 use brokapi_core::{
     CidCodec, Error, InstrumentKind, SessionKind, Timeframe, TradingAvailability, UnixNanos,
 };
@@ -204,4 +206,118 @@ fn the_secret_is_never_printed() {
     let shown = format!("{cfg:?}");
     assert!(!shown.contains("super-secret-value"), "{shown}");
     assert!(shown.contains("redacted"));
+}
+
+// --- the connectors ---
+
+mod connectors {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use brokapi_core::{
+        Connector, Error, ExecutionSource, MarketDataSource, OrderBookSource, OrderExecutor,
+        ShutdownMode, SubscribeOpts, SubscriptionId,
+    };
+    use brokapi_finam::{MarketDataConfig, UserDataConfig};
+    use brokapi_runtime::{BrokerLimiter, BrokerLimits};
+
+    use crate::mock_server::{MockServer, api, md, sber, ud, ud_with};
+
+    /// Limits that let one stream per connection through.
+    fn one_stream() -> Arc<BrokerLimiter> {
+        let limits = BrokerLimits::from_toml_str(
+            r#"
+            [finam.buckets.all]
+            rate = 1000
+            per = "1s"
+            burst = 1000
+            [finam.route]
+            "*" = ["all"]
+            [finam.conns]
+            max_conns = 1
+            max_subs_per_conn = 1
+            supports_multiplex = true
+            "#,
+        )
+        .unwrap();
+        BrokerLimiter::new(&limits)
+    }
+
+    #[tokio::test]
+    async fn a_stream_beyond_the_quota_of_a_connection_is_refused_before_anything_is_opened() {
+        let server = MockServer::start().await;
+        let cfg = UserDataConfig::new(api(&server), "ACC1", "finam-ud");
+        let (ud, _rx) = ud_with(cfg, one_stream(), 64).await;
+        ud.subscribe_order_state().await.unwrap();
+        assert!(matches!(
+            ud.subscribe_executions().await,
+            Err(Error::Rejected { ref code, .. }) if code == "subscription_quota"
+        ));
+        ud.shutdown(ShutdownMode::Immediate).await;
+
+        let (tx, _rx) = tokio::sync::mpsc::channel(64);
+        let md = brokapi_finam::MarketDataConnector::start(
+            MarketDataConfig::new(api(&server), "finam-md"),
+            one_stream(),
+            tx,
+        )
+        .await
+        .unwrap();
+        md.subscribe_order_book(&sber(), SubscribeOpts::conflate())
+            .await
+            .unwrap();
+        assert!(matches!(
+            md.subscribe_quotes(&sber(), SubscribeOpts::conflate()).await,
+            Err(Error::Rejected { ref code, .. }) if code == "subscription_quota"
+        ));
+        md.shutdown(ShutdownMode::Immediate).await;
+    }
+
+    #[tokio::test]
+    async fn the_capabilities_and_the_shutdown_are_also_there_through_the_connector_trait() {
+        let server = MockServer::start().await;
+        let (md, _rx) = md(&server).await;
+        assert_eq!(Connector::caps(&md).streaming, md.caps().streaming);
+        Connector::shutdown(md, ShutdownMode::Immediate).await;
+        let (ud, _rx) = ud(&server, "ACC1").await;
+        assert_eq!(
+            Connector::caps(&ud).supports_replace,
+            ud.caps().supports_replace
+        );
+        Connector::shutdown(ud, ShutdownMode::Immediate).await;
+    }
+
+    #[tokio::test]
+    async fn the_status_of_a_stream_is_known_for_a_subscription_of_this_connector_only() {
+        let server = MockServer::start().await;
+        let (ud, _rx) = ud(&server, "ACC1").await;
+        let sub = ud.subscribe_order_state().await.unwrap();
+        assert!(ud.sub_status(sub).is_some());
+        assert!(ud.sub_status(SubscriptionId::new(999_999)).is_none());
+        // What a program does through `raw()` follows the settings of the connector.
+        let raw = ud.raw();
+        assert_eq!(raw.account_id(), Some("ACC1"));
+        assert_eq!(raw.timeout(), Duration::from_secs(10));
+        assert!(Arc::strong_count(raw.limiter()) >= 2);
+        ud.shutdown(ShutdownMode::Immediate).await;
+    }
+
+    #[tokio::test]
+    async fn a_graceful_shutdown_that_has_no_time_left_counts_the_streams_it_could_not_stop() {
+        let server = MockServer::start().await;
+        let (md, _rx) = md(&server).await;
+        md.subscribe_quotes(&sber(), SubscribeOpts::conflate())
+            .await
+            .unwrap();
+        let report = md
+            .shutdown(ShutdownMode::Graceful {
+                deadline: Duration::ZERO,
+            })
+            .await;
+        assert_eq!(
+            report.unsubscribed + report.unsubscribe_failed,
+            1,
+            "{report:?}"
+        );
+    }
 }
