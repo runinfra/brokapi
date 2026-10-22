@@ -181,7 +181,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "brokapi-alor",
  "brokapi-alor-protocol",
@@ -198,7 +198,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-alor"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "async-trait",
  "brokapi-alor-protocol",
@@ -218,7 +218,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-alor-protocol"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-bcs"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "async-trait",
  "brokapi-bcs-protocol",
@@ -256,7 +256,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-bcs-protocol"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-conformance"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "brokapi-core",
  "tokio",
@@ -287,7 +287,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-core"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -300,7 +300,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-finam"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "async-trait",
  "brokapi-core",
@@ -319,7 +319,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-finam-protocol"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -338,7 +338,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-mocks"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "axum",
  "brokapi-bcs-protocol",
@@ -363,7 +363,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-python"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "brokapi",
  "brokapi-mocks",
@@ -384,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-runtime"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "brokapi-core",
  "brokapi-sansio",
@@ -398,7 +398,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-sansio"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "brokapi-core",
  "serde_json",
@@ -406,7 +406,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-tbank"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "async-trait",
  "brokapi-core",
@@ -425,7 +425,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-tbank-protocol"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "dotenvy",
  "prost",

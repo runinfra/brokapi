@@ -101,7 +101,7 @@ from .models import (
 )
 from .numbers import RoundMode, round_to_step
 
-__version__ = "0.1.0a1"
+__version__ = "0.1.0a2"
 
 __all__ = [
     "Backpressure",

@@ -13,14 +13,7 @@
   когда что-то выйдет, это появится здесь.
 - **CI** в открытом репозитории: проверка каждого изменения.
 
-## 2026-10-22: открытая альфа
-
-- **Код открыт**: <https://github.com/runinfra/brokapi>, лицензия `MIT OR Apache-2.0`.
-- **Пакеты опубликованы**, версия `0.1.0-alpha.1`: `cargo add brokapi --features bcs` и `pip install brokapi`. Для Python готовые
-  пакеты под Linux x86_64, macOS и Windows, на остальных системах расширение собирается при установке.
-- Как сообщить об уязвимости закрыто: [SECURITY.md](https://github.com/runinfra/brokapi/blob/main/SECURITY.md).
-
-## 2026-10-22: АЛОР Брокер
+## 2026-10-22: 0.1.0-alpha.2, АЛОР Брокер
 
 Проверено на имитации и общим набором сценариев, вживую ничего не запускалось.
 
@@ -37,6 +30,15 @@
 - **Имитация АЛОРа** в `brokapi-mocks` (`alor`) и `mock_alor()` в Python. Общий набор сценариев `brokapi-conformance` проходит, а для брокера
   без расписания в нем появился `market_data_history_without_schedule`.
 - **Примеры.** АЛОР добавлен в программы `infrastructure` и `research` (Rust и Python), в `raw` (Python) и в живые пробы (`crates/alor/tests/live.rs`, только сборка).
+- **`brokapi.testing` из PyPI.** В `0.1.0-alpha.1` имитация БКС из пакета читала образцы ответов из исходников и падала
+  на машине пользователя. Теперь образцы встроены в пакет.
+
+## 2026-10-22: открытая альфа
+
+- **Код открыт**: <https://github.com/runinfra/brokapi>, лицензия `MIT OR Apache-2.0`.
+- **Пакеты опубликованы**, версия `0.1.0-alpha.1`: `cargo add brokapi --features bcs` и `pip install brokapi`. Для Python готовые
+  пакеты под Linux x86_64, macOS и Windows, на остальных системах расширение собирается при установке.
+- Как сообщить об уязвимости закрыто: [SECURITY.md](https://github.com/runinfra/brokapi/blob/main/SECURITY.md).
 
 ## 2026-10-22: новый вид документации
 

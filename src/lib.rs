@@ -5,7 +5,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! brokapi = { version = "0.1.0-alpha.1", features = ["bcs"] }   # or "tbank", "finam", "alor"
+//! brokapi = { version = "0.1.0-alpha.2", features = ["bcs"] }   # or "tbank", "finam", "alor"
 //! ```
 //!
 //! | Path | What is there | Feature |

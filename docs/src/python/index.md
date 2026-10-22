@@ -20,7 +20,7 @@ pip install "git+https://github.com/runinfra/brokapi#subdirectory=crates/python"
 python -c "import brokapi; print(brokapi.__version__)"
 ```
 
-Должна напечататься версия `0.1.0a1`. Готовые пакеты под Linux, macOS и Windows будут к бете.
+Должна напечататься версия `0.1.0a2`. Готовые пакеты под Linux, macOS и Windows будут к бете.
 
 ## Инструкции по задачам
 
