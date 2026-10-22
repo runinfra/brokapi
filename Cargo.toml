@@ -21,7 +21,7 @@ exclude = ["crates/python"]
 
 [workspace.package]
 edition = "2024"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 license = "MIT OR Apache-2.0"
 authors = ["The brokapi Authors"]
 homepage = "https://brokapi.ru"
@@ -56,17 +56,17 @@ url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 # Internal crates
-brokapi-bcs-protocol = { path = "crates/bcs-protocol", version = "0.1.0-alpha.2" }
-brokapi-alor-protocol = { path = "crates/alor-protocol", version = "0.1.0-alpha.2" }
-brokapi-alor = { path = "crates/alor", version = "0.1.0-alpha.2" }
-brokapi-finam-protocol = { path = "crates/finam-protocol", version = "0.1.0-alpha.2" }
-brokapi-finam = { path = "crates/finam", version = "0.1.0-alpha.2" }
-brokapi-core = { path = "crates/core", version = "0.1.0-alpha.2" }
-brokapi-sansio = { path = "crates/sansio", version = "0.1.0-alpha.2" }
-brokapi-runtime = { path = "crates/runtime", version = "0.1.0-alpha.2" }
-brokapi-bcs = { path = "crates/bcs", version = "0.1.0-alpha.2" }
-brokapi-tbank-protocol = { path = "crates/tbank-protocol", version = "0.1.0-alpha.2" }
-brokapi-tbank = { path = "crates/tbank", version = "0.1.0-alpha.2" }
+brokapi-bcs-protocol = { path = "crates/bcs-protocol", version = "0.1.0-alpha.3" }
+brokapi-alor-protocol = { path = "crates/alor-protocol", version = "0.1.0-alpha.3" }
+brokapi-alor = { path = "crates/alor", version = "0.1.0-alpha.3" }
+brokapi-finam-protocol = { path = "crates/finam-protocol", version = "0.1.0-alpha.3" }
+brokapi-finam = { path = "crates/finam", version = "0.1.0-alpha.3" }
+brokapi-core = { path = "crates/core", version = "0.1.0-alpha.3" }
+brokapi-sansio = { path = "crates/sansio", version = "0.1.0-alpha.3" }
+brokapi-runtime = { path = "crates/runtime", version = "0.1.0-alpha.3" }
+brokapi-bcs = { path = "crates/bcs", version = "0.1.0-alpha.3" }
+brokapi-tbank-protocol = { path = "crates/tbank-protocol", version = "0.1.0-alpha.3" }
+brokapi-tbank = { path = "crates/tbank", version = "0.1.0-alpha.3" }
 brokapi-conformance = { path = "crates/conformance" }
 brokapi-mocks = { path = "crates/mocks" }
 

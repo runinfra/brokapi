@@ -3,7 +3,7 @@
 Как получить библиотеку и убедиться, что она встала. Это первый шаг обоих быстрых стартов: [Rust](rust/quickstart.md),
 [Python](python/quickstart.md).
 
-> **Стадия: открытая альфа.** Пакеты `brokapi` лежат на crates.io и PyPI (версия `0.1.0-alpha.2`), код открыт:
+> **Стадия: открытая альфа.** Пакеты `brokapi` лежат на crates.io и PyPI (версия `0.1.0-alpha.3`), код открыт:
 > `https://github.com/runinfra/brokapi`. Ниже в каждом разделе команда для пакета и для самой свежей версии из репозитория.
 
 ## Что понадобится
@@ -72,7 +72,7 @@ pip install "git+https://github.com/runinfra/brokapi#subdirectory=crates/python"
 python -c "import brokapi; print(brokapi.__version__)"
 ```
 
-Должна напечататься версия `0.1.0a2`. Не напечатала: смотрите таблицу ниже. Дальше: [быстрый старт на Python](python/quickstart.md).
+Должна напечататься версия `0.1.0a3`. Не напечатала: смотрите таблицу ниже. Дальше: [быстрый старт на Python](python/quickstart.md).
 
 ## Если что-то пошло не так
 

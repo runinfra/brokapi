@@ -34,7 +34,7 @@ name = "my-bot"
 edition = "2024"   # нужен Rust 1.88 или новее: в коде книги цепочки let
 
 [dependencies]
-brokapi = { version = "0.1.0-alpha.2", features = ["bcs", "tbank", "finam", "alor"] }
+brokapi = { version = "0.1.0-alpha.3", features = ["bcs", "tbank", "finam", "alor"] }
 tokio   = { version = "1", features = ["full"] }
 ```
 
