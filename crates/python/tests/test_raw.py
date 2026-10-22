@@ -174,8 +174,11 @@ async def test_raw_of_two_clients_on_one_limiter_counts_together(
     second = await mock.connect(limiter=first.limiter, name="second")
     method, args = READ[mock.broker]
     await exhaust(first, method, args)
+    # The quota was spent by the other client. A bucket of a fast broker (ALOR: 100 a second) refills between two calls,
+    # so the second client may get one or two through: still far from the full bucket a client of its own would have.
     with pytest.raises(brokapi.RateLimited):
-        await second.raw(method, args)  # the quota was spent by the other client
+        for _ in range(5):
+            await second.raw(method, args)
 
 
 async def test_a_call_without_a_route_spends_the_default_quota(pair: tuple[testing.MockBroker, brokapi.Client]) -> None:
