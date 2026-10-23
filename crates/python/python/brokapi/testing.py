@@ -139,3 +139,8 @@ async def mock_alor(*, synthetic_candles: bool = False) -> MockBroker:
     ``synthetic_candles`` has no effect on ALOR: it always answers three bars from the start of the period.
     """
     return await _start("alor", synthetic_candles)
+
+
+async def mock_bybit(*, synthetic_candles: bool = False) -> MockBroker:
+    """An imitation of Bybit (HTTP and WebSocket), category ``linear``. The test instrument is ``MOCKUSDT``."""
+    return await _start("bybit", synthetic_candles)

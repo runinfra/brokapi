@@ -25,6 +25,12 @@ async def alor() -> AsyncIterator[tuple[testing.MockBroker, brokapi.Client]]:
 
 
 @pytest_asyncio.fixture
+async def bybit() -> AsyncIterator[tuple[testing.MockBroker, brokapi.Client]]:
+    async with await testing.mock_bybit() as mock:
+        yield mock, await mock.connect()
+
+
+@pytest_asyncio.fixture
 async def tbank() -> AsyncIterator[tuple[testing.MockBroker, brokapi.Client]]:
     async with await testing.mock_tbank() as mock:
         yield mock, await mock.connect()

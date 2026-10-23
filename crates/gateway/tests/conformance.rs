@@ -2,7 +2,7 @@
 //! holds the connection to the imitation of a broker, and every call and every event crosses gRPC.
 //!
 //! A scenario that passes here proves that the gateway is a faithful road: the same refusals, the same errors, the same
-//! events as with the connector itself, for each of the four brokers.
+//! events as with the connector itself, for each of the brokers.
 
 mod common;
 
@@ -28,7 +28,7 @@ async fn market_data(broker: Broker) {
 async fn instruments(broker: Broker) {
     let rig = Rig::start(broker).await;
     let query = InstrumentQuery::ByTicker {
-        ticker: "SBER".into(),
+        ticker: rig.ticker().into(),
         exchange: None,
     };
     conf::instrument_lookup(&rig.bot, query, &rig.sber()).await;
@@ -136,6 +136,14 @@ async fn history_and_streams(broker: Broker) {
             )
             .await
         }
+        Broker::Bybit => {
+            // A crypto exchange has no timetable of sessions either. A day of 5-minute bars is under the 1000 of a request.
+            conf::market_data_history_without_schedule(&rig.bot, &sber, Timeframe::M5, day()).await;
+            match rig.bot.schedule("BYBIT", day()).await {
+                Err(Error::Unsupported { capability }) => assert_eq!(capability, "schedule"),
+                other => panic!("{other:?}"),
+            }
+        }
         Broker::Alor => {
             // ALOR has no timetable of sessions: `schedule` is Unsupported, and that error crosses the wire as it is.
             conf::market_data_history_without_schedule(&rig.bot, &sber, Timeframe::M1, day()).await;
@@ -157,7 +165,10 @@ async fn own_orders_events_active_replace_and_executions(broker: Broker) {
     conf::order_state_events(&rig.bot, &mut rig.events, &source, &sber, price).await;
     conf::active_orders_lifecycle(&rig.bot, &sber, price).await;
     let (_, ud) = rig.bot.caps().await.expect("caps");
-    assert_eq!(ud.supports_replace, broker != Broker::Finam);
+    assert_eq!(
+        ud.supports_replace,
+        !matches!(broker, Broker::Finam | Broker::Bybit)
+    );
     let (from, to) = rig.replace_prices();
     conf::replace_order(&rig.bot, ud.supports_replace, &sber, from, to).await;
     conf::executions(&rig.bot, &mut rig.events, &source, &sber, price, |cid| {
@@ -231,6 +242,7 @@ async fn a_place_without_an_answer_is_unknown(broker: Broker) {
             C::Tbank(cfg) => cfg.request_timeout = timeout,
             C::Finam { api, .. } => api.request_timeout = timeout,
             C::Alor(cfg) => cfg.request_timeout = timeout,
+            C::Bybit(cfg) => cfg.request_timeout = timeout,
         }
     })
     .await;
@@ -375,3 +387,4 @@ per_broker!(bcs, Broker::Bcs);
 per_broker!(tbank, Broker::Tbank);
 per_broker!(finam, Broker::Finam);
 per_broker!(alor, Broker::Alor);
+per_broker!(bybit, Broker::Bybit);

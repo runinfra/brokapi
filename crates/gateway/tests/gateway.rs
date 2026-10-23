@@ -817,7 +817,7 @@ async fn the_journal_closes_an_order_that_no_bot_is_watching() {
     use brokapi::core::OrderExecutor;
     // Not Finam: its imitation fills an order through a trades stream, which exists only once somebody subscribes to
     // executions, and this test is about nobody subscribing.
-    for broker in [Broker::Bcs, Broker::Tbank, Broker::Alor] {
+    for broker in [Broker::Bcs, Broker::Tbank, Broker::Alor, Broker::Bybit] {
         let rig = Rig::start(broker).await;
         // The bot places the order and never subscribes to the states of orders.
         let request = limit_order(&rig, rig.own_price());

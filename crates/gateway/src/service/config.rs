@@ -216,17 +216,23 @@ pub struct BucketSection {
 pub struct GatewaySpec {
     /// The name. The commands use it, and the state of the gateway is in a directory of this name.
     pub name: String,
-    /// `bcs`, `tbank`, `finam` or `alor`.
+    /// `bcs`, `tbank`, `finam`, `alor` or `bybit`.
     pub broker: String,
-    /// The account: `account_id` of T-Bank and Finam, `portfolio` of ALOR. BCS has no choice of account.
+    /// The account: `account_id` of T-Bank and Finam, `portfolio` of ALOR. BCS and Bybit have no choice of account (a
+    /// Bybit key belongs to one account).
     pub account: Option<String>,
-    /// The sandbox of the broker (T-Bank `sandbox`, ALOR `test`). BCS and Finam have none.
+    /// The sandbox of the broker (T-Bank `sandbox`, ALOR `test`, the demo account of Bybit). BCS and Finam have none.
     #[serde(default)]
     pub sandbox: bool,
-    /// The environment variable that holds the token.
+    /// The environment variable that holds the token (for Bybit: the API secret).
     pub token_env: Option<String>,
     /// The file that holds the token (the whole contents, trimmed).
     pub token_file: Option<PathBuf>,
+    /// Bybit only: the environment variable that holds the API key. The key is the first half of the pair, the secret
+    /// is the token.
+    pub key_env: Option<String>,
+    /// Bybit only: the file that holds the API key.
+    pub key_file: Option<PathBuf>,
     /// Whether the service starts it on `up`. A gateway with `autostart = false` waits for `brokapi start`.
     #[serde(default = "default_true")]
     pub autostart: bool,
@@ -252,7 +258,7 @@ fn opt_seconds<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Duration
 }
 
 /// The token keys a gateway must not carry in its `settings`.
-const SECRET_KEYS: [&str; 3] = ["token", "refresh_token", "secret"];
+const SECRET_KEYS: [&str; 4] = ["token", "refresh_token", "secret", "api_secret"];
 
 impl GatewaySpec {
     /// The broker.
@@ -290,6 +296,36 @@ impl GatewaySpec {
         Ok(token)
     }
 
+    /// The API key of a Bybit gateway, from the variable or the file the gateway names. Never printed.
+    pub fn api_key(&self) -> Result<String, String> {
+        let raw = match (&self.key_env, &self.key_file) {
+            (Some(var), None) => std::env::var(var).map_err(|_| {
+                format!(
+                    "gateway {}: the environment variable {var} (key_env) is not set",
+                    self.name
+                )
+            })?,
+            (None, Some(path)) => std::fs::read_to_string(path).map_err(|e| {
+                format!(
+                    "gateway {}: cannot read the key file {}: {e}",
+                    self.name,
+                    path.display()
+                )
+            })?,
+            _ => {
+                return Err(format!(
+                    "gateway {}: say where the API key is: key_env = \"NAME\" or key_file = \"path\" (the secret is the token)",
+                    self.name
+                ));
+            }
+        };
+        let key = raw.trim().to_owned();
+        if key.is_empty() {
+            return Err(format!("gateway {}: the API key is empty", self.name));
+        }
+        Ok(key)
+    }
+
     /// The settings of the library for this gateway, with the token in them.
     pub fn settings_json(&self) -> Result<Map<String, Value>, String> {
         let broker = self.broker()?;
@@ -303,8 +339,17 @@ impl GatewaySpec {
             Broker::Alor => ("refresh_token", Some("portfolio")),
             Broker::Tbank => ("token", Some("account_id")),
             Broker::Finam => ("secret", Some("account_id")),
+            Broker::Bybit => ("api_secret", None),
         };
         map.insert(token_key.into(), Value::String(token));
+        if broker == Broker::Bybit {
+            map.insert("api_key".into(), Value::String(self.api_key()?));
+        } else if self.key_env.is_some() || self.key_file.is_some() {
+            return Err(format!(
+                "gateway {}: {broker} has one token and no separate key, remove key_env and key_file",
+                self.name
+            ));
+        }
         if let Some(account) = &self.account {
             match account_key {
                 Some(key) => {
@@ -312,7 +357,7 @@ impl GatewaySpec {
                 }
                 None => {
                     return Err(format!(
-                        "gateway {}: BCS has no choice of account, remove `account`",
+                        "gateway {}: {broker} has no choice of account, remove `account`",
                         self.name
                     ));
                 }
@@ -325,6 +370,9 @@ impl GatewaySpec {
                 }
                 Broker::Alor => {
                     map.insert("test".into(), Value::Bool(true));
+                }
+                Broker::Bybit => {
+                    map.insert("env".into(), Value::String("demo".into()));
                 }
                 _ => {
                     return Err(format!(
@@ -364,6 +412,7 @@ impl GatewaySpec {
             Broker::Tbank => brokapi::tbank::limits::default_limits(),
             Broker::Finam => brokapi::finam::limits::default_limits(),
             Broker::Alor => brokapi::alor::limits::default_limits(),
+            Broker::Bybit => brokapi::bybit::limits::default_limits(),
         };
         for (name, b) in &self.limits {
             let Some(bucket) = limits.buckets.get_mut(name) else {
@@ -625,10 +674,11 @@ keep = 5
 # One [[gateway]] is one account at one broker. The bots of the account connect to it, not to the broker.
 [[gateway]]
 name = "tbank-sandbox"
-broker = "tbank"             # bcs, tbank, finam or alor
-account = "2000000000"       # T-Bank and Finam: account_id, ALOR: portfolio. BCS has none.
-sandbox = true               # T-Bank and ALOR have a sandbox
-token_env = "TBANK_TOKEN"    # or: token_file = "/path/to/token"
+broker = "tbank"             # bcs, tbank, finam, alor or bybit
+account = "2000000000"       # T-Bank and Finam: account_id, ALOR: portfolio. BCS and Bybit have none.
+sandbox = true               # T-Bank, ALOR and Bybit (the demo account) have a sandbox
+token_env = "TBANK_TOKEN"    # or: token_file = "/path/to/token". Bybit: this is the API secret, and key_env (or
+                             # key_file) names the API key
 # autostart = false          # do not start on `brokapi up`, wait for `brokapi start`
 
 # The events a bot that reconnects can still get, by number and by age.
@@ -700,6 +750,71 @@ mod tests {
         );
         let twice = format!("{}\n{}", g("token_env = \"X\""), g("token_env = \"X\""));
         assert!(msg(twice).contains("two gateways are named"));
+    }
+
+    #[test]
+    fn a_bybit_gateway_has_a_key_and_a_secret_and_a_demo_account_for_a_sandbox() {
+        let dir = std::env::temp_dir().join(format!("brokapi-bybit-config-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("secret"), "the-secret\n").unwrap();
+        std::fs::write(dir.join("key"), "the-key").unwrap();
+        let section = |extra: &str| {
+            format!(
+                "[[gateway]]\nname = \"by\"\nbroker = \"bybit\"\ntoken_file = {:?}\n{extra}",
+                dir.join("secret").display().to_string()
+            )
+        };
+        let spec = |extra: &str| parse(&section(extra)).unwrap().gateways.remove(0);
+        // Without a key the gateway says where to put it, and the secret alone is not enough.
+        let err = spec("").settings_json().unwrap_err();
+        assert!(err.contains("key_env") && err.contains("key_file"), "{err}");
+        let with_key = format!(
+            "key_file = {:?}\nsandbox = true\n",
+            dir.join("key").display().to_string()
+        );
+        let map = spec(&with_key).settings_json().unwrap();
+        assert_eq!(map["api_secret"], "the-secret");
+        assert_eq!(map["api_key"], "the-key");
+        assert_eq!(map["env"], "demo");
+        match spec(&with_key).broker_config().unwrap() {
+            brokapi_client::BrokerConfig::Bybit(cfg) => {
+                assert_eq!(cfg.http_base_url, "https://api-demo.bybit.com");
+                assert!(cfg.is_demo());
+            }
+            other => panic!("{other:?}"),
+        }
+        // Without `sandbox` the main exchange is the default.
+        let main = spec(&format!(
+            "key_file = {:?}\n",
+            dir.join("key").display().to_string()
+        ));
+        match main.broker_config().unwrap() {
+            brokapi_client::BrokerConfig::Bybit(cfg) => {
+                assert_eq!(cfg.http_base_url, "https://api.bybit.com")
+            }
+            other => panic!("{other:?}"),
+        }
+        // A key for a broker with one token is a mistake that is named, and the secret cannot be written in the file.
+        let bcs = parse(&format!(
+            "[[gateway]]\nname = \"a\"\nbroker = \"bcs\"\ntoken_file = {:?}\nkey_file = {:?}\n",
+            dir.join("secret").display().to_string(),
+            dir.join("key").display().to_string()
+        ))
+        .unwrap();
+        assert!(
+            bcs.gateways[0]
+                .settings_json()
+                .unwrap_err()
+                .contains("no separate key")
+        );
+        let text = section("[gateway.settings]\napi_secret = \"abc\"\n");
+        assert!(
+            parse(&text)
+                .unwrap_err()
+                .to_string()
+                .contains("tokens do not go in the config")
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

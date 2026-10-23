@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use brokapi::core::{CidCodec, ClientOrderId, Price, Qty};
-use brokapi_mocks::{alor, bcs, finam, tbank};
+use brokapi_mocks::{alor, bcs, bybit, finam, tbank};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use serde_json::json;
@@ -18,6 +18,7 @@ enum Server {
     Tbank(tbank::MockServer),
     Finam(finam::MockServer),
     Alor(alor::MockServer),
+    Bybit(bybit::MockServer),
 }
 
 /// A running imitation of one broker.
@@ -88,6 +89,15 @@ pub fn start_mock(
                     Box::new(move |on| lose.stop_answer_lost.store(on, Ordering::SeqCst)),
                 )
             }
+            "bybit" => {
+                let options = Arc::new(bybit::MockOptions::default());
+                let lose = Arc::clone(&options);
+                (
+                    "bybit",
+                    Server::Bybit(bybit::MockServer::start(options).await),
+                    Box::new(move |on| lose.stop_answer_lost.store(on, Ordering::SeqCst)),
+                )
+            }
             other => return Err(PyValueError::new_err(format!("no imitation of {other:?}"))),
         };
         Ok(NativeMock {
@@ -140,6 +150,11 @@ impl NativeMock {
                 "refresh_token": "mock-refresh-token",
                 "portfolio": alor::PORTFOLIO,
             }),
+            Server::Bybit(s) => json!({
+                "endpoint": s.http_base,
+                "api_key": bybit::DEFAULT_KEY,
+                "api_secret": bybit::SECRET,
+            }),
         };
         Ok(settings.to_string())
     }
@@ -186,6 +201,16 @@ impl NativeMock {
                 }))
                 .map_err(|_| {
                     PyValueError::new_err("the ALOR imitation has no such working order to execute")
+                })?;
+            }
+            Server::Bybit(s) => {
+                let (qty, price): (Qty, Price) = (dec(qty, "qty")?, dec(price, "price")?);
+                // The imitation panics for an order it does not have or one that is not working.
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    s.fill(&cid.hyphenated().to_string(), qty, price)
+                }))
+                .map_err(|_| {
+                    PyValueError::new_err("the Bybit imitation has no such working order to execute")
                 })?;
             }
         }

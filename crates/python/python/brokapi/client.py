@@ -48,6 +48,7 @@ _BROKERS = {
     "tbank": {"token", "sandbox", "account_id", "endpoint", "app_name"},
     "finam": {"secret", "account_id", "endpoint"},
     "alor": {"refresh_token", "portfolio", "exchange", "test", "endpoint"},
+    "bybit": {"api_key", "api_secret", "env", "category", "settle_coin", "recv_window_ms", "endpoint"},
 }
 
 

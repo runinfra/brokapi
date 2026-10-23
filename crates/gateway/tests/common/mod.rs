@@ -10,7 +10,7 @@ use brokapi::core::{
 };
 use brokapi_client::{Broker, BrokerConfig, Limiter, Settings};
 use brokapi_gateway::{Gateway, GatewayConfig, RemoteClient};
-use brokapi_mocks::{alor, bcs, finam, settings, tbank};
+use brokapi_mocks::{alor, bcs, bybit, finam, settings, tbank};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -20,6 +20,7 @@ pub enum Mock {
     Tbank(tbank::MockServer, Arc<tbank::MockOptions>),
     Finam(finam::MockServer),
     Alor(alor::MockServer, Arc<alor::MockOptions>),
+    Bybit(bybit::MockServer, Arc<bybit::MockOptions>),
 }
 
 impl Mock {
@@ -41,6 +42,10 @@ impl Mock {
                 let opts = Arc::new(alor::MockOptions::default());
                 Mock::Alor(alor::MockServer::start(Arc::clone(&opts)).await, opts)
             }
+            Broker::Bybit => {
+                let opts = Arc::new(bybit::MockOptions::default());
+                Mock::Bybit(bybit::MockServer::start(Arc::clone(&opts)).await, opts)
+            }
         }
     }
 
@@ -50,6 +55,7 @@ impl Mock {
             Mock::Tbank(s, _) => settings::tbank(s),
             Mock::Finam(s) => settings::finam(s),
             Mock::Alor(s, _) => settings::alor(s),
+            Mock::Bybit(s, _) => settings::bybit(s),
         };
         Settings::parse(&json.to_string()).expect("settings")
     }
@@ -73,6 +79,7 @@ impl Mock {
             Mock::Tbank(_, o) => o.post_delay_ms.store(ms, SeqCst),
             Mock::Finam(s) => s.state.options.place_delay_ms.store(ms, SeqCst),
             Mock::Alor(_, o) => o.order_delay_ms.store(ms, SeqCst),
+            Mock::Bybit(_, o) => o.order_delay_ms.store(ms, SeqCst),
         }
     }
 
@@ -84,6 +91,7 @@ impl Mock {
             Mock::Tbank(_, o) => o.stop_answer_lost.store(lose, SeqCst),
             Mock::Finam(s) => s.state.options.stop_answer_lost.store(lose, SeqCst),
             Mock::Alor(_, o) => o.stop_answer_lost.store(lose, SeqCst),
+            Mock::Bybit(_, o) => o.stop_answer_lost.store(lose, SeqCst),
         }
     }
 
@@ -95,6 +103,7 @@ impl Mock {
             Mock::Tbank(_, o) => o.post_calls.load(SeqCst),
             Mock::Finam(s) => s.state.count_calls("PlaceOrder") as u32,
             Mock::Alor(_, o) => o.order_commands.load(SeqCst),
+            Mock::Bybit(_, o) => o.order_commands.load(SeqCst),
         }
     }
 
@@ -107,6 +116,9 @@ impl Mock {
             }
             Mock::Tbank(s, _) => s.fill(tbank::ACCOUNT_A, &text),
             Mock::Alor(s, _) => {
+                s.fill(&text, Qty::from(20), Price::from(100));
+            }
+            Mock::Bybit(s, _) => {
                 s.fill(&text, Qty::from(20), Price::from(100));
             }
             Mock::Finam(s) => {
@@ -158,6 +170,7 @@ pub fn roomy_limits(broker: Broker) -> Limiter {
         Broker::Tbank => brokapi::tbank::limits::default_limits(),
         Broker::Finam => brokapi::finam::limits::default_limits(),
         Broker::Alor => brokapi::alor::limits::default_limits(),
+        Broker::Bybit => brokapi::bybit::limits::default_limits(),
     };
     for bucket in limits.buckets.values_mut() {
         bucket.burst = bucket.burst.max(1000);
@@ -229,6 +242,15 @@ impl Rig {
         format!("{}-ud", self.broker)
     }
 
+    /// The ticker of the test instrument.
+    pub fn ticker(&self) -> &'static str {
+        if self.broker == Broker::Bybit {
+            "MOCKUSDT"
+        } else {
+            "SBER"
+        }
+    }
+
     pub fn sber(&self) -> InstrumentId {
         match self.broker {
             Broker::Bcs => InstrumentId::new(
@@ -250,13 +272,15 @@ impl Rig {
                 },
             ),
             Broker::Alor => brokapi::alor::util::instrument_id("SBER", "TQBR"),
+            // The test instrument of the Bybit imitation: a perpetual whose quantity step is one lot of the scenarios.
+            Broker::Bybit => brokapi::bybit::util::instrument_id("MOCKUSDT", "linear"),
         }
     }
 
     /// The instrument of a ticker of another broker: the connector must refuse it.
     pub fn foreign(&self) -> InstrumentId {
         match self.broker {
-            Broker::Bcs | Broker::Tbank | Broker::Alor => InstrumentId::new(
+            Broker::Bcs | Broker::Tbank | Broker::Alor | Broker::Bybit => InstrumentId::new(
                 InstrumentKey::new("SBER", "MISX"),
                 NativeId::SymbolMic {
                     symbol: "SBER".into(),
@@ -286,6 +310,9 @@ impl Rig {
                 InstrumentKey::new("NOPE", "TQBR"),
                 NativeId::Uid("no-such-uid".into()),
             ),
+            Broker::Bybit => {
+                brokapi::bybit::util::instrument_id(brokapi_mocks::bybit::UNKNOWN_SYMBOL, "linear")
+            }
             Broker::Finam | Broker::Alor => {
                 // The same shape as the instrument of the broker, with a ticker no mock knows.
                 let sber = self.sber();
@@ -313,14 +340,14 @@ impl Rig {
     /// A price that is far from the market and on the grid of the instrument.
     pub fn order_price(&self) -> Price {
         match self.broker {
-            Broker::Bcs | Broker::Alor => "1.0".parse().unwrap(),
+            Broker::Bcs | Broker::Alor | Broker::Bybit => "1.0".parse().unwrap(),
             _ => Price::from(1),
         }
     }
 
     pub fn stop_price(&self) -> Price {
         match self.broker {
-            Broker::Bcs | Broker::Alor => "200.0".parse().unwrap(),
+            Broker::Bcs | Broker::Alor | Broker::Bybit => "200.0".parse().unwrap(),
             _ => Price::from(1),
         }
     }
@@ -328,21 +355,22 @@ impl Rig {
     /// The price for the scenarios that fill the order.
     pub fn own_price(&self) -> Price {
         match self.broker {
-            Broker::Bcs | Broker::Alor => "100.0".parse().unwrap(),
+            Broker::Bcs | Broker::Alor | Broker::Bybit => "100.0".parse().unwrap(),
             _ => Price::from(1),
         }
     }
 
     pub fn replace_prices(&self) -> (Price, Price) {
         match self.broker {
-            Broker::Bcs | Broker::Alor => (Price::from(100), Price::from(101)),
+            Broker::Bcs | Broker::Alor | Broker::Bybit => (Price::from(100), Price::from(101)),
             _ => (Price::from(1), Price::from(2)),
         }
     }
 
     pub fn timeframe(&self) -> Timeframe {
         match self.broker {
-            Broker::Tbank | Broker::Finam => Timeframe::M5,
+            // One request of Bybit holds 1000 bars, a day of minutes is 1440.
+            Broker::Tbank | Broker::Finam | Broker::Bybit => Timeframe::M5,
             _ => Timeframe::M1,
         }
     }

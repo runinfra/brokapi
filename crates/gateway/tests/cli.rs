@@ -58,6 +58,7 @@ fn gateway_section(
         Broker::Alor => ("refresh_token", Some("portfolio")),
         Broker::Tbank => ("token", Some("account_id")),
         Broker::Finam => ("secret", Some("account_id")),
+        Broker::Bybit => ("api_secret", None),
     };
     let token = settings
         .remove(token_key)
@@ -66,11 +67,23 @@ fn gateway_section(
         .unwrap()
         .to_owned();
     std::fs::write(token_file, token).unwrap();
+    let mut key_line = String::new();
+    if broker == Broker::Bybit {
+        // Bybit has a pair: the secret is the token, the key has a file of its own.
+        let key_file = token_file.with_extension("key");
+        std::fs::write(
+            &key_file,
+            settings.remove("api_key").unwrap().as_str().unwrap(),
+        )
+        .unwrap();
+        key_line = format!("key_file = {:?}\n", key_file.display().to_string());
+    }
     let mut out = format!(
         "[[gateway]]\nname = {name:?}\nbroker = {:?}\ntoken_file = {:?}\n",
         broker.as_str(),
         token_file.display().to_string()
     );
+    out.push_str(&key_line);
     out.push_str(extra);
     if let Some(key) = account_key
         && let Some(account) = settings.remove(key)
@@ -404,6 +417,22 @@ fn pid_of(g: &Value) -> u32 {
 }
 
 // ---------------------------------------------------------------------------------------------------- the lifecycle
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_bybit_gateway_gets_its_key_and_its_secret_from_two_files() {
+    let bybit = Mock::start(Broker::Bybit).await;
+    let env = Env::new(&[("by", Broker::Bybit, &bybit)]);
+    let _guard = env.guard();
+    let checked = env.json(&["check"]).await;
+    assert_eq!(checked["ok"], true);
+    env.up().await;
+    env.wait_all_running(&["by"]).await;
+    let status = env.json(&["status", "by"]).await;
+    assert_eq!(status["health"]["state"], "ready");
+    // The key and the secret reached the connector: the gateway started, which needs a signed read of the wallet.
+    let out = env.run(&["down"]).await;
+    assert_eq!(out.code, 0, "{}", out.stderr);
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_service_runs_the_gateways_and_the_commands_see_them() {

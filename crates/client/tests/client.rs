@@ -1,4 +1,4 @@
-//! `Client` against the imitations of the four brokers: no network, no money.
+//! `Client` against the imitations of the brokers: no network, no money.
 
 use std::sync::Arc;
 
@@ -7,7 +7,7 @@ use brokapi::core::{
     Price, Qty, ShutdownMode, Side,
 };
 use brokapi_client::{Broker, Client, ClientError, Limiter, Settings};
-use brokapi_mocks::{alor, bcs, finam, settings, tbank};
+use brokapi_mocks::{alor, bcs, bybit, finam, settings, tbank};
 use serde_json::{Value, json};
 
 /// A running imitation of one broker and the settings that connect to it.
@@ -16,6 +16,7 @@ enum Mock {
     Tbank(tbank::MockServer),
     Finam(finam::MockServer),
     Alor(alor::MockServer),
+    Bybit(bybit::MockServer),
 }
 
 impl Mock {
@@ -25,6 +26,7 @@ impl Mock {
             Broker::Tbank => Mock::Tbank(tbank::MockServer::start(Arc::default()).await),
             Broker::Finam => Mock::Finam(finam::MockServer::start().await),
             Broker::Alor => Mock::Alor(alor::MockServer::start(Default::default()).await),
+            Broker::Bybit => Mock::Bybit(bybit::MockServer::start(Default::default()).await),
         }
     }
 
@@ -34,6 +36,7 @@ impl Mock {
             Mock::Tbank(s) => settings::tbank(s),
             Mock::Finam(s) => settings::finam(s),
             Mock::Alor(s) => settings::alor(s),
+            Mock::Bybit(s) => settings::bybit(s),
         };
         Settings::parse(&json.to_string()).unwrap()
     }
@@ -53,7 +56,13 @@ async fn every_broker_answers_the_same_calls() {
         let (_mock, client) = connect(broker).await;
         assert_eq!(client.broker(), broker);
         assert_eq!(client.name(), "t");
-        let sber = client.instrument("SBER", None).await.expect("instrument");
+        // Each imitation has its own test instrument: the Bybit one is a perpetual.
+        let ticker = if broker == Broker::Bybit {
+            "MOCKUSDT"
+        } else {
+            "SBER"
+        };
+        let sber = client.instrument(ticker, None).await.expect("instrument");
         // Typed.
         let book = client.order_book(&sber, 5).await.expect("order book");
         assert!(matches!(book, OrderBook::Snapshot { .. }), "{broker}");

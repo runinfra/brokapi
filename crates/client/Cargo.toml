@@ -15,7 +15,7 @@ categories.workspace = true
 
 [dependencies]
 # The library with all four brokers: the client is the place where one type stands for any of them.
-brokapi = { path = "../..", version = "0.1.0-alpha.3", features = ["bcs", "tbank", "finam", "alor"] }
+brokapi = { path = "../..", version = "0.1.0-alpha.3", features = ["bcs", "tbank", "finam", "alor", "bybit"] }
 async-trait.workspace = true
 dotenvy.workspace = true
 serde.workspace = true
