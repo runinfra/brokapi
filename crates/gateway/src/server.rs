@@ -356,6 +356,8 @@ pub(crate) async fn bind(
     state_dir: &std::path::Path,
     socket_name: &str,
 ) -> Result<(BoundSocket, Address), GatewayError> {
+    #[cfg(not(unix))]
+    let _ = (state_dir, socket_name); // only a Unix socket lives in the state directory
     let listen = match listen {
         #[cfg(unix)]
         Listen::Auto => Listen::Unix(state_dir.join(socket_name)),

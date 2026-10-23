@@ -259,7 +259,8 @@ async fn check(ctx: &Ctx, offline: bool, names: &[String]) -> Res {
         .iter()
         .filter(|g| names.is_empty() || names.contains(&g.name))
     {
-        let mut notes = Vec::new();
+        #[cfg_attr(not(unix), allow(unused_mut))]
+        let mut notes: Vec<String> = Vec::new();
         #[cfg(unix)]
         if let Some(file) = &spec.token_file
             && let Ok(meta) = std::fs::metadata(file)

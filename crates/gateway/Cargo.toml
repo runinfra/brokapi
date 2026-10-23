@@ -18,7 +18,9 @@ categories.workspace = true
 # program turns it off: `brokapi-gateway = { version = "...", default-features = false }`.
 [features]
 default = ["cli"]
-cli = ["dep:clap", "dep:toml", "dep:directories", "dep:sysinfo", "dep:tracing-subscriber"]
+# `rt-multi-thread`: the program runs on the multi-thread runtime. Without it here a build of this crate alone fails,
+# a build of the workspace gets it from other crates.
+cli = ["dep:clap", "dep:toml", "dep:directories", "dep:sysinfo", "dep:tracing-subscriber", "tokio/rt-multi-thread"]
 
 [[bin]]
 name = "brokapi"

@@ -36,6 +36,9 @@ step "2/10 cargo clippy --workspace --all-targets -- -D warnings, and the live t
 cargo clippy --workspace --all-targets -- -D warnings
 # The gateway without its program: what a bot or an embedding program gets with `default-features = false`.
 cargo clippy -p brokapi-gateway --no-default-features --all-targets -- -D warnings
+# The program alone, without the dev-dependencies: features that only the workspace or the tests turn on are missing
+# here, as in a `cargo install` (tokio once lost its multi-thread runtime this way).
+cargo build -p brokapi-gateway --bin brokapi
 # The live tests (tests/live*.rs, feature integration-live) are never run here, they need tokens. Without this
 # line nothing would notice when a change of the library breaks them.
 cargo check --workspace --all-targets \
