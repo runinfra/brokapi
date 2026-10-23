@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# The live run of the whole stack on the demo account of Bybit, in one command: the service, a gateway, the commands, a bot, a
+# killed gateway and the reconcile after its restart. See crates/gateway/examples/bybit_demo_run.rs for the steps.
+#
+#   tools/bybit-demo-run                 needs BYBIT_DEMO_API_KEY and BYBIT_DEMO_API_SECRET in the environment or in .env
+#   tools/bybit-demo-run --self-test     the same steps against the in-process imitation: no key, no network
+#   tools/bybit-demo-run --keep          leave the config, state and logs of the run in the temporary directory
+#
+# Orders are placed only on an account the gateway reports as a demo one (virtual money). Without the key pair nothing is
+# started: the program names the missing variables and exits with code 2.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export PATH="$HOME/.local/bin:$PATH"
+export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
+
+# The program `brokapi` and the example are built together, so the example finds the program next to itself.
+cargo build --quiet -p brokapi-gateway --bin brokapi --example bybit_demo_run
+exec cargo run --quiet -p brokapi-gateway --example bybit_demo_run -- "$@"
