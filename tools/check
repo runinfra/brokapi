@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Full check before a push. Ten steps, in order, stops at the first failure:
 #   1. cargo fmt --all --check
-#   2. cargo clippy --workspace --all-targets -- -D warnings, then cargo check of the live tests (integration-live)
+#   2. cargo clippy --workspace --all-targets -- -D warnings, the same for the library of the gateway without the feature
+#      `cli` (the program brokapi), then cargo check of the live tests (integration-live)
 #   3. cargo test --workspace
 #   4. cargo test --doc --workspace
 #   5. RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam,brokapi/alor,
@@ -33,6 +34,8 @@ cargo fmt --all --check
 
 step "2/10 cargo clippy --workspace --all-targets -- -D warnings, and the live tests still compile"
 cargo clippy --workspace --all-targets -- -D warnings
+# The gateway without its program: what a bot or an embedding program gets with `default-features = false`.
+cargo clippy -p brokapi-gateway --no-default-features --all-targets -- -D warnings
 # The live tests (tests/live*.rs, feature integration-live) are never run here, they need tokens. Without this
 # line nothing would notice when a change of the library breaks them.
 cargo check --workspace --all-targets \

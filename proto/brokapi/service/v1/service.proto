@@ -1,0 +1,123 @@
+syntax = "proto3";
+
+// The API of the brokapi service: the commands of the program `brokapi` talk to it. The service runs the gateways of one
+// config file, one process each, and watches them.
+//
+// It is for the person who runs the machine, not for bots: bots talk to a gateway (brokapi.gateway.v1). The service
+// listens on a Unix socket (or on 127.0.0.1 on Windows) in its state directory, and a call carries the key from
+// `service.key` of that directory in `authorization: Bearer <key>`, as a call to a gateway does.
+package brokapi.service.v1;
+
+import "brokapi/gateway/v1/gateway.proto";
+
+service Service {
+  // What the service is.
+  rpc Info(InfoRequest) returns (ServiceInfo);
+  // The gateways, with what the service knows of each (the state of the process) and what the gateway says of itself.
+  // Without names: all of them.
+  rpc List(ListRequest) returns (ListResponse);
+  // Starts a gateway that is stopped or failed. A gateway that runs is left alone.
+  rpc Start(GatewayRef) returns (GatewayInfo);
+  // Stops a gateway and keeps it stopped until `Start`. With `cancel_orders` the active orders and stop orders of the
+  // account are cancelled first. Orders at the exchange are otherwise not touched.
+  rpc Stop(StopRequest) returns (StopResponse);
+  // Stops a gateway and starts it again.
+  rpc Restart(GatewayRef) returns (GatewayInfo);
+  // Reads the config file again and starts the gateway of this name from it, if it is not running.
+  rpc Add(GatewayRef) returns (GatewayInfo);
+  // Stops a gateway and forgets it until `Add` or `Reload` brings it back from the config.
+  rpc Remove(GatewayRef) returns (GatewayInfo);
+  // Reads the config file again and brings the running gateways in line with it: starts the new ones, stops the ones
+  // that are gone from the file, restarts the ones whose section changed.
+  rpc Reload(ReloadRequest) returns (ReloadResponse);
+  // Stops the service. The gateways are stopped too, unless `leave_gateways` is set.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+message InfoRequest {}
+
+message ServiceInfo {
+  uint32 pid = 1;
+  string version = 2;
+  // The config file the service was started with, and its state directory.
+  string config = 3;
+  string state_dir = 4;
+  // Where the service listens.
+  string address = 5;
+  uint64 started_ns = 6;
+  uint64 uptime_ns = 7;
+  uint32 gateways = 8;
+  uint32 running = 9;
+}
+
+message ListRequest {
+  repeated string names = 1;
+}
+
+message ListResponse {
+  repeated GatewayInfo gateways = 1;
+}
+
+message GatewayRef {
+  string name = 1;
+}
+
+// A gateway as the service sees it.
+message GatewayInfo {
+  string name = 1;
+  string broker = 2;
+  // starting, running, restarting, stopping, stopped or failed.
+  string state = 3;
+  // The process id, 0 if there is no process.
+  uint32 pid = 4;
+  // How long the process has run.
+  uint64 uptime_ns = 5;
+  // How many times the service started it again after it stopped on its own.
+  uint32 restarts = 6;
+  // The last time it stopped on its own or could not start, and why. Empty if it never did.
+  string last_error = 7;
+  // While restarting: how long until the next start.
+  uint64 restart_in_ns = 8;
+  // The CPU use of the process in percent of one core, and its memory in bytes.
+  float cpu_percent = 9;
+  uint64 memory_bytes = 10;
+  // The account and whether it is a sandbox, from the config.
+  string account = 11;
+  bool sandbox = 12;
+  // The service found this process running when it started, instead of starting it.
+  bool adopted = 13;
+  // Where the gateway listens, and its directory.
+  string address = 14;
+  string state_dir = 15;
+  // What the gateway says of itself. Not set when it does not answer.
+  optional brokapi.gateway.v1.HealthResponse health = 16;
+}
+
+message StopRequest {
+  string name = 1;
+  bool cancel_orders = 2;
+}
+
+message StopResponse {
+  GatewayInfo gateway = 1;
+  // How many orders and stop orders were cancelled before the stop.
+  uint32 cancelled_orders = 2;
+  uint32 cancelled_stops = 3;
+  // Orders that could not be cancelled, with the reason.
+  repeated string errors = 4;
+}
+
+message ReloadRequest {}
+
+message ReloadResponse {
+  repeated string started = 1;
+  repeated string stopped = 2;
+  repeated string restarted = 3;
+  repeated string unchanged = 4;
+}
+
+message ShutdownRequest {
+  bool leave_gateways = 1;
+}
+
+message ShutdownResponse {}

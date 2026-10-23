@@ -73,6 +73,48 @@ struct Inner {
     name: String,
 }
 
+/// Opens the channel to a gateway (or a service) at an address.
+pub(crate) async fn open_channel(
+    address: &Address,
+    options: ConnectOptions,
+) -> Result<Channel, Error> {
+    let tune = |endpoint: Endpoint| match options.http2_window {
+        Some(window) => endpoint
+            .initial_stream_window_size(window)
+            .initial_connection_window_size(window),
+        None => endpoint,
+    };
+    match address {
+        #[cfg(unix)]
+        Address::Unix(path) => {
+            let path = path.clone();
+            tune(Endpoint::from_static("http://gateway.local"))
+                .connect_with_connector(tower::service_fn(move |_: tonic::codegen::http::Uri| {
+                    let path = path.clone();
+                    async move {
+                        Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
+                            tokio::net::UnixStream::connect(path).await?,
+                        ))
+                    }
+                }))
+                .await
+        }
+        #[cfg(not(unix))]
+        Address::Unix(_) => {
+            return Err(config("Unix sockets are not available on this platform"));
+        }
+        Address::Tcp(addr) => {
+            tune(
+                Endpoint::from_shared(format!("http://{addr}"))
+                    .map_err(|e| config(e.to_string()))?,
+            )
+            .connect()
+            .await
+        }
+    }
+    .map_err(|e| transport(format!("cannot connect to {address}: {e}")))
+}
+
 impl RemoteClient {
     /// Connects to the gateway at `address` as the bot `bot`, with the access `key`.
     pub async fn connect(address: &Address, key: &str, bot: &str) -> Result<Self, Error> {
@@ -91,43 +133,7 @@ impl RemoteClient {
                 "the bot name {bot:?} is not valid: 1 to 64 letters, digits, '.', '_' or '-'"
             )));
         }
-        let tune = |endpoint: Endpoint| match options.http2_window {
-            Some(window) => endpoint
-                .initial_stream_window_size(window)
-                .initial_connection_window_size(window),
-            None => endpoint,
-        };
-        let channel = match address {
-            #[cfg(unix)]
-            Address::Unix(path) => {
-                let path = path.clone();
-                tune(Endpoint::from_static("http://gateway.local"))
-                    .connect_with_connector(tower::service_fn(
-                        move |_: tonic::codegen::http::Uri| {
-                            let path = path.clone();
-                            async move {
-                                Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(
-                                    tokio::net::UnixStream::connect(path).await?,
-                                ))
-                            }
-                        },
-                    ))
-                    .await
-            }
-            #[cfg(not(unix))]
-            Address::Unix(_) => {
-                return Err(config("Unix sockets are not available on this platform"));
-            }
-            Address::Tcp(addr) => {
-                tune(
-                    Endpoint::from_shared(format!("http://{addr}"))
-                        .map_err(|e| config(e.to_string()))?,
-                )
-                .connect()
-                .await
-            }
-        }
-        .map_err(|e| transport(format!("cannot connect to the gateway at {address}: {e}")))?;
+        let channel = open_channel(address, options).await?;
         let auth = format!("Bearer {key}")
             .parse()
             .map_err(|_| config("the access key is not valid text"))?;

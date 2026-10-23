@@ -5,13 +5,41 @@
 //! one rate limiter between them, journals the orders they place and compares the journal with the broker when it
 //! starts. Bots can be in any language: the contract is `proto/brokapi/gateway/v1/*.proto`.
 //!
-//! This crate has the two halves:
+//! This crate has the library, and the program `brokapi` built on it:
 //!
 //! | You want | Use |
 //! |---|---|
+//! | Run gateways for your bots, keep them alive, look after them | the program `brokapi` (`cargo install brokapi-gateway`), see below |
 //! | Run a gateway in your program | [`Gateway`], [`GatewayConfig`] |
 //! | A bot in Rust | [`RemoteClient`], which speaks the traits of `brokapi-core` |
 //! | A bot in another language | the generated client of the `.proto` files; [`pb`] is the Rust one |
+//! | Run the service from your own program | [`service::Service`] (feature `cli`) |
+//!
+//! # The program `brokapi`
+//!
+//! One program is the whole product: `brokapi up` starts a **service** that runs one gateway process for every account in
+//! the config file `brokapi.toml`, restarts a gateway that stops, and answers the other commands. The commands list the
+//! gateways (`ps`, `top`), start and stop one (`start`, `stop`, `restart`), read the config again (`add`, `remove`,
+//! `reload`), show a log (`logs`), read an account (`portfolio`, `orders`, `book`, `quote`), and cancel everything in an
+//! emergency (`cancel-all`). `brokapi --help` lists them with the exit codes.
+//!
+//! ```text
+//! $ brokapi init                  # a sample brokapi.toml and its state directory
+//! $ brokapi check                 # the file, the tokens, a read-only look at every account
+//! $ brokapi up -d                 # the service, in the background
+//! $ brokapi ps
+//! NAME            BROKER  STATE    PID    UPTIME  RESTARTS  BOTS  EVENTS/S  ORDERS  LIMIT  LAST ERROR
+//! tbank-sandbox   tbank   running  4121   2m14s   0         2     0.4       1       8%
+//! $ brokapi down
+//! ```
+//!
+//! Two config files are two independent services on one machine: each has its own state directory and its own socket.
+//! A service that dies leaves its gateways running, and the next `brokapi up` takes them over. The API between the
+//! commands and the service is `proto/brokapi/service/v1/service.proto`, see [`service`].
+//!
+//! The program and everything it needs (the config file, the service, the commands) are behind the feature `cli`, on by
+//! default. A program that only embeds a [`Gateway`] or is a bot turns it off with `default-features = false` and gets
+//! the library without `clap`, `toml` and `sysinfo`.
 //!
 //! # What the gateway guarantees
 //!
@@ -25,6 +53,9 @@
 //! - **Restart with open orders.** The id of an order is written to the journal before the order is sent. After a
 //!   restart the gateway compares the journal with the broker before it takes a command: until then `Health` says
 //!   `starting` and commands get `UNAVAILABLE`.
+//! - **Subscriptions have owners.** The same subscription of two bots is one at the broker. A bot can close only what it
+//!   opened, and what a bot opened is closed when the bot has been gone for a while (`GatewayConfig::bot_grace`). The
+//!   gateway subscribes to the states of orders itself, so its journal closes an order that no bot is watching.
 //! - **Local only.** A Unix socket (or `127.0.0.1` on Windows), a key in a file with mode 600, and a refusal to start on
 //!   any other address.
 //!
@@ -66,12 +97,18 @@
 #![warn(missing_docs)]
 
 mod access;
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod convert;
 mod error;
 mod hub;
 mod journal;
+mod metrics;
 mod remote;
 mod server;
+#[cfg(feature = "cli")]
+pub mod service;
+mod subs;
 
 /// The messages and the service of the `.proto` files, generated.
 #[allow(missing_docs, clippy::all)]

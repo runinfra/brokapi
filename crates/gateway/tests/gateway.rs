@@ -694,3 +694,171 @@ async fn raw_reaches_the_api_of_the_broker() {
     assert!(matches!(refused, Err(Error::Config(_))), "{refused:?}");
     rig.stop().await;
 }
+
+// ---------------------------------------------------------------------------------------------------- subscriptions
+
+fn book_subscriptions(gateway: &Gateway) -> Vec<pb::SubscriptionInfo> {
+    gateway
+        .health()
+        .subscriptions
+        .into_iter()
+        .filter(|s| s.what.contains("order_book"))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_subscription_belongs_to_the_bot_that_opened_it() {
+    use brokapi::core::OrderBookSource;
+    let rig = Rig::start(Broker::Bcs).await;
+    let (alpha, beta, gamma) = (
+        bot(&rig, "alpha").await,
+        bot(&rig, "beta").await,
+        bot(&rig, "gamma").await,
+    );
+    let sber = rig.sber();
+    let a = alpha
+        .subscribe_order_book(&sber, SubscribeOpts::conflate())
+        .await
+        .unwrap();
+    let b = beta
+        .subscribe_order_book(&sber, SubscribeOpts::conflate())
+        .await
+        .unwrap();
+    assert_eq!(
+        a, b,
+        "the same request of two bots is one subscription at the broker"
+    );
+    let held = book_subscriptions(&rig.gateway);
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].owners, ["alpha", "beta"]);
+
+    // A bot that did not open it cannot close it.
+    match gamma.unsubscribe(a).await {
+        Err(Error::Rejected { code, .. }) => assert_eq!(code, "not_your_subscription"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert_eq!(
+        book_subscriptions(&rig.gateway)[0].owners,
+        ["alpha", "beta"]
+    );
+
+    // beta lets go: alpha still holds it. Then alpha: the last one closes it at the broker.
+    beta.unsubscribe(b).await.unwrap();
+    assert_eq!(book_subscriptions(&rig.gateway)[0].owners, ["alpha"]);
+    assert!(matches!(
+        beta.unsubscribe(b).await,
+        Err(Error::Rejected { ref code, .. }) if code == "not_your_subscription"
+    ));
+    alpha.unsubscribe(a).await.unwrap();
+    assert!(book_subscriptions(&rig.gateway).is_empty());
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn a_bot_that_is_gone_loses_its_subscriptions_and_one_that_returns_keeps_them() {
+    use brokapi::core::OrderBookSource;
+    let rig = Rig::start(Broker::Bcs).await;
+    let sber = rig.sber();
+    let walker = bot(&rig, "walker").await;
+    let stream = walker.events(None, false).await.unwrap();
+    walker
+        .subscribe_order_book(&sber, SubscribeOpts::conflate())
+        .await
+        .unwrap();
+    assert_eq!(book_subscriptions(&rig.gateway).len(), 1);
+
+    // The stream breaks and the bot is back before the grace period is over: nothing is let go.
+    drop(stream);
+    brokapi_mocks::time::wait_until("the stream is gone", || {
+        rig.gateway
+            .health()
+            .bots
+            .iter()
+            .any(|b| b.name == "walker" && !b.streaming)
+    })
+    .await;
+    brokapi_mocks::time::jump(Duration::from_secs(20)).await;
+    let stream = walker.events(None, false).await.unwrap();
+    brokapi_mocks::time::jump(Duration::from_secs(20)).await;
+    assert_eq!(
+        book_subscriptions(&rig.gateway).len(),
+        1,
+        "40 s in all, but never 30 s away"
+    );
+
+    // This time it stays away.
+    drop(stream);
+    brokapi_mocks::time::wait_until("the stream is gone again", || {
+        rig.gateway
+            .health()
+            .bots
+            .iter()
+            .any(|b| b.name == "walker" && !b.streaming)
+    })
+    .await;
+    brokapi_mocks::time::jump(Duration::from_secs(31)).await;
+    brokapi_mocks::time::wait_until("the subscription is let go", || {
+        book_subscriptions(&rig.gateway).is_empty()
+    })
+    .await;
+    // The subscriptions of the gateway itself stay.
+    assert!(
+        rig.gateway
+            .health()
+            .subscriptions
+            .iter()
+            .any(|s| s.owners == ["(gateway)"] && s.what == "order_state")
+    );
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn the_journal_closes_an_order_that_no_bot_is_watching() {
+    use brokapi::core::OrderExecutor;
+    // Not Finam: its imitation fills an order through a trades stream, which exists only once somebody subscribes to
+    // executions, and this test is about nobody subscribing.
+    for broker in [Broker::Bcs, Broker::Tbank, Broker::Alor] {
+        let rig = Rig::start(broker).await;
+        // The bot places the order and never subscribes to the states of orders.
+        let request = limit_order(&rig, rig.own_price());
+        let cid = request.cid;
+        rig.bot.place(request).await.expect("place");
+        assert_eq!(rig.gateway.health().open_orders, 1, "{broker}");
+        rig.mock.fill(cid).await;
+        brokapi_mocks::time::wait_until("the journal closes the filled order", || {
+            rig.gateway.health().open_orders == 0
+        })
+        .await;
+        rig.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn health_reports_uptime_events_and_the_use_of_the_limit() {
+    let rig = Rig::start(Broker::Bcs).await;
+    let before = rig.gateway.health();
+    assert_eq!(before.pid, std::process::id());
+    assert!(
+        before
+            .limits
+            .iter()
+            .any(|l| l.bucket == "place" && l.available == l.capacity)
+    );
+    cycle(&rig.bot, &rig).await;
+    brokapi_mocks::time::wait_until("events counted", || {
+        rig.gateway.health().events_total > before.events_total
+    })
+    .await;
+    let after = rig.gateway.health();
+    assert!(after.events_per_sec > 0.0);
+    let place = after.limits.iter().find(|l| l.bucket == "place").unwrap();
+    assert!(
+        place.available < place.capacity,
+        "a placement spent a token"
+    );
+    brokapi_mocks::time::jump(Duration::from_secs(90)).await;
+    let later = rig.gateway.health();
+    assert!(later.uptime_ns >= after.uptime_ns + 90_000_000_000);
+    assert_eq!(later.events_per_sec, 0.0, "ten seconds without an event");
+    rig.stop().await;
+}

@@ -82,7 +82,12 @@ pub fn valid_bot_name(name: &str) -> bool {
 
 /// The key of a gateway, read from its file or made. The file has mode 600; a file that other users can read is refused.
 pub fn load_or_create_key(dir: &Path) -> std::io::Result<String> {
-    let path = dir.join(KEY_FILE);
+    load_or_create_key_in(dir, KEY_FILE)
+}
+
+/// [`load_or_create_key`] for a key in a file of another name (the service has its own).
+pub(crate) fn load_or_create_key_in(dir: &Path, file: &str) -> std::io::Result<String> {
+    let path = dir.join(file);
     if path.exists() {
         check_private(&path)?;
         let key = std::fs::read_to_string(&path)?.trim().to_owned();
@@ -98,8 +103,11 @@ pub fn load_or_create_key(dir: &Path) -> std::io::Result<String> {
 
 /// The key a client reads from the state directory of the gateway.
 pub fn read_key(dir: &Path) -> std::io::Result<String> {
-    let path = dir.join(KEY_FILE);
-    Ok(std::fs::read_to_string(path)?.trim().to_owned())
+    read_key_in(dir, KEY_FILE)
+}
+
+pub(crate) fn read_key_in(dir: &Path, file: &str) -> std::io::Result<String> {
+    Ok(std::fs::read_to_string(dir.join(file))?.trim().to_owned())
 }
 
 #[cfg(unix)]

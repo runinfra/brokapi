@@ -54,7 +54,11 @@ service Gateway {
   rpc SubscribeMarketTrades(SubscribeInstrumentRequest) returns (SubscribeResponse);
   rpc SubscribeQuotes(SubscribeInstrumentRequest) returns (SubscribeResponse);
   rpc SubscribeCandles(SubscribeCandlesRequest) returns (SubscribeResponse);
-  // Stops a subscription for everybody: the subscriptions belong to the gateway, not to the bot that made them.
+  // Lets go of a subscription this bot holds. The same request of two bots is one subscription at the broker with two
+  // owners: it is closed when the last owner lets go, and a bot that does not hold it gets the refusal
+  // `not_your_subscription`. The subscriptions of a bot are also let go when the bot is gone (its event stream ended and
+  // did not come back within the grace period of the gateway). The events of a subscription go to every bot that reads
+  // the stream, whoever asked for it.
   rpc Unsubscribe(UnsubscribeRequest) returns (UnsubscribeResponse);
 
   // ---- instruments
@@ -264,6 +268,33 @@ message HealthResponse {
   // Orders of the journal that are not known to have ended.
   uint64 open_orders = 8;
   repeated BotInfo bots = 9;
+  // How long this run of the gateway has been up.
+  uint64 uptime_ns = 10;
+  // The process id of the gateway.
+  uint32 pid = 11;
+  // The number of events since the start, and how many per second over the last ten seconds.
+  uint64 events_total = 12;
+  double events_per_sec = 13;
+  // How much of each bucket of the rate limit of the broker is left.
+  repeated LimitInfo limits = 14;
+  // The subscriptions at the broker and who holds them.
+  repeated SubscriptionInfo subscriptions = 15;
+}
+
+// One bucket of the rate limit of the broker.
+message LimitInfo {
+  string bucket = 1;
+  uint32 available = 2;
+  uint32 capacity = 3;
+}
+
+// A subscription at the broker. The same request of several bots is one subscription with several owners; only an
+// owner can close it. The gateway's own subscriptions (the states of orders) have the owner "(gateway)".
+message SubscriptionInfo {
+  uint64 sub = 1;
+  // What it is: the kind and the instrument.
+  string what = 2;
+  repeated string owners = 3;
 }
 
 // ---------------------------------------------------------------------------------------------------- events

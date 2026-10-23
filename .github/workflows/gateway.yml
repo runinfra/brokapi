@@ -1,0 +1,45 @@
+# The gateway and its program `brokapi` (crates/gateway) on Linux, macOS and Windows: build and tests.
+# Started by a push to main and by hand (Actions -> gateway -> Run workflow).
+#
+# The tests start the program as a process (the service, the gateway processes, every command) against the imitations of
+# the brokers in `crates/mocks`: no network, no money. Only what the gateway needs is built (`-p brokapi-gateway`), not the
+# Python extension or the book, so a run takes minutes.
+name: gateway
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "proto/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/gateway.yml"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  gateway:
+    name: gateway ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    # A hung test must end by itself, not hold the machine for six hours.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the program
+        run: cargo build --locked -p brokapi-gateway
+      - name: Test the gateway, the service and the commands
+        run: cargo test --locked -p brokapi-gateway

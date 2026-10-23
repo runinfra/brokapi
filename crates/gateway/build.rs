@@ -8,7 +8,10 @@
 use std::env;
 use std::path::PathBuf;
 
-const PROTOS: &[&str] = &["brokapi/gateway/v1/gateway.proto"];
+const PROTOS: &[&str] = &[
+    "brokapi/gateway/v1/gateway.proto",
+    "brokapi/service/v1/service.proto",
+];
 
 fn main() {
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
@@ -34,10 +37,22 @@ fn main() {
         prost::Message::encode_to_vec(&bare),
     )
     .expect("write the file descriptor set");
+    // Two passes. The gateway first. Then the service, whose messages use the types of the gateway: they are named by
+    // their path in this crate (`crate::pb`) instead of being generated a second time.
     tonic_prost_build::configure()
         .build_client(true)
         .build_server(true)
-        .out_dir(out)
+        .out_dir(&out)
+        .compile_fds(fds.clone())
+        .expect("generate gRPC code of the gateway");
+    // (In a directory of its own: this pass writes an empty file for the package it does not generate.)
+    let service_out = out.join("service");
+    std::fs::create_dir_all(&service_out).expect("make the output directory of the service");
+    tonic_prost_build::configure()
+        .build_client(true)
+        .build_server(true)
+        .extern_path(".brokapi.gateway.v1", "crate::pb")
+        .out_dir(&service_out)
         .compile_fds(fds)
-        .expect("generate gRPC code");
+        .expect("generate gRPC code of the service");
 }

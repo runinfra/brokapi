@@ -1,6 +1,6 @@
 [package]
 name = "brokapi-gateway"
-description = "The brokapi gateway: one process holds the connection to a broker account and serves many bots over gRPC. The server, and a client that speaks the traits of brokapi-core."
+description = "The brokapi gateway: one process holds the connection to a broker account and serves many bots over gRPC. The server, a client that speaks the traits of brokapi-core, and the program `brokapi` that runs and watches the gateways."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,6 +13,20 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+# The library (the gateway, the client of a bot) has no more dependencies than a bot needs. The program `brokapi` (the
+# service, the commands, the config file) is behind the feature `cli`, on by default. Code that embeds the gateway in its own
+# program turns it off: `brokapi-gateway = { version = "...", default-features = false }`.
+[features]
+default = ["cli"]
+cli = ["dep:clap", "dep:toml", "dep:directories", "dep:sysinfo", "dep:tracing-subscriber"]
+
+[[bin]]
+name = "brokapi"
+path = "src/bin/brokapi.rs"
+required-features = ["cli"]
+# The library of the root crate is called `brokapi` too, and two pages with one name would collide in `cargo doc`.
+doc = false
+
 [dependencies]
 brokapi = { path = "../..", version = "0.1.0-alpha.3" }
 brokapi-client.workspace = true
@@ -22,7 +36,7 @@ prost = "0.14"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "macros", "net", "fs", "time"] }
+tokio = { workspace = true, features = ["rt", "sync", "macros", "net", "fs", "time", "process", "signal"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 tonic = { version = "0.14", default-features = false, features = ["codegen", "transport", "router", "server", "channel"] }
 tonic-prost = "0.14"
@@ -30,6 +44,11 @@ tower = { version = "0.5", default-features = false, features = ["util"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 tracing.workspace = true
 uuid.workspace = true
+clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }
+toml = { version = "0.8", optional = true }
+directories = { version = "6", optional = true }
+sysinfo = { version = "0.38", default-features = false, features = ["system"], optional = true }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "registry"], optional = true }
 
 [build-dependencies]
 prost = "0.14"
@@ -41,3 +60,7 @@ brokapi-conformance.workspace = true
 brokapi-mocks.workspace = true
 tempfile = "3"
 tokio = { workspace = true, features = ["full", "test-util"] }
+
+[[test]]
+name = "cli"
+required-features = ["cli"]

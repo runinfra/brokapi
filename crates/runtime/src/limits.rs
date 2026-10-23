@@ -462,6 +462,45 @@ impl BrokerLimiter {
         self.inner.lock().expect("limiter poisoned").conns.clone()
     }
 
+    /// How much of each bucket is left at `now`: `(bucket id, tokens left, capacity)`, sorted by id. Nothing is spent. For
+    /// a program that shows how close a client is to its limits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::HashMap;
+    /// use std::time::{Duration, Instant};
+    /// use brokapi_runtime::{BrokerLimiter, BrokerLimits, BucketCfg, ConnQuota};
+    ///
+    /// let limits = BrokerLimits {
+    ///     buckets: HashMap::from([(
+    ///         "orders".to_string(),
+    ///         BucketCfg { rate: 1, per: Duration::from_secs(1), burst: 5 },
+    ///     )]),
+    ///     route: HashMap::from([("*".to_string(), vec!["orders".to_string()])]),
+    ///     conns: ConnQuota::default(),
+    /// };
+    /// let limiter = BrokerLimiter::new(&limits);
+    /// let t0 = Instant::now();
+    /// limiter.acquire("PlaceOrder", t0).unwrap();
+    /// let usage = limiter.usage(t0);
+    /// assert_eq!(usage[0].0, "orders");
+    /// assert_eq!((usage[0].1, usage[0].2), (4, 5));
+    /// ```
+    pub fn usage(&self, now: Instant) -> Vec<(BucketId, u32, u32)> {
+        let mut inner = self.inner.lock().expect("limiter poisoned");
+        let mut out: Vec<_> = inner
+            .buckets
+            .iter_mut()
+            .map(|(id, b)| {
+                b.refill(now);
+                (id.clone(), b.tokens.floor() as u32, b.cfg.burst)
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
     /// Spends one token from every bucket on the route of `method`, all or nothing.
     ///
     /// The route is the method's own entry, else the [`DEFAULT_ROUTE`] entry, else empty (then the

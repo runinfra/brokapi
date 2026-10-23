@@ -23,8 +23,10 @@ use crate::convert::{self as cv, Invalid};
 use crate::error::{gateway_status, invalid_status, status_of};
 use crate::hub::{Attached, Hub, RingConfig};
 use crate::journal::Journal;
+use crate::metrics::RateMeter;
 use crate::pb;
 use crate::pb::error_detail::Kind;
+use crate::subs::{OWN, Subscriptions};
 
 /// The largest message the gateway takes or sends: a year of minute candles is a few megabytes.
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;
@@ -45,6 +47,9 @@ pub struct GatewayConfig {
     pub bot_buffer: usize,
     /// The size of the channel from the connectors to the gateway.
     pub event_buffer: usize,
+    /// How long a bot may be away before its subscriptions are let go. A bot whose stream broke and comes back within
+    /// this time keeps them.
+    pub bot_grace: Duration,
 }
 
 impl GatewayConfig {
@@ -57,6 +62,7 @@ impl GatewayConfig {
             ring: RingConfig::default(),
             bot_buffer: 1024,
             event_buffer: 8192,
+            bot_grace: Duration::from_secs(30),
         }
     }
 }
@@ -88,7 +94,7 @@ pub enum GatewayError {
     Broker(#[from] Error),
 }
 
-fn io(what: impl Into<String>) -> impl FnOnce(std::io::Error) -> GatewayError {
+pub(crate) fn io(what: impl Into<String>) -> impl FnOnce(std::io::Error) -> GatewayError {
     let what = what.into();
     move |source| GatewayError::Io { what, source }
 }
@@ -110,6 +116,8 @@ struct BotEntry {
     calls: u64,
     streams: u32,
     lagged: u64,
+    /// Grows when a stream of the bot opens: a pending release of its subscriptions checks it.
+    generation: u64,
 }
 
 struct Shared {
@@ -123,6 +131,11 @@ struct Shared {
     /// Becomes true when the gateway stops: the open streams end.
     stopping: watch::Sender<bool>,
     bot_buffer: usize,
+    bot_grace: Duration,
+    subs: Subscriptions,
+    started: std::time::Instant,
+    /// Events per second, over the last ten seconds.
+    rate: Mutex<RateMeter>,
 }
 
 fn now_ns() -> i64 {
@@ -141,6 +154,7 @@ impl Shared {
             calls: 0,
             streams: 0,
             lagged: 0,
+            generation: 0,
         });
         f(entry)
     }
@@ -182,6 +196,29 @@ impl Shared {
                 .clone(),
             open_orders: self.journal.open_count() as u64,
             bots,
+            uptime_ns: crate::metrics::nanos(
+                brokapi::runtime::now().saturating_duration_since(self.started),
+            ),
+            pid: std::process::id(),
+            events_total: self.hub.last_seq(),
+            events_per_sec: self
+                .rate
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .per_second(brokapi::runtime::now()),
+            limits: self
+                .client
+                .limiter()
+                .shared()
+                .usage(brokapi::runtime::now())
+                .into_iter()
+                .map(|(bucket, available, capacity)| pb::LimitInfo {
+                    bucket,
+                    available,
+                    capacity,
+                })
+                .collect(),
+            subscriptions: self.subs.list(),
         }
     }
 
@@ -197,6 +234,72 @@ impl Shared {
             .await
             .map_err(|e| journal_error(std::io::Error::other(e)))?
             .map_err(journal_error)
+    }
+
+    /// The subscriptions the gateway holds for itself, whatever the bots do: the states of orders and of stop orders. They
+    /// bring the end of every order to the journal, also when no bot is connected. A broker that has no such stream
+    /// (`Unsupported`) is not an error.
+    async fn subscribe_own(self: &Arc<Self>) {
+        let plain = format!("{:?}", pb::SubscribeRequest::default());
+        let mut pause = Duration::from_secs(1);
+        for kind in ["subscribe_order_state", "subscribe_stop_orders"] {
+            for attempt in 0..5 {
+                let client = self.client.clone();
+                let result = self
+                    .subs
+                    .subscribe(
+                        OWN,
+                        format!("{kind} {plain}"),
+                        kind.trim_start_matches("subscribe_").to_owned(),
+                        || async move {
+                            if kind == "subscribe_order_state" {
+                                client.subscribe_order_state().await
+                            } else {
+                                client.subscribe_stop_orders().await
+                            }
+                        },
+                    )
+                    .await;
+                match result {
+                    Ok(_) => break,
+                    Err(Error::Unsupported { .. }) => break,
+                    Err(e) if attempt < 4 && !*self.stopping.borrow() => {
+                        tracing::warn!(
+                            "the gateway's own subscription ({kind}) failed, trying again: {e}"
+                        );
+                        tokio::time::sleep(pause).await;
+                        pause = (pause * 2).min(Duration::from_secs(8));
+                    }
+                    Err(e) => {
+                        tracing::warn!("the gateway's own subscription ({kind}) failed: {e}");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Lets go of the subscriptions of a bot that has no event stream, once it has stayed away for the grace period.
+    fn schedule_release(self: &Arc<Self>, bot: &str) {
+        let (shared, bot) = (Arc::clone(self), bot.to_owned());
+        let generation = self.bot_entry(&bot, |b| b.generation);
+        tokio::spawn(async move {
+            tokio::time::sleep(shared.bot_grace).await;
+            let gone = shared.bot_entry(&bot, |b| b.streams == 0 && b.generation == generation);
+            if gone && !*shared.stopping.borrow() {
+                let client = shared.client.clone();
+                let closed = shared
+                    .subs
+                    .release_bot(&bot, |sub| {
+                        let client = client.clone();
+                        async move { client.unsubscribe(sub).await }
+                    })
+                    .await;
+                if closed > 0 {
+                    tracing::info!(%bot, closed, "a bot is gone: its subscriptions are closed");
+                }
+            }
+        });
     }
 
     fn set_detail(&self, text: impl Into<String>) {
@@ -227,14 +330,14 @@ pub struct Gateway {
     pump: JoinHandle<()>,
 }
 
-enum BoundSocket {
+pub(crate) enum BoundSocket {
     #[cfg(unix)]
     Unix(tokio::net::UnixListener),
     Tcp(tokio::net::TcpListener),
 }
 
 /// Refuses an address that is not this machine.
-fn check_listen(listen: &Listen) -> Result<(), GatewayError> {
+pub(crate) fn check_listen(listen: &Listen) -> Result<(), GatewayError> {
     match listen {
         Listen::Tcp(addr) if !addr.ip().is_loopback() => {
             Err(GatewayError::NotLocal(addr.to_string()))
@@ -248,13 +351,14 @@ fn check_listen(listen: &Listen) -> Result<(), GatewayError> {
     }
 }
 
-async fn bind(
+pub(crate) async fn bind(
     listen: &Listen,
     state_dir: &std::path::Path,
+    socket_name: &str,
 ) -> Result<(BoundSocket, Address), GatewayError> {
     let listen = match listen {
         #[cfg(unix)]
-        Listen::Auto => Listen::Unix(state_dir.join("gateway.sock")),
+        Listen::Auto => Listen::Unix(state_dir.join(socket_name)),
         #[cfg(not(unix))]
         Listen::Auto => Listen::Tcp("127.0.0.1:0".parse().expect("a literal address")),
         other => other.clone(),
@@ -329,7 +433,7 @@ impl Gateway {
             .map_err(io(format!("making {}", config.state_dir.display())))?;
         let key = load_or_create_key(&config.state_dir).map_err(io("the access key"))?;
         let journal = Journal::open(&config.state_dir).map_err(io("the journal"))?;
-        let (socket, address) = bind(&config.listen, &config.state_dir).await?;
+        let (socket, address) = bind(&config.listen, &config.state_dir, "gateway.sock").await?;
         if let Err(e) = std::fs::write(config.state_dir.join(ADDRESS_FILE), address.to_string()) {
             if let Address::Unix(path) = &address {
                 let _ = std::fs::remove_file(path);
@@ -354,6 +458,10 @@ impl Gateway {
             detail: Mutex::new("comparing the journal with the broker".into()),
             stopping,
             bot_buffer: config.bot_buffer,
+            bot_grace: config.bot_grace,
+            subs: Subscriptions::default(),
+            started: brokapi::runtime::now(),
+            rate: Mutex::new(RateMeter::new(brokapi::runtime::now())),
         });
 
         let access = Access::new(&key);
@@ -402,6 +510,10 @@ impl Gateway {
                 sh.observe(&env);
                 match cv::event_to(0, &env) {
                     Some(event) => {
+                        sh.rate
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .record(brokapi::runtime::now());
                         let (_, cut) = sh.hub.publish(event);
                         for bot in cut {
                             tracing::warn!(%bot, "a bot reads too slowly: its event stream is closed");
@@ -432,6 +544,8 @@ impl Gateway {
                         }
                         sh.set_detail("");
                         sh.state.send_replace(GatewayState::Ready);
+                        let own = Arc::clone(&sh);
+                        tokio::spawn(async move { own.subscribe_own().await });
                         break;
                     }
                     Err(e) => {
@@ -591,6 +705,31 @@ impl GatewayService {
     fn shared(&self) -> Arc<Shared> {
         Arc::clone(&self.shared)
     }
+
+    /// A subscription for `bot`: the one at the broker if another bot already holds the same, else a new one.
+    async fn subscription<F>(
+        &self,
+        bot: &Arc<str>,
+        kind: &str,
+        request: String,
+        open: F,
+    ) -> Reply<pb::SubscribeResponse>
+    where
+        F: Future<Output = Result<brokapi::core::SubscriptionId, Error>>,
+    {
+        let sh = self.shared();
+        let what = kind.trim_start_matches("subscribe_").to_owned();
+        let sub = sh
+            .subs
+            .subscribe(bot, format!("{kind} {request}"), what, || open)
+            .await
+            .map_err(|e| status_of(&e))?;
+        // A bot that subscribes without reading events is gone as soon as it has been quiet long enough.
+        if sh.bot_entry(bot, |b| b.streams == 0) {
+            sh.schedule_release(bot);
+        }
+        Ok(Response::new(pb::SubscribeResponse { sub: sub.value() }))
+    }
 }
 
 fn bad<T>(r: Result<T, Invalid>) -> Result<T, Status> {
@@ -701,12 +840,14 @@ impl pb::gateway_server::Gateway for GatewayService {
         &self,
         req: Request<pb::SubscribeRequest>,
     ) -> Reply<pb::SubscribeResponse> {
-        self.enter(&req)?;
+        let bot = self.enter(&req)?;
         let sh = self.shared();
-        self.read(async move {
-            let sub = sh.client.subscribe_order_state().await?;
-            Ok(pb::SubscribeResponse { sub: sub.value() })
-        })
+        self.subscription(
+            &bot,
+            "subscribe_order_state",
+            format!("{:?}", req.get_ref()),
+            async move { sh.client.subscribe_order_state().await },
+        )
         .await
     }
 
@@ -752,12 +893,14 @@ impl pb::gateway_server::Gateway for GatewayService {
         &self,
         req: Request<pb::SubscribeRequest>,
     ) -> Reply<pb::SubscribeResponse> {
-        self.enter(&req)?;
+        let bot = self.enter(&req)?;
         let sh = self.shared();
-        self.read(async move {
-            let sub = sh.client.subscribe_stop_orders().await?;
-            Ok(pb::SubscribeResponse { sub: sub.value() })
-        })
+        self.subscription(
+            &bot,
+            "subscribe_stop_orders",
+            format!("{:?}", req.get_ref()),
+            async move { sh.client.subscribe_stop_orders().await },
+        )
         .await
     }
 
@@ -814,12 +957,14 @@ impl pb::gateway_server::Gateway for GatewayService {
         &self,
         req: Request<pb::SubscribeRequest>,
     ) -> Reply<pb::SubscribeResponse> {
-        self.enter(&req)?;
+        let bot = self.enter(&req)?;
         let sh = self.shared();
-        self.read(async move {
-            let sub = sh.client.subscribe_executions().await?;
-            Ok(pb::SubscribeResponse { sub: sub.value() })
-        })
+        self.subscription(
+            &bot,
+            "subscribe_executions",
+            format!("{:?}", req.get_ref()),
+            async move { sh.client.subscribe_executions().await },
+        )
         .await
     }
 
@@ -827,13 +972,15 @@ impl pb::gateway_server::Gateway for GatewayService {
         &self,
         req: Request<pb::SubscribeRequest>,
     ) -> Reply<pb::SubscribeResponse> {
-        self.enter(&req)?;
+        let bot = self.enter(&req)?;
         let opts = bad(cv::opts_from(&req.get_ref().opts))?;
         let sh = self.shared();
-        self.read(async move {
-            let sub = sh.client.subscribe_portfolio(opts).await?;
-            Ok(pb::SubscribeResponse { sub: sub.value() })
-        })
+        self.subscription(
+            &bot,
+            "subscribe_portfolio",
+            format!("{:?}", req.get_ref()),
+            async move { sh.client.subscribe_portfolio(opts).await },
+        )
         .await
     }
 
@@ -889,14 +1036,16 @@ impl pb::gateway_server::Gateway for GatewayService {
         &self,
         req: Request<pb::SubscribeInstrumentRequest>,
     ) -> Reply<pb::SubscribeResponse> {
-        self.enter(&req)?;
+        let bot = self.enter(&req)?;
         let instrument = bad(cv::instrument_from(&req.get_ref().instrument))?;
         let opts = bad(cv::opts_from(&req.get_ref().opts))?;
         let sh = self.shared();
-        self.read(async move {
-            let sub = sh.client.subscribe_order_book(&instrument, opts).await?;
-            Ok(pb::SubscribeResponse { sub: sub.value() })
-        })
+        self.subscription(
+            &bot,
+            "subscribe_order_book",
+            format!("{:?}", req.get_ref()),
+            async move { sh.client.subscribe_order_book(&instrument, opts).await },
+        )
         .await
     }
 
@@ -904,14 +1053,16 @@ impl pb::gateway_server::Gateway for GatewayService {
         &self,
         req: Request<pb::SubscribeInstrumentRequest>,
     ) -> Reply<pb::SubscribeResponse> {
-        self.enter(&req)?;
+        let bot = self.enter(&req)?;
         let instrument = bad(cv::instrument_from(&req.get_ref().instrument))?;
         let opts = bad(cv::opts_from(&req.get_ref().opts))?;
         let sh = self.shared();
-        self.read(async move {
-            let sub = sh.client.subscribe_market_trades(&instrument, opts).await?;
-            Ok(pb::SubscribeResponse { sub: sub.value() })
-        })
+        self.subscription(
+            &bot,
+            "subscribe_market_trades",
+            format!("{:?}", req.get_ref()),
+            async move { sh.client.subscribe_market_trades(&instrument, opts).await },
+        )
         .await
     }
 
@@ -919,14 +1070,16 @@ impl pb::gateway_server::Gateway for GatewayService {
         &self,
         req: Request<pb::SubscribeInstrumentRequest>,
     ) -> Reply<pb::SubscribeResponse> {
-        self.enter(&req)?;
+        let bot = self.enter(&req)?;
         let instrument = bad(cv::instrument_from(&req.get_ref().instrument))?;
         let opts = bad(cv::opts_from(&req.get_ref().opts))?;
         let sh = self.shared();
-        self.read(async move {
-            let sub = sh.client.subscribe_quotes(&instrument, opts).await?;
-            Ok(pb::SubscribeResponse { sub: sub.value() })
-        })
+        self.subscription(
+            &bot,
+            "subscribe_quotes",
+            format!("{:?}", req.get_ref()),
+            async move { sh.client.subscribe_quotes(&instrument, opts).await },
+        )
         .await
     }
 
@@ -934,18 +1087,21 @@ impl pb::gateway_server::Gateway for GatewayService {
         &self,
         req: Request<pb::SubscribeCandlesRequest>,
     ) -> Reply<pb::SubscribeResponse> {
-        self.enter(&req)?;
+        let bot = self.enter(&req)?;
         let instrument = bad(cv::instrument_from(&req.get_ref().instrument))?;
         let timeframe = bad(cv::timeframe_from(req.get_ref().timeframe))?;
         let opts = bad(cv::opts_from(&req.get_ref().opts))?;
         let sh = self.shared();
-        self.read(async move {
-            let sub = sh
-                .client
-                .subscribe_candles(&instrument, timeframe, opts)
-                .await?;
-            Ok(pb::SubscribeResponse { sub: sub.value() })
-        })
+        self.subscription(
+            &bot,
+            "subscribe_candles",
+            format!("{:?}", req.get_ref()),
+            async move {
+                sh.client
+                    .subscribe_candles(&instrument, timeframe, opts)
+                    .await
+            },
+        )
         .await
     }
 
@@ -953,16 +1109,19 @@ impl pb::gateway_server::Gateway for GatewayService {
         &self,
         req: Request<pb::UnsubscribeRequest>,
     ) -> Reply<pb::UnsubscribeResponse> {
-        self.enter(&req)?;
+        let bot = self.enter(&req)?;
         let sub = brokapi::core::SubscriptionId::new(req.get_ref().sub);
         let sh = self.shared();
-        self.read(async move {
-            sh.client
-                .unsubscribe(sub)
-                .await
-                .map(|()| pb::UnsubscribeResponse {})
-        })
-        .await
+        let result = sh
+            .subs
+            .unsubscribe(&bot, sub, || {
+                let client = sh.client.clone();
+                async move { client.unsubscribe(sub).await }
+            })
+            .await;
+        result
+            .map(|()| Response::new(pb::UnsubscribeResponse {}))
+            .map_err(|e| status_of(&e))
     }
 
     // ---- instruments
@@ -1112,7 +1271,10 @@ impl pb::gateway_server::Gateway for GatewayService {
         let own_only = r.own_orders_only;
         let sh = self.shared();
         let attached = sh.hub.attach(&bot, sh.bot_buffer, resume);
-        sh.bot_entry(&bot, |b| b.streams += 1);
+        sh.bot_entry(&bot, |b| {
+            b.streams += 1;
+            b.generation += 1;
+        });
         let (out, rx) = mpsc::channel(8);
         tokio::spawn(forward(sh, bot, attached, own_only, out));
         let stream: Self::EventsStream = Box::pin(ReceiverStream::new(rx));
@@ -1195,5 +1357,11 @@ async fn forward(
         }
     }
     sh.hub.detach(id);
-    sh.bot_entry(&bot, |b| b.streams = b.streams.saturating_sub(1));
+    let none_left = sh.bot_entry(&bot, |b| {
+        b.streams = b.streams.saturating_sub(1);
+        b.streams == 0
+    });
+    if none_left && !*sh.stopping.borrow() {
+        sh.schedule_release(&bot);
+    }
 }
