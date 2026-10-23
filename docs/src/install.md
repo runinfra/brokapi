@@ -84,7 +84,26 @@ python -c "import brokapi; print(brokapi.__version__)"
 | `ModuleNotFoundError: No module named 'brokapi'` | Пакет поставлен в другое окружение | Активировать то окружение, в которое ставили (`. .venv/bin/activate`), и проверить `python -m pip show brokapi` |
 | `the crate brokapi could not be found in registry index` у `cargo add brokapi` | Устарел индекс crates.io на машине или старый `cargo` | `rustup update` и повторить. Или ставить из репозитория (команда выше) |
 
-## Gateway и CLI
+## Программа brokapi (Gateway)
 
-[Gateway](gateway/index.md) и [CLI](cli/index.md) пока не выпущены: ставить нечего. Страницы продуктов
-рассказывают, что будет и что можно использовать уже сейчас.
+Gateway - это программа `brokapi`: служба и команды в одном бинарнике ([что это](gateway/index.md)). Нужен Rust 1.88 или новее. Готовых бинарников
+и установки через `cargo install brokapi-gateway` пока нет, программа собирается из клона репозитория:
+
+```bash
+git clone https://github.com/runinfra/brokapi
+cd brokapi
+cargo install --path crates/gateway --locked
+```
+
+Сборка занимает несколько минут. Бинарник `brokapi` попадает в `~/.cargo/bin`.
+
+Проверка:
+
+```bash
+brokapi --version
+```
+
+Должен напечататься номер версии, как у библиотеки. Не напечатала: смотрите таблицу выше (`rustc`, `cargo`) и убедитесь, что `~/.cargo/bin` есть в `PATH`.
+Дальше: [быстрый старт Gateway](gateway/quickstart.md).
+
+Если вы пишете бота на Rust и вам нужен только клиент гейтвея, программа не нужна: [Подключить бота](gateway/bots.md#бот-на-rust).

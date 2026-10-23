@@ -8,15 +8,15 @@
 
 ```text
 install.md                   Установка: cargo add, pip install, из репозитория, проверка, частые ошибки (часть «Начать»)
-README.md                    Что это: развилка из четырех карточек (Rust, Python, Gateway, CLI)
+README.md                    Что это: развилка из трех карточек (Rust, Python, Gateway)
 architecture, streams, orders, reconcile, limits, numbers    Как устроено (общее)
 brokers/                     Брокеры (общее)
 rust/                        Rust: index.md, быстрый старт и инструкции (работает сейчас)
 python/                      Python: index.md, быстрый старт, инструкции, тесты, объяснение (работает сейчас)
-gateway/index.md             Gateway: заглушка (служба и командная строка brokapi)
-cli/index.md                 CLI: заглушка, стадия "к бете" (командная строка brokapi)
+gateway/                     Gateway = программа brokapi (служба и команды, один продукт): index.md (что это), quickstart.md, bots.md,
+                             operations.md, events.md, differences.md, config.md, commands.md (справка команд собрана из программы)
 agent-contract, errors, events, coverage    Справочник (общее)
-api.md, api-python.md, api-gateway.md       Справочник API: Rust (rustdoc в api/), Python (pdoc в api/python/), Gateway - заглушка
+api.md, api-python.md, api-gateway.md       Справочник API: Rust (rustdoc в api/), Python (pdoc в api/python/), Gateway (gRPC, собран из proto/ скриптом docs/protodoc.py)
 before-live                  Перед боевым счетом (часть «Начать»)
 changelog                    Версии: изменения по выпускам
 agents/unverified.md         Допущения по документации брокеров, только для ИИ-агентов: в SUMMARY.md нет, в HTML не собирается, попадает в llms.txt, llms-full.txt и python/llms.txt через docs/llms.py
@@ -28,12 +28,13 @@ agents/unverified.md         Допущения по документации б
 - **Страницу переносят - старый адрес должен жить.** В `book.toml` в `[output.html.redirect]` добавляется строка
   `"/старый.html" = "новый/путь.html"`. mdBook кладет на старое место страницу с переадресацией (сохраняет `#якорь`),
   а `docs/llms.py` по этой же таблице пишет старый `страница.md` с адресом нового. Сайт и внешние ссылки тогда не ломаются.
-- **Заглушка** (продукт, которого еще нет) - один компонент `.stub` из `theme/brokapi.css`, образец - `gateway/index.md`.
-  Заголовок продукта, метка стадии (`stub-stage`: "К бете" или "Возможно"), строка о том, что этого еще нет, три блока:
-  "Что это будет" (2-4 строки), "Что работает уже сейчас" (ссылки на общие страницы, верные и для этого продукта) и
-  "Как узнать, что появилось" со ссылкой на "Изменения" (`stub-foot`). Между HTML-тегами оставляйте пустые строки:
-  тогда внутри работает обычный markdown. Не обещайте того, чего нет в решениях. Когда продукт выходит, заглушка
-  заменяется настоящими страницами, а в `llms.py` пропадает пометка "ЕЩЕ НЕТ" в `DESCRIPTIONS` и в `SECTION_NOTES`.
+- **Заглушка** (продукт, которого еще нет) - компонент `.stub` из `theme/brokapi.css`. Сейчас его не использует ни одна страница: все продукты
+  книги существуют. Нужна будет для нового, пока не сделанного продукта: метка стадии, строка "этого еще нет", блоки "Что это будет",
+  "Что работает уже сейчас" и "Как узнать, что появилось". Не обещайте того, чего нет в решениях. Разметка - в комментарии над `.stub` в CSS.
+- **Страницы, собранные из кода, руками не правятся.** `gateway/commands.md` между строками `help:begin` и `help:end` - это `brokapi <команда> --help`
+  всех команд (обновляется `BROKAPI_UPDATE_DOCS=1 cargo test -p brokapi-gateway --test docs`, тест падает, если страница отстала).
+  `api-gateway.md` между `proto:begin` и `proto:end` собирает `python3 docs/protodoc.py` из `proto/` (`--check` сравнивает, его запускают `tools/check` и `docs/build.sh`).
+  `toml` в страницах `gateway/` разбирает настоящий разбор конфига, команды и вывод быстрого старта выполняются тестом (`crates/gateway/tests/docs.rs`).
 - **Код на нескольких языках (вкладки Rust / Python / gRPC).** Парные блоки оборачиваются в `<div class="lang-tabs">` (пустые
   строки вокруг и внутри). Код для каждого языка берется из файла, который запускает тест: Rust - из `examples/`, Python - из
   `crates/python/examples/` (`{{#include ...:якорь}}`). Не пишите код вкладки руками прямо в странице, иначе он не будет тестом.

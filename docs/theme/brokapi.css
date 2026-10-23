@@ -407,11 +407,11 @@ pre.mermaid, .mermaid { background: var(--bk-box); border: 1px solid var(--bk-li
 .paths li > p:first-child a:focus-visible::after { outline: 2px solid var(--bk-link); outline-offset: 2px; }
 .paths li > p:first-child code, .stub-stage { font-family: var(--mono-font); font-size: 13px; line-height: 1; padding: 0; background: transparent; color: var(--bk-muted); white-space: nowrap; }
 .paths li > p:first-child code::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border: 1.5px solid var(--bk-muted); box-sizing: border-box; }
-/* The first two are Rust and Python, the paths that work (alpha): their square is filled with the signal. */
-.paths li:nth-child(-n+2) > p:first-child code { color: var(--bk-heading); }
-.paths li:nth-child(-n+2) > p:first-child code::before { background: var(--bk-signal); border-color: var(--bk-signal); }
+/* The first three are Rust, Python and Gateway, the paths that work (alpha): their square is filled with the signal. */
+.paths li:nth-child(-n+3) > p:first-child code { color: var(--bk-heading); }
+.paths li:nth-child(-n+3) > p:first-child code::before { background: var(--bk-signal); border-color: var(--bk-signal); }
 
-/* Placeholder of a product that does not exist yet (python/, gateway/, mcp/, api-python, api-gateway): one component,
+/* Placeholder of a product that does not exist yet (no page uses it now; the book has no product that is only planned): one component,
    all placeholders look the same. Markup (blank lines between the blocks keep markdown working inside):
      <div class="stub">  <p class="stub-stage"><span class="stub-dot"></span>К бете</p>  <p class="stub-state">...</p>
      <div class="stub-label">Что это будет</div> text  <div class="stub-label">Что работает уже сейчас</div> list

@@ -66,3 +66,7 @@ tokio = { workspace = true, features = ["full", "test-util"] }
 [[test]]
 name = "cli"
 required-features = ["cli"]
+
+[[test]]
+name = "docs"
+required-features = ["cli"]
