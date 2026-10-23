@@ -1,0 +1,191 @@
+# The program `brokapi` (crates/gateway) as ready-made files for Linux, macOS and Windows, and the GitHub release that holds them.
+# Started by a tag `v*` (it builds, tests and creates the release) or by hand (Actions -> release -> Run workflow: it builds
+# and tests the same files and keeps them as artifacts of the run, and creates NO release).
+#
+# It does NOT publish to crates.io or PyPI. That is a separate decision, made by hand, version by version (`tools/release`).
+#
+# Why these targets:
+# - Linux is built for musl, so the file is static: no glibc version to match, it runs on Debian, Ubuntu, RHEL, Alpine and in
+#   a bare container alike. (A glibc build links to the glibc of the build machine and refuses to start on an older system.)
+#   The aarch64 file is built on an ARM runner, not by cross compilation: the cross toolchains cannot build the assembly
+#   of `ring`, the same reason as in python.yml.
+# - macOS: Intel on the Intel runner, Apple silicon on the ARM runner, both native.
+# - Windows: MSVC with the C runtime linked in, so the file does not ask the user to install the Visual C++ redistributable.
+#
+# Every file is unpacked from its own archive and started on the system it was built for: `brokapi --version` must print
+# the version of the tag, `brokapi init` must write a config. A tag whose number differs from `version` in Cargo.toml stops
+# the run before anything is built.
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  version:
+    name: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read the version and compare it with the tag
+        id: v
+        run: |
+          version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          echo "Cargo.toml: $version"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::the tag is ${GITHUB_REF_NAME}, but version in Cargo.toml is ${version}"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build ${{ matrix.name }}
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    # A hung job must end by itself, not hold the machine for the six hours that GitHub gives by default.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64, runner: ubuntu-22.04, target: x86_64-unknown-linux-musl, archive: tar.gz, file: 'ELF 64-bit.*x86-64' }
+          - { name: linux-aarch64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, archive: tar.gz, file: 'ELF 64-bit.*ARM aarch64' }
+          - { name: macos-x86_64, runner: macos-15-intel, target: x86_64-apple-darwin, archive: tar.gz, file: 'Mach-O 64-bit executable x86_64' }
+          - { name: macos-arm64, runner: macos-latest, target: aarch64-apple-darwin, archive: tar.gz, file: 'Mach-O 64-bit executable arm64' }
+          - { name: windows-x86_64, runner: windows-latest, target: x86_64-pc-windows-msvc, archive: zip, file: 'PE32\+ executable.*x86-64' }
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      NAME: ${{ matrix.name }}
+      TARGET: ${{ matrix.target }}
+      # The file is smaller and has no symbol table to leak build paths. (Panic messages keep their line numbers.)
+      CARGO_PROFILE_RELEASE_STRIP: "true"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install the musl compiler
+        if: contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          echo "CC_$(echo "$TARGET" | tr '-' '_')=musl-gcc" >> "$GITHUB_ENV"
+      - name: Link the C runtime into the Windows file
+        if: contains(matrix.target, 'windows')
+        run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
+      - name: Build
+        run: cargo build --release --locked -p brokapi-gateway --bin brokapi --target "$TARGET"
+
+      - name: Pack
+        run: |
+          exe=""
+          if [ "${{ matrix.archive }}" = "zip" ]; then exe=".exe"; fi
+          dir="brokapi-${VERSION}-${NAME}"
+          mkdir -p "dist/${dir}"
+          cp "target/${TARGET}/release/brokapi${exe}" README.md LICENSE-MIT LICENSE-APACHE "dist/${dir}/"
+          cd dist
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a -tzip "${dir}.zip" "${dir}" > /dev/null
+          else
+            tar -czf "${dir}.tar.gz" "${dir}"
+          fi
+          rm -rf "${dir}"
+          file="${dir}.${{ matrix.archive }}"
+          if command -v sha256sum > /dev/null; then sha256sum "$file" > "${file}.sha256"; else shasum -a 256 "$file" > "${file}.sha256"; fi
+          cat "${file}.sha256"
+          echo "FILE=${file}" >> "$GITHUB_ENV"
+
+      # What a user does: check the sum, unpack the archive in an empty place, start the program from there.
+      - name: Check the archive as a user would
+        run: |
+          mkdir check
+          cp "dist/${FILE}" "dist/${FILE}.sha256" check/
+          cd check
+          if command -v sha256sum > /dev/null; then sha256sum -c "${FILE}.sha256"; else shasum -a 256 -c "${FILE}.sha256"; fi
+          if [ "${{ matrix.archive }}" = "zip" ]; then 7z x "${FILE}" > /dev/null; exe=".exe"; else tar -xzf "${FILE}"; exe=""; fi
+          dir="brokapi-${VERSION}-${NAME}"
+          ls -l "${dir}"
+          test -f "${dir}/README.md" && test -f "${dir}/LICENSE-MIT" && test -f "${dir}/LICENSE-APACHE"
+          bin="$PWD/${dir}/brokapi${exe}"
+          # The format: the file is for the system it was built for, and the Linux files are static.
+          info=$(file "${bin}")
+          echo "${info}"
+          echo "${info}" | grep -E "${{ matrix.file }}"
+          if [ "${{ contains(matrix.target, 'musl') }}" = "true" ]; then echo "${info}" | grep -E "statically linked|static-pie linked"; fi
+          # It starts and says the version of the release.
+          out=$("${bin}" --version)
+          echo "${out}"
+          test "${out}" = "brokapi ${VERSION}"
+          "${bin}" --help > /dev/null
+          # It does the first command of the quick start: a config and the state directory in an empty directory.
+          mkdir work && cd work
+          "${bin}" init
+          test -f brokapi.toml
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: brokapi-${{ matrix.name }}
+          path: |
+            dist/${{ env.FILE }}
+            dist/${{ env.FILE }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  # Only for a tag. The files of all five builds, one list of sums, one GitHub release. A run started by hand ends above.
+  release:
+    name: release
+    if: github.ref_type == 'tag'
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: brokapi-*
+          merge-multiple: true
+          path: dist
+      - name: Check what was built and collect the sums
+        working-directory: dist
+        run: |
+          ls -l
+          test "$(ls *.tar.gz *.zip | wc -l)" = "5"
+          cat *.sha256 > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          rm ./*.sha256
+      - name: Write the notes
+        run: |
+          cat > notes.md <<EOF
+          The program \`brokapi\` ${VERSION}: the service that runs the gateways and the commands to work with them. Files for
+          Linux (x86_64 and aarch64, static), macOS (Intel and Apple silicon) and Windows (x86_64).
+
+          Download the file for your system, check it against \`SHA256SUMS\`, unpack it, and put \`brokapi\` in a directory from
+          \`PATH\`. Or build it with Rust: \`cargo install brokapi-gateway --version ${VERSION}\`.
+          Details: https://brokapi.ru/docs/install.html
+          EOF
+      - name: Create the release
+        run: |
+          flags=""
+          case "${VERSION}" in *-*) flags="--prerelease" ;; esac
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" --verify-tag \
+            --title "brokapi ${VERSION}" --notes-file notes.md ${flags}
