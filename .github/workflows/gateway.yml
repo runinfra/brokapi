@@ -30,7 +30,7 @@ jobs:
     name: gateway ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     # A hung test must end by itself, not hold the machine for six hours.
-    timeout-minutes: 45
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
