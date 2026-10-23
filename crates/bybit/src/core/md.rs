@@ -250,6 +250,7 @@ impl MdCore {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn on_data(
         &mut self,
         topic: &str,

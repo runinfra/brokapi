@@ -210,7 +210,9 @@ impl NativeMock {
                     s.fill(&cid.hyphenated().to_string(), qty, price)
                 }))
                 .map_err(|_| {
-                    PyValueError::new_err("the Bybit imitation has no such working order to execute")
+                    PyValueError::new_err(
+                        "the Bybit imitation has no such working order to execute",
+                    )
                 })?;
             }
         }

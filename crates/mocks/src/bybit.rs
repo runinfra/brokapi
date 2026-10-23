@@ -51,6 +51,9 @@ const CLOSE_SENTINEL: &str = "\u{0}close";
 
 const RECV_WINDOW_LIMIT_MS: i64 = 30_000;
 
+/// One candle request the mock has received: `interval`, `start`, `end`, `limit`.
+pub type KlineRequest = (String, Option<i64>, Option<i64>, Option<u32>);
+
 /// Tunable mock behaviour for individual test scenarios.
 #[derive(Debug, Default)]
 pub struct MockOptions {
@@ -74,7 +77,7 @@ pub struct MockOptions {
     /// Every `"METHOD /path"` of the order methods served, in order.
     pub served: std::sync::Mutex<Vec<String>>,
     /// Every candle request, as (`interval`, `start`, `end`, `limit`).
-    pub kline_requests: std::sync::Mutex<Vec<(String, Option<i64>, Option<i64>, Option<u32>)>>,
+    pub kline_requests: std::sync::Mutex<Vec<KlineRequest>>,
     /// Every request of fills, as (`startTime`, `endTime`).
     pub execution_requests: std::sync::Mutex<Vec<(Option<i64>, Option<i64>)>>,
     /// The clock of the exchange is this many milliseconds ahead of the local one.
@@ -677,7 +680,7 @@ fn authenticate(
     uri: &Uri,
     headers: &HeaderMap,
     body: &Bytes,
-) -> Result<String, Response> {
+) -> Result<String, Box<Response>> {
     let get = |name: &str| {
         headers
             .get(name)
@@ -689,11 +692,11 @@ fn authenticate(
         get("x-bapi-timestamp"),
         get("x-bapi-sign"),
     ) else {
-        return Err(json_response(StatusCode::UNAUTHORIZED, ""));
+        return Err(Box::new(json_response(StatusCode::UNAUTHORIZED, "")));
     };
     let recv = get("x-bapi-recv-window").unwrap_or_else(|| "5000".into());
     if !key.starts_with(DEFAULT_KEY) {
-        return Err(refuse(10003, "API key is invalid."));
+        return Err(Box::new(refuse(10003, "API key is invalid.")));
     }
     let payload = if *method == Method::GET {
         uri.query().unwrap_or("").to_string()
@@ -702,22 +705,22 @@ fn authenticate(
     };
     let expected = brokapi_bybit_protocol::sign::sign(SECRET, &format!("{ts}{key}{recv}{payload}"));
     if expected != sign {
-        return Err(refuse(
+        return Err(Box::new(refuse(
             10004,
             "Error sign, please check your signature generation algorithm.",
-        ));
+        )));
     }
     // timestamp in [server_time - recv_window, server_time + 1000)
     let server = now_ms() + opts.clock_offset_ms.load(Ordering::Relaxed);
     let ts: i64 = ts.parse().unwrap_or(0);
     let recv: i64 = recv.parse().unwrap_or(5000).min(RECV_WINDOW_LIMIT_MS);
     if ts < server - recv || ts >= server + 1000 {
-        return Err(refuse(
+        return Err(Box::new(refuse(
             10002,
             &format!(
                 "invalid request, please check your server timestamp or recv_window param: req_timestamp[{ts}],server_timestamp[{server}],recv_window[{recv}]"
             ),
-        ));
+        )));
     }
     Ok(key)
 }
@@ -873,7 +876,7 @@ async fn handle_http(
     // ── private ─────────────────────────────────────────────────────────────
     let owner = match authenticate(opts, &method, &uri, &headers, &body) {
         Ok(k) => k,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let v: Value = if method == Method::POST {
         serde_json::from_slice(&body).unwrap_or(Value::Null)
