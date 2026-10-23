@@ -1,4 +1,4 @@
-//! Settings of a connection: the arguments of `brokapi.connect(...)` first, the environment variables of the
+//! Settings of a connection: the arguments of the call first, the environment variables of the
 //! Rust library (`BCS_REFRESH_TOKEN`, `TBANK_TOKEN`, ...) for everything the caller did not pass.
 
 use brokapi::alor::protocol::config::{AlorConfig, AlorEnv};
@@ -8,11 +8,13 @@ use brokapi::finam::FinamApiConfig;
 use brokapi::tbank::protocol::TbankConfig;
 use serde_json::{Map, Value};
 
-use crate::errors::config;
+use crate::error::config_error as config;
 
+/// The settings of one connection: a JSON object, read by [`BrokerConfig::from_settings`](crate::BrokerConfig::from_settings).
 pub struct Settings(pub Map<String, Value>);
 
 impl Settings {
+    /// Reads the settings from JSON text. Anything but an object is a configuration error.
     pub fn parse(text: &str) -> Result<Self, Error> {
         match serde_json::from_str::<Value>(text) {
             Ok(Value::Object(map)) => Ok(Self(map)),
@@ -68,6 +70,7 @@ impl Settings {
         Ok(url)
     }
 
+    /// The BCS connector configuration: `refresh_token`, `write`, `endpoint`.
     pub fn bcs(&self) -> Result<BcsConfig, Error> {
         let token = self
             .text("refresh_token", "BCS_REFRESH_TOKEN")
@@ -82,6 +85,7 @@ impl Settings {
         Ok(cfg.with_write(write))
     }
 
+    /// The ALOR connector configuration: `refresh_token`, `portfolio`, `exchange`, `test`, `endpoint`.
     pub fn alor(&self) -> Result<AlorConfig, Error> {
         let token = self
             .text("refresh_token", "ALOR_REFRESH_TOKEN")
@@ -107,6 +111,7 @@ impl Settings {
         Ok(cfg)
     }
 
+    /// The T-Bank connector configuration: `token`, `sandbox`, `account_id`, `app_name`, `endpoint`.
     pub fn tbank(&self) -> Result<TbankConfig, Error> {
         let token = self
             .text("token", "TBANK_TOKEN")
@@ -120,6 +125,7 @@ impl Settings {
         Ok(cfg)
     }
 
+    /// The Finam connector configuration and the account id: `secret`, `account_id`, `endpoint`.
     pub fn finam(&self) -> Result<(FinamApiConfig, String), Error> {
         let secret = self.text("secret", "FINAM_SECRET").ok_or_else(|| {
             config("FINAM_SECRET is not set (pass secret=... or set the variable)")

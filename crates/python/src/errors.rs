@@ -11,33 +11,7 @@ use brokapi::runtime::record::LogError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-/// What a native call can fail with: an error of the library, or a bad argument from the Python side.
-#[derive(Debug)]
-pub enum CallError {
-    /// An error of the connector. Becomes an exception of `brokapi.errors`.
-    Broker(Error),
-    /// An argument that the Python layer should not have sent. Becomes `ValueError`.
-    Arg(String),
-    /// The client was closed. Becomes `RuntimeError`.
-    Closed,
-}
-
-impl From<Error> for CallError {
-    fn from(e: Error) -> Self {
-        CallError::Broker(e)
-    }
-}
-
-impl From<serde_json::Error> for CallError {
-    fn from(e: serde_json::Error) -> Self {
-        CallError::Arg(e.to_string())
-    }
-}
-
-/// A configuration problem, as a library error.
-pub fn config(msg: impl Into<String>) -> Error {
-    Error::Config(ConfigError::Message(msg.into()))
-}
+pub use brokapi_client::{ClientError as CallError, config_error as config};
 
 /// The variant name and the fields that Python needs, besides the text.
 fn parts(e: &Error) -> (&'static str, Vec<(&'static str, Field)>) {
@@ -100,13 +74,12 @@ pub fn to_pyerr(py: Python<'_>, e: &Error) -> PyErr {
     build().unwrap_or_else(|err| err)
 }
 
-impl CallError {
-    pub fn into_pyerr(self) -> PyErr {
-        match self {
-            CallError::Broker(e) => Python::attach(|py| to_pyerr(py, &e)),
-            CallError::Arg(msg) => pyo3::exceptions::PyValueError::new_err(msg),
-            CallError::Closed => pyo3::exceptions::PyRuntimeError::new_err("the client is closed"),
-        }
+/// The Python exception for a failed call.
+pub fn into_pyerr(e: CallError) -> PyErr {
+    match e {
+        CallError::Broker(e) => Python::attach(|py| to_pyerr(py, &e)),
+        CallError::Arg(msg) => pyo3::exceptions::PyValueError::new_err(msg),
+        CallError::Closed => pyo3::exceptions::PyRuntimeError::new_err("the client is closed"),
     }
 }
 

@@ -1,6 +1,6 @@
 //! `raw`: any method of a broker's API, by name, with JSON in and JSON out.
 //!
-//! In Rust `connector.raw()` takes a closure that calls a typed client. Python has no such closure, so the method is
+//! In Rust `connector.raw()` takes a closure that calls a typed client. A caller in another language or process (Python, the gateway) has no such closure, so the method is
 //! named and its arguments are JSON:
 //!
 //! - T-Bank and Finam speak gRPC. The `.proto` descriptors are compiled into the protocol crates
@@ -12,7 +12,7 @@
 //!   verb and path. Any other path is called as `"GET /path"` or `"POST /path"`.
 //!
 //! Streaming methods are refused: the quota covers only the opening of a stream and the stream is then yours to read,
-//! which a Python call cannot hand over.
+//! which a call by name cannot hand over.
 
 use std::sync::OnceLock;
 
@@ -31,7 +31,7 @@ use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 use tonic::codegen::http::uri::PathAndQuery;
 use tonic::{Request, Response, Status};
 
-use crate::errors::{CallError, config};
+use crate::error::{ClientError, config_error as config};
 
 // ---------------------------------------------------------------------------------------------------- gRPC
 
@@ -47,7 +47,7 @@ fn pool(broker: &str) -> &'static DescriptorPool {
 }
 
 /// The method named `name`: `GetAccounts`, `UsersService/GetAccounts` or `pkg.UsersService/GetAccounts`.
-fn find_method(pool: &DescriptorPool, name: &str) -> Result<MethodDescriptor, CallError> {
+fn find_method(pool: &DescriptorPool, name: &str) -> Result<MethodDescriptor, ClientError> {
     let mut hits = Vec::new();
     for service in pool.services() {
         for method in service.methods() {
@@ -60,7 +60,7 @@ fn find_method(pool: &DescriptorPool, name: &str) -> Result<MethodDescriptor, Ca
     }
     match hits.len() {
         1 => Ok(hits.remove(0)),
-        0 => Err(CallError::Broker(config(format!(
+        0 => Err(ClientError::Broker(config(format!(
             "this broker has no method {name:?}: use the name of a method from its API description \
              (for example GetAccounts), nothing was sent"
         )))),
@@ -69,7 +69,7 @@ fn find_method(pool: &DescriptorPool, name: &str) -> Result<MethodDescriptor, Ca
                 .iter()
                 .map(|m| format!("{}/{}", m.parent_service().name(), m.name()))
                 .collect();
-            Err(CallError::Broker(config(format!(
+            Err(ClientError::Broker(config(format!(
                 "the method name {name:?} is in several services, name the service too: {}",
                 names.join(", ")
             ))))
@@ -79,20 +79,20 @@ fn find_method(pool: &DescriptorPool, name: &str) -> Result<MethodDescriptor, Ca
 
 /// A request that is ready to send: the method found, the arguments turned into the message.
 #[derive(Clone)]
-pub struct Prepared {
+pub(crate) struct Prepared {
     /// The name the quota is taken by: the method name without the service.
-    pub quota: String,
+    pub(crate) quota: String,
     path: PathAndQuery,
     request: DynamicMessage,
     response: MessageDescriptor,
 }
 
 /// Finds the method and builds its request from `args`. Fails before anything is sent or counted.
-pub fn prepare(broker: &str, method: &str, args: &Value) -> Result<Prepared, CallError> {
+pub(crate) fn prepare(broker: &str, method: &str, args: &Value) -> Result<Prepared, ClientError> {
     let pool = pool(broker);
     let m = find_method(pool, method)?;
     if m.is_client_streaming() || m.is_server_streaming() {
-        return Err(CallError::Broker(Error::Unsupported {
+        return Err(ClientError::Broker(Error::Unsupported {
             capability: "raw_streaming".into(),
         }));
     }
@@ -104,14 +104,14 @@ pub fn prepare(broker: &str, method: &str, args: &Value) -> Result<Prepared, Cal
     let options = DeserializeOptions::new().deny_unknown_fields(true);
     let request =
         DynamicMessage::deserialize_with_options(m.input(), args, &options).map_err(|e| {
-            CallError::Broker(config(format!(
+            ClientError::Broker(config(format!(
                 "the arguments do not fit {}: {e}",
                 m.input().name()
             )))
         })?;
     let path = format!("/{}/{}", m.parent_service().full_name(), m.name())
         .parse::<PathAndQuery>()
-        .map_err(|e| CallError::Arg(e.to_string()))?;
+        .map_err(|e| ClientError::Arg(e.to_string()))?;
     Ok(Prepared {
         quota: m.name().to_string(),
         path,
@@ -121,13 +121,13 @@ pub fn prepare(broker: &str, method: &str, args: &Value) -> Result<Prepared, Cal
 }
 
 /// The reply as JSON: the field names of the `.proto`, 64 bit integers as text, defaults written out.
-fn reply_json(message: &DynamicMessage) -> Result<Value, CallError> {
+fn reply_json(message: &DynamicMessage) -> Result<Value, ClientError> {
     let options = SerializeOptions::new()
         .use_proto_field_name(true)
         .skip_default_fields(false);
     message
         .serialize_with_options(serde_json::value::Serializer, &options)
-        .map_err(|e| CallError::Arg(format!("the reply cannot be written as JSON: {e}")))
+        .map_err(|e| ClientError::Arg(format!("the reply cannot be written as JSON: {e}")))
 }
 
 struct DynCodec {
@@ -201,12 +201,12 @@ where
 }
 
 /// T-Bank: a method of the API by name.
-pub async fn tbank(
+pub(crate) async fn tbank(
     raw: TbankRaw,
     method: &str,
     args: &Value,
     command: bool,
-) -> Result<Value, CallError> {
+) -> Result<Value, ClientError> {
     let prepared = prepare("tbank", method, args)?;
     let quota = prepared.quota.clone();
     let call = move |client: brokapi::tbank::protocol::TbankClient| async move {
@@ -221,12 +221,12 @@ pub async fn tbank(
 }
 
 /// Finam: a method of the API by name.
-pub async fn finam(
+pub(crate) async fn finam(
     raw: FinamRaw,
     method: &str,
     args: &Value,
     command: bool,
-) -> Result<Value, CallError> {
+) -> Result<Value, ClientError> {
     let prepared = prepare("finam", method, args)?;
     let quota = prepared.quota.clone();
     // The closure may run twice (after a renewal of the token), so it keeps its own message.
@@ -337,24 +337,24 @@ const BCS_OPS: &[(&str, Verb, &str)] = &[
 ];
 
 /// Text of a JSON scalar for a URL.
-fn url_text(value: &Value) -> Result<String, CallError> {
+fn url_text(value: &Value) -> Result<String, ClientError> {
     match value {
         Value::String(s) => Ok(s.clone()),
         Value::Bool(b) => Ok(b.to_string()),
         Value::Number(n) => Ok(n.to_string()),
-        other => Err(CallError::Broker(config(format!(
+        other => Err(ClientError::Broker(config(format!(
             "a query value must be a string, a number or a boolean, got {other}"
         )))),
     }
 }
 
 /// `path` + `?query`. A list value repeats the key.
-fn with_query(path: &str, query: Option<&Value>) -> Result<String, CallError> {
+fn with_query(path: &str, query: Option<&Value>) -> Result<String, ClientError> {
     let Some(query) = query.filter(|q| !q.is_null()) else {
         return Ok(path.to_string());
     };
     let Value::Object(map) = query else {
-        return Err(CallError::Broker(config(
+        return Err(ClientError::Broker(config(
             "args[\"query\"] must be an object",
         )));
     };
@@ -374,12 +374,12 @@ fn with_query(path: &str, query: Option<&Value>) -> Result<String, CallError> {
         return Ok(path.to_string());
     }
     let encoded = serde_urlencoded::to_string(&pairs)
-        .map_err(|e| CallError::Broker(config(format!("the query cannot be written: {e}"))))?;
+        .map_err(|e| ClientError::Broker(config(format!("the query cannot be written: {e}"))))?;
     Ok(format!("{path}?{encoded}"))
 }
 
 /// Where a BCS call goes: the verb, the path with its query and the body.
-fn bcs_target(method: &str, args: &Value) -> Result<(Verb, String), CallError> {
+fn bcs_target(method: &str, args: &Value) -> Result<(Verb, String), ClientError> {
     let args = if args.is_null() { &json!({}) } else { args };
     let query = args.get("query");
     let (verb, path) = if let Some((_, verb, template)) =
@@ -393,12 +393,14 @@ fn bcs_target(method: &str, args: &Value) -> Result<(Verb, String), CallError> {
                 .map(url_text)
                 .transpose()?
                 .ok_or_else(|| {
-                    CallError::Broker(config(format!(
+                    ClientError::Broker(config(format!(
                         "{method} needs args[\"path\"][\"id\"] (the id in the path)"
                     )))
                 })?;
             if id.is_empty() || id.contains(['/', '?', '#']) {
-                return Err(CallError::Broker(config("the id in the path is not valid")));
+                return Err(ClientError::Broker(config(
+                    "the id in the path is not valid",
+                )));
             }
             path = path.replace("{id}", &id);
         }
@@ -408,19 +410,19 @@ fn bcs_target(method: &str, args: &Value) -> Result<(Verb, String), CallError> {
             "GET" => Verb::Get,
             "POST" => Verb::Post,
             other => {
-                return Err(CallError::Broker(config(format!(
+                return Err(ClientError::Broker(config(format!(
                     "the verb {other:?} is not supported, use GET or POST"
                 ))));
             }
         };
         if !path.starts_with('/') || path.contains(['?', '#']) {
-            return Err(CallError::Broker(config(
+            return Err(ClientError::Broker(config(
                 "after the verb comes a path that starts with / and has no query (the query goes to args[\"query\"])",
             )));
         }
         (verb, path.to_string())
     } else {
-        return Err(CallError::Broker(config(format!(
+        return Err(ClientError::Broker(config(format!(
             "BCS has no operation {method:?}: use a name from its rate limit file (GetQuotes, GetPortfolio, ...) or \
              \"GET /path\" / \"POST /path\", nothing was sent"
         ))));
@@ -429,12 +431,12 @@ fn bcs_target(method: &str, args: &Value) -> Result<(Verb, String), CallError> {
 }
 
 /// BCS: an operation by name, or any path.
-pub async fn bcs(
+pub(crate) async fn bcs(
     raw: BcsRaw,
     method: &str,
     args: &Value,
     command: bool,
-) -> Result<Value, CallError> {
+) -> Result<Value, ClientError> {
     let (verb, path) = bcs_target(method, args)?;
     let body = args
         .get("body")
@@ -469,12 +471,12 @@ pub async fn bcs(
 // -------------------------------------------------------------------------------------------------- ALOR
 
 /// The query of an ALOR call: the pairs of `args["query"]`, a list value repeats the key.
-fn alor_query(args: &Value) -> Result<Vec<(String, String)>, CallError> {
+fn alor_query(args: &Value) -> Result<Vec<(String, String)>, ClientError> {
     let Some(query) = args.get("query").filter(|q| !q.is_null()) else {
         return Ok(Vec::new());
     };
     let Value::Object(map) = query else {
-        return Err(CallError::Broker(config(
+        return Err(ClientError::Broker(config(
             "args[\"query\"] must be an object",
         )));
     };
@@ -496,16 +498,16 @@ fn alor_query(args: &Value) -> Result<Vec<(String, String)>, CallError> {
 /// ALOR: any method of the API by its verb and path, `"GET /md/v2/time"`. The path is the one of the API
 /// description (with the numbers already in it), `args["query"]` is the query, `args["body"]` the JSON of a POST
 /// or PUT, `args["request_id"]` the `X-REQID` of an order command (a new one is made if the call has none).
-pub async fn alor(
+pub(crate) async fn alor(
     raw: AlorRaw,
     method: &str,
     args: &Value,
     command: bool,
-) -> Result<Value, CallError> {
+) -> Result<Value, ClientError> {
     use brokapi::alor::protocol::http::client::Method;
     let args = if args.is_null() { &json!({}) } else { args };
     let Some((verb, path)) = method.split_once(' ') else {
-        return Err(CallError::Broker(config(format!(
+        return Err(ClientError::Broker(config(format!(
             "ALOR has no operation named {method:?}: give the verb and the path, \"GET /md/v2/time\"; nothing was sent"
         ))));
     };
@@ -515,13 +517,13 @@ pub async fn alor(
         "PUT" => Method::PUT,
         "DELETE" => Method::DELETE,
         other => {
-            return Err(CallError::Broker(config(format!(
+            return Err(ClientError::Broker(config(format!(
                 "the verb {other:?} is not supported, use GET, POST, PUT or DELETE"
             ))));
         }
     };
     if !path.starts_with('/') || path.contains(['?', '#']) {
-        return Err(CallError::Broker(config(
+        return Err(ClientError::Broker(config(
             "after the verb comes a path that starts with / and has no query (the query goes to args[\"query\"])",
         )));
     }

@@ -1,0 +1,33 @@
+[package]
+name = "brokapi-client"
+description = "One account at any broker behind one type: the four connectors, the event channel, the rate limiter and the call by method name (the layer under the Python module and the gateway)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+documentation.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+# The library with all four brokers: the client is the place where one type stands for any of them.
+brokapi = { path = "../..", version = "0.1.0-alpha.3", features = ["bcs", "tbank", "finam", "alor"] }
+async-trait.workspace = true
+dotenvy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "macros"] }
+# `raw()`: a method of a gRPC broker is found by its name in the compiled descriptors, the JSON becomes the request.
+prost = "0.14"
+prost-reflect = { version = "0.16", features = ["serde"] }
+tonic = { version = "0.14", default-features = false, features = ["codegen"] }
+serde_urlencoded.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+brokapi-mocks.workspace = true
+tokio = { workspace = true, features = ["full", "test-util"] }

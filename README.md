@@ -34,6 +34,7 @@ pip install brokapi
 | `brokapi-core`, `brokapi-runtime`, `brokapi-sansio` | типы и трейты, лимиты и сверка, ядро без сети |
 | `brokapi-bcs`, `brokapi-tbank`, `brokapi-finam`, `brokapi-alor` | коннекторы брокеров |
 | `brokapi-bcs-protocol`, `brokapi-tbank-protocol`, `brokapi-finam-protocol`, `brokapi-alor-protocol` | клиенты протоколов брокеров |
+| `brokapi-client` | один счет у любого из четырех брокеров за одним типом: события, лимиты, вызовы по имени (на нем стоит Python) |
 | `brokapi-mocks`, `brokapi-conformance` | имитации и общие сценарии для тестов, не публикуются |
 
 ## Участие

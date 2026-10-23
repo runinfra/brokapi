@@ -14,9 +14,7 @@ mod client;
 mod errors;
 #[cfg(feature = "testing")]
 mod mocks;
-mod raw;
 mod record;
-mod settings;
 
 /// Texts of the `Display` of sample errors, for a test that keeps the Python messages equal to the Rust ones.
 #[pyfunction]

@@ -277,6 +277,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "brokapi-client"
+version = "0.1.0-alpha.3"
+dependencies = [
+ "async-trait",
+ "brokapi",
+ "dotenvy",
+ "prost",
+ "prost-reflect",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "tokio",
+ "tonic",
+ "uuid",
+]
+
+[[package]]
 name = "brokapi-conformance"
 version = "0.1.0-alpha.3"
 dependencies = [
@@ -366,20 +383,12 @@ name = "brokapi-python"
 version = "0.1.0-alpha.3"
 dependencies = [
  "brokapi",
+ "brokapi-client",
  "brokapi-mocks",
- "chrono",
- "dotenvy",
- "prost",
- "prost-reflect",
  "pyo3",
  "pyo3-async-runtimes",
- "rust_decimal",
- "serde",
  "serde_json",
- "serde_urlencoded",
  "tokio",
- "tonic",
- "uuid",
 ]
 
 [[package]]

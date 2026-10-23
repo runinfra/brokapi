@@ -38,6 +38,7 @@ pub mod bcs;
 pub mod finam;
 pub mod gate;
 pub mod live;
+pub mod settings;
 pub mod tbank;
 pub mod time;
 
