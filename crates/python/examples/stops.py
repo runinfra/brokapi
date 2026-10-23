@@ -5,6 +5,7 @@ The code of the page "Стоп-заявки, Python" of the book. The tests run 
 
 import asyncio
 import uuid
+from dataclasses import dataclass
 from decimal import Decimal
 
 import brokapi
@@ -39,25 +40,55 @@ async def waiting(client: brokapi.Client) -> list[brokapi.StopOrderSnapshot]:
 
 
 # ANCHOR: unknown
+@dataclass(frozen=True)
+class Placement:
+    """What is known about the stop after `protect_once`. At most one of the two fields is filled."""
+
+    stop: brokapi.StopOrderSnapshot | None = None
+    """Our stop is at the broker, found by its `cid`."""
+    unclear: tuple[brokapi.StopOrderSnapshot, ...] = ()
+    """Stops without a `cid` on the same instrument and side. One of them may be ours, there is no way to tell. Do not
+    place another one: a person looks, or the bot takes one of them by its `broker_id` if it knows it is its own."""
+    # Both empty: there is no stop at the broker. It is safe to call `protect_once` again (it makes a NEW cid).
+
+
 async def protect_once(
-    client: brokapi.Client, instrument: brokapi.InstrumentId, stop_price: Decimal
-) -> brokapi.StopOrderSnapshot | None:
+    client: brokapi.Client, instrument: brokapi.InstrumentId, stop_price: Decimal, wait: float = 5.0
+) -> Placement:
     """Puts the stop; when the answer is lost, looks for it at the broker instead of putting it again."""
     cid = brokapi.new_cid()
+    side = brokapi.Side.SELL
     try:
         await client.place_stop(
             cid=cid,
             instrument=instrument,
-            side=brokapi.Side.SELL,
+            side=side,
             kind=brokapi.StopOrderKind.STOP_LOSS,
             qty=(await client.trading_params(instrument)).lot_size,
             stop_price=stop_price,
         )
     except brokapi.Rejected:
-        return None  # the broker said no: there is no stop
+        return Placement()  # the broker said no: there is no stop
     except (brokapi.Unknown, brokapi.Transport):
         pass  # it may be there. NEVER place again under this cid: look.
-    return next((stop for stop in await client.active_stop_orders() if stop.cid == cid), None)
+
+    async def look() -> Placement:
+        stops = await client.active_stop_orders()
+        ours = next((stop for stop in stops if stop.cid == cid), None)
+        if ours is not None:
+            return Placement(stop=ours)
+        unclear = (
+            stop
+            for stop in stops
+            if stop.cid is None and stop.instrument.key == instrument.key and stop.side is side
+        )
+        return Placement(unclear=tuple(unclear))
+
+    found = await look()
+    if found.stop is None and not found.unclear:
+        await asyncio.sleep(wait)  # a slow broker takes the stop late: look once more before saying "nothing"
+        found = await look()
+    return found
     # ANCHOR_END: unknown
 
 

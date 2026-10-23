@@ -234,25 +234,67 @@ async def test_stops_example_protects_lists_and_releases(mock_of: object, capsys
     assert "cancelled, 0 waiting" in out
 
 
-async def test_a_lost_answer_of_place_stop_is_looked_up_not_repeated() -> None:
-    async with await testing.mock_bcs() as mock:
+@pytest.mark.parametrize("mock_of", [testing.mock_bcs, testing.mock_tbank, testing.mock_finam, testing.mock_alor])
+async def test_a_lost_answer_of_place_stop_is_looked_up_not_repeated(mock_of: object) -> None:
+    """The broker took the stop and the answer was lost: the recipe finds it by its cid and does not place a second one."""
+    async with await mock_of() as mock:  # type: ignore[operator]
         client = await mock.connect()
         await client.reconcile()
         sber = await client.instrument("SBER")
         real = client.place_stop
         sent: list[uuid.UUID] = []
 
-        async def lost_answer(**kw: object) -> brokapi.OrderAck:
+        async def counted(**kw: object) -> brokapi.OrderAck:
             sent.append(kw["cid"])  # type: ignore[arg-type]
-            await real(**kw)  # type: ignore[arg-type]  # it reached the broker
-            raise brokapi.Unknown()  # but the answer was lost
+            return await real(**kw)  # type: ignore[arg-type]
 
-        client.place_stop = lost_answer  # type: ignore[method-assign]
-        found = await stops.protect_once(client, sber, Decimal("100"))
+        client.place_stop = counted  # type: ignore[method-assign]
+        mock.lose_stop_answers()
+        found = await stops.protect_once(client, sber, Decimal("100"), wait=0)
         assert len(sent) == 1  # sent once, never again
-        assert found is not None and found.cid == sent[0]  # and found at the broker by its cid
-        await stops.release(client, found)
+        assert found.stop is not None and found.stop.cid == sent[0]  # and found at the broker by its cid
+        assert found.unclear == ()
+        assert len(await client.active_stop_orders()) == 1  # one stop at the broker, not two
+        await stops.release(client, found.stop)
         assert await client.active_stop_orders() == []
+
+
+async def test_a_stop_that_may_be_ours_is_reported_not_called_nothing() -> None:
+    """At T-Bank a stop of another run has no cid. Next to a lost answer it cannot be told from ours: no second stop."""
+    async with await testing.mock_tbank() as mock:
+        mine = await mock.connect()
+        other = await mock.connect(name="other-run")
+        for client in (mine, other):
+            await client.reconcile()
+        sber = await mine.instrument("SBER")
+        await stops.protect_once(other, sber, Decimal("100"), wait=0)  # an equal stop, placed by another program
+
+        mock.lose_stop_answers()
+        found = await stops.protect_once(mine, sber, Decimal("100"), wait=0)
+        assert found.stop is None
+        assert len(found.unclear) == 2  # theirs and (probably) ours: no cid on either
+        assert all(stop.cid is None for stop in found.unclear)
+        assert len(await mine.active_stop_orders()) == 2  # and no third one was placed
+
+
+async def test_when_nothing_is_at_the_broker_the_recipe_says_so_and_may_be_called_again() -> None:
+    async with await testing.mock_bcs() as mock:
+        client = await mock.connect()
+        await client.reconcile()
+        sber = await client.instrument("SBER")
+        real = client.place_stop
+
+        async def lost_on_the_way(**kw: object) -> brokapi.OrderAck:
+            raise brokapi.Unknown()  # the request never reached the broker
+
+        client.place_stop = lost_on_the_way  # type: ignore[method-assign]
+        assert await stops.protect_once(client, sber, Decimal("100"), wait=0) == stops.Placement()
+        assert await client.active_stop_orders() == []
+
+        client.place_stop = real  # type: ignore[method-assign]
+        found = await stops.protect_once(client, sber, Decimal("100"), wait=0)  # a new cid, nothing is doubled
+        assert found.stop is not None
+        assert len(await client.active_stop_orders()) == 1
 
 
 async def test_a_refused_stop_leaves_nothing_behind() -> None:
@@ -267,7 +309,7 @@ async def test_a_refused_stop_leaves_nothing_behind() -> None:
             return await real(**{**kw, "expiry": brokapi.StopExpiry.end_of_day()})  # type: ignore[arg-type]
 
         client.place_stop = refused  # type: ignore[method-assign]
-        assert await stops.protect_once(client, sber, Decimal("100")) is None
+        assert await stops.protect_once(client, sber, Decimal("100"), wait=0) == stops.Placement()
         assert await client.active_stop_orders() == []
 
 

@@ -1768,7 +1768,12 @@ pub trait StopOrderExecutor: Send + Sync {
     ///   limit price, a repeated cid, an expiry the broker does not have for this kind.
     /// - [`Error::RateLimited`]: not executed, wait `retry_after`. Use a new cid for the retry.
     /// - [`Error::Unknown`] when the request may have reached the broker and there is no answer. Do
-    ///   NOT place again. Look in [`active_stop_orders`](Self::active_stop_orders) for the cid.
+    ///   NOT place again. Look in [`active_stop_orders`](Self::active_stop_orders): a stop order with
+    ///   your cid is yours. A stop order with `cid: None` on the same instrument and side may be yours
+    ///   too, when the connector could not tell for sure (T-Bank does not return the cid and links it
+    ///   only when exactly one stop order fits). Then do not place another one under a new cid either.
+    ///   Only an empty list means that nothing is at the broker (look a second time after a few seconds
+    ///   first: a slow broker takes the order late), and then a new cid is safe.
     /// - [`Error::Transport`] when the failure happened before the request left.
     ///
     /// # Examples

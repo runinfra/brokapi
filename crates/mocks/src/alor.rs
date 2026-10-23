@@ -66,6 +66,9 @@ pub struct MockOptions {
     /// The mock holds every order command this many milliseconds before it acts and answers. The clock is the
     /// tokio clock of the test, so `brokapi_mocks::time::jump` ends the wait.
     pub order_delay_ms: AtomicU64,
+    /// The broker takes a stop order (`actions/stop`, `actions/stopLimit`), then the answer is lost: the stop order
+    /// is in the book and the client gets HTTP 503.
+    pub stop_answer_lost: AtomicBool,
     /// Every `"METHOD /path"` the order command methods served, in order.
     pub served: std::sync::Mutex<Vec<String>>,
     /// Every `X-REQID` of an order command, in order.
@@ -589,6 +592,16 @@ async fn http_handler(
                 )
             });
         }
+    }
+    let lose_answer = state.options.stop_answer_lost.load(Ordering::SeqCst)
+        && method == Method::POST
+        && (path.ends_with("/actions/stop") || path.ends_with("/actions/stopLimit"));
+    if lose_answer {
+        let _ = handle_http(state, method, uri, headers, body).await;
+        return json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"message":"unavailable"}"#,
+        );
     }
     handle_http(state, method, uri, headers, body).await
 }

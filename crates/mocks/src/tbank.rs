@@ -104,6 +104,14 @@ pub struct MockOptions {
     pub stop_create_step_secs: std::sync::atomic::AtomicI64,
     /// Every `GetStopOrders` request seen: (from seconds, to seconds), `None` for a missing bound.
     pub stop_get_requests: Mutex<Vec<(Option<i64>, Option<i64>)>>,
+    /// A new stop order gets the creation time of the real clock (plus `stop_create_step_secs` for each
+    /// stop order placed so far), as the broker writes it. Off: a fixed old time, the same for all of them.
+    pub stop_create_now: AtomicBool,
+    /// The broker takes the stop order, then the answer is lost: the stop order is in the book, the client gets
+    /// `UNAVAILABLE`. The failure that matters most for a bot: the order is there and nobody told it.
+    pub stop_answer_lost: AtomicBool,
+    /// The broker takes the stop order and answers, but the answer carries no stop order id.
+    pub stop_answer_without_id: AtomicBool,
     /// `GetLastPrices` calls served (a method no connector wraps, used to test `raw()`).
     pub last_price_calls: AtomicU32,
     /// `GetInstrumentBy` calls served: the connectors read the lot size of an instrument with it, once.
@@ -1365,9 +1373,15 @@ impl StopOrdersService for Mock {
             direction: r.direction,
             currency: "rub".into(),
             order_type: r.stop_order_type,
-            create_date: ts(
-                1_700_000_000 + n as i64 * self.0.opts.stop_create_step_secs.load(Ordering::SeqCst)
-            ),
+            create_date: ts(if self.0.opts.stop_create_now.load(Ordering::SeqCst) {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0)
+            } else {
+                1_700_000_000
+            } + n as i64
+                * self.0.opts.stop_create_step_secs.load(Ordering::SeqCst)),
             expiration_time: r.expire_date,
             price: money(&r.price),
             stop_price: money(&r.stop_price),
@@ -1383,8 +1397,12 @@ impl StopOrdersService for Mock {
             .lock()
             .unwrap()
             .insert(id.clone(), (r.account_id, stop));
+        if self.0.opts.stop_answer_lost.load(Ordering::SeqCst) {
+            return Err(Status::unavailable("connection reset by peer"));
+        }
+        let without_id = self.0.opts.stop_answer_without_id.load(Ordering::SeqCst);
         Ok(Response::new(pb::PostStopOrderResponse {
-            stop_order_id: id,
+            stop_order_id: if without_id { String::new() } else { id },
             order_request_id: r.order_id,
             response_metadata: None,
         }))

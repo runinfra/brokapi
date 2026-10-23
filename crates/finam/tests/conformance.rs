@@ -58,6 +58,22 @@ async fn stop_orders() {
 }
 
 #[tokio::test]
+async fn a_stop_order_without_an_answer_keeps_its_cid() {
+    let server = MockServer::start().await;
+    let (ud, _rx) = ud(&server, "ACC1").await;
+    conf::reconcile(&ud).await;
+    conf::stop_without_answer_keeps_its_cid(&ud, &sber(), Price::from(1), |lose| {
+        server
+            .state
+            .options
+            .stop_answer_lost
+            .store(lose, std::sync::atomic::Ordering::SeqCst)
+    })
+    .await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
 async fn portfolio() {
     let server = MockServer::start().await;
     let (ud, mut rx) = ud(&server, "ACC1").await;

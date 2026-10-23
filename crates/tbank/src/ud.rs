@@ -33,7 +33,7 @@ use crate::emit::Emitter;
 use crate::error::{STOP_ORDERS_RESPONSE_LIMIT, config, is_not_found, map_status, transport};
 use crate::ids::{
     id_from_parts, instrument_ref, instrument_request, nanos_to_proto, price_to_quotation,
-    require_native, stamps,
+    proto_to_nanos, require_native, stamps, wall_nanos,
 };
 use crate::lots::{LotBook, pieces_to_lots};
 use crate::map::{execution, order as map_order, portfolio as map_portfolio, stop as map_stop};
@@ -62,6 +62,9 @@ fn stop_list_too_long(requests: usize) -> Error {
 
 /// Stop orders this connector placed: the broker's `StopOrder` does not carry our idempotency key,
 /// so the cid <-> broker id link lives only here (lost on restart, see the T-Bank page of the book).
+///
+/// Plus the stop orders whose placement ended without a clear answer ([`LostStop`]): the broker may
+/// hold them, and the link is made later, from the list, when the stop order can be told for sure.
 #[derive(Default)]
 struct StopBook {
     /// `None` = sent, the broker's id is not known (yet).
@@ -69,11 +72,64 @@ struct StopBook {
     by_id: HashMap<String, ClientOrderId>,
     /// The cids in the order they were sent, for the window.
     order: std::collections::VecDeque<ClientOrderId>,
+    /// Placements without a clear answer that wait to be found in the list, oldest first.
+    lost: Vec<LostStop>,
 }
 
 /// How many stop-order cids the book remembers besides the live ones. The guarantee "a cid is sent
 /// once" holds inside this window.
 const STOP_BOOK_CAP: usize = 10_000;
+
+/// How many placements without an answer wait to be found in the list. When there are more, the oldest
+/// are forgotten (their stop orders then show `cid: None`).
+const LOST_STOP_CAP: usize = 64;
+
+/// How far the clock of the broker may differ from ours when a lost placement is matched with a stop order
+/// by its creation time. The broker writes the time in whole seconds, and the two clocks are kept in step by
+/// the network time, so a few seconds is wider than any honest difference. A wider margin would only
+/// let stop orders placed by someone else a minute apart look like ours: the margin is the width of the window in
+/// which "the same stop order" is still a guess that can be right.
+const STOP_CLOCK_SKEW: Duration = Duration::from_secs(10);
+
+/// A `place_stop` that ended with [`Error::Unknown`] (or with an answer that has no stop order id): the
+/// request and the time it was in flight. T-Bank does not return our `cid` in the list, so the stop order
+/// is recognised by what was asked for and when it was created ([`StopBook::adopt`]).
+struct LostStop {
+    req: PlaceStopOrderRequest,
+    lots: i64,
+    /// Our wall clock just before the request left.
+    sent: i64,
+    /// Our wall clock when the wait for the answer ended.
+    gave_up: i64,
+}
+
+impl LostStop {
+    fn skew() -> i64 {
+        i64::try_from(STOP_CLOCK_SKEW.as_nanos()).unwrap_or(i64::MAX)
+    }
+
+    /// The broker stop order `o` is what was asked for and was created while the request could be at the
+    /// broker, give or take the difference of the clocks.
+    fn could_be(&self, o: &pb::StopOrder) -> bool {
+        let Some(created) = o
+            .create_date
+            .as_ref()
+            .filter(|t| t.seconds != 0)
+            .map(|t| proto_to_nanos(t).as_nanos())
+        else {
+            return false;
+        };
+        created >= self.sent.saturating_sub(Self::skew())
+            && created <= self.gave_up.saturating_add(Self::skew())
+            && map_stop::same_as_request(o, &self.req, self.lots)
+    }
+
+    /// After this moment (our clock) a stop order created by this request would already be in the list:
+    /// a read that comes later and finds nothing means there is nothing to find.
+    fn settled_at(&self) -> i64 {
+        self.gave_up.saturating_add(Self::skew())
+    }
+}
 
 impl StopBook {
     /// `false` when this cid was already sent: the library never sends the same stop order twice. A repeat
@@ -133,6 +189,56 @@ impl StopBook {
 
     fn cid_of(&self, id: &str) -> Option<ClientOrderId> {
         self.by_id.get(id).copied()
+    }
+
+    /// Remembers a placement that ended without a clear answer. `sent` and `gave_up` are wall-clock
+    /// nanoseconds before the request left and when the wait for the answer ended.
+    fn lose(&mut self, req: PlaceStopOrderRequest, lots: i64, sent: i64, gave_up: i64) {
+        self.lost.push(LostStop {
+            req,
+            lots,
+            sent,
+            gave_up,
+        });
+        if self.lost.len() > LOST_STOP_CAP {
+            self.lost.remove(0);
+        }
+    }
+
+    /// Links the active stop orders `raw` (the whole list, as the broker returned it, `now` is our wall clock in
+    /// nanoseconds) with the placements that got no answer, and forgets the placements that can no longer be found.
+    ///
+    /// A stop order with no cid of ours is linked to a placement only when both are the only match of each
+    /// other: the stop order fits that placement and no other one, and the placement fits no other stop order
+    /// that has no cid. Two equal placements, or one placement and two equal stop orders (one of them may be
+    /// placed by hand), link nothing: the connector does not guess. A placement is forgotten when it is linked, or
+    /// when a read made after its window finds no match (it was never placed, or is gone already).
+    fn adopt(&mut self, raw: &[pb::StopOrder], now: i64) {
+        let free: Vec<&pb::StopOrder> = raw
+            .iter()
+            .filter(|o| !self.by_id.contains_key(&o.stop_order_id))
+            .collect();
+        let mut links = Vec::new();
+        for (i, lost) in self.lost.iter().enumerate() {
+            let mut fits = free.iter().filter(|o| lost.could_be(o));
+            let (Some(o), None) = (fits.next(), fits.next()) else {
+                continue;
+            };
+            if self.lost.iter().filter(|other| other.could_be(o)).count() == 1 {
+                links.push((i, o.stop_order_id.clone()));
+            }
+        }
+        let mut linked = vec![false; self.lost.len()];
+        for (i, id) in links {
+            linked[i] = true;
+            let cid = self.lost[i].req.cid;
+            self.bind(cid, &id);
+        }
+        let mut i = 0;
+        self.lost.retain(|lost| {
+            i += 1;
+            !linked[i - 1] && now <= lost.settled_at()
+        });
     }
 }
 
@@ -2282,6 +2388,18 @@ impl StopOrderExecutor for UserDataConnector {
     /// kept in memory: after a restart `active_stop_orders` shows `cid: None` and a stop order is
     /// cancelled by `StopOrderRef::Broker`.
     ///
+    /// **After [`Error::Unknown`] the link is made later.** The connector keeps what was asked for
+    /// (instrument, side, kind, lots, stop price, limit price) and the time the request was in flight.
+    /// The next [`active_stop_orders`](Self::active_stop_orders) that finds exactly one stop order with
+    /// no cid of ours that fits this request, and was created within that time (give or take 10 seconds for
+    /// the difference of the clocks), shows it with this `cid`, and from then on the stop order can be
+    /// cancelled by it. If two stop orders fit, or two lost placements are equal, nothing is linked
+    /// and the stop order shows `cid: None`: the connector does not guess. Read the list after the
+    /// answer was lost, and do not place again under another cid while a stop order with `cid: None` of the
+    /// same instrument and side is there. This rests on the creation time that T-Bank puts in the list.
+    /// Sending the same request again with the same `order_id` is not used: whether T-Bank treats
+    /// `order_id` of a stop order as an idempotency key is not verified live.
+    ///
     /// Units: `qty` is a whole number of LOTS (at least 1). Prices are positive. A stop-limit order
     /// needs a limit price. Expiry is `GoodTillCancel` or `GoodTillDate`: T-Bank stop orders have no
     /// end-of-day expiry. The checks run before any quota is spent. Like `place`, the call is never
@@ -2383,6 +2501,7 @@ impl StopOrderExecutor for UserDataConnector {
             });
         }
         let now = brokapi_runtime::now();
+        let sent = wall_nanos().as_nanos();
         let mut c = self.inner.client.stop_orders();
         let cid = req.cid;
         match command(self.inner.request_timeout, c.post_stop_order(wire)).await {
@@ -2398,8 +2517,18 @@ impl StopOrderExecutor for UserDataConnector {
                     ts: stamps(now, None),
                 })
             }
-            // An answer without an id: the broker may have the order, nobody can tell which.
-            CommandOutcome::Done(_) | CommandOutcome::Unknown => Err(Error::Unknown),
+            // No clear answer: the broker may hold the stop order (a lost answer, or an answer with no id).
+            // Keep what was asked for, so that the stop order can be linked to this cid when it shows up
+            // in the list.
+            CommandOutcome::Done(_) | CommandOutcome::Unknown => {
+                self.inner.stops.lock().expect("stops poisoned").lose(
+                    req,
+                    lots,
+                    sent,
+                    wall_nanos().as_nanos(),
+                );
+                Err(Error::Unknown)
+            }
             CommandOutcome::Refused(_, err) => {
                 self.inner
                     .stops
@@ -2493,7 +2622,9 @@ impl StopOrderExecutor for UserDataConnector {
     /// The stop orders that are active now (`GetStopOrders` with the active filter).
     ///
     /// `cid` is filled only for stop orders placed by this connector object. Others (placed earlier,
-    /// by hand, by another program) have `cid: None`: use their `broker_id`.
+    /// by hand, by another program) have `cid: None`: use their `broker_id`. A stop order whose
+    /// placement ended in [`Error::Unknown`] gets its `cid` here, when it can be told for sure, see
+    /// [`place_stop`](Self::place_stop).
     ///
     /// # Errors
     ///
@@ -2542,7 +2673,8 @@ impl StopOrderExecutor for UserDataConnector {
                     .await?,
             );
         }
-        let stops = self.inner.stops.lock().expect("stops poisoned");
+        let mut stops = self.inner.stops.lock().expect("stops poisoned");
+        stops.adopt(&raw, wall_nanos().as_nanos());
         Ok(raw
             .iter()
             .zip(lots)
@@ -2596,6 +2728,196 @@ mod stop_book_tests {
 
     fn cid(n: u8) -> ClientOrderId {
         ClientOrderId::from_bytes([n; 16])
+    }
+
+    const SEC: i64 = 1_000_000_000;
+    /// A moment of the wall clock, in nanoseconds.
+    const T0: i64 = 1_800_000_000 * SEC;
+
+    fn request(n: u8) -> PlaceStopOrderRequest {
+        use brokapi_core::{InstrumentKey, NativeId, Price, Qty, Side, StopExpiry, StopOrderKind};
+        PlaceStopOrderRequest {
+            cid: cid(n),
+            instrument: InstrumentId::new(
+                InstrumentKey::new("SBER", "TQBR"),
+                NativeId::Uid("uid-sber".into()),
+            ),
+            side: Side::Sell,
+            kind: StopOrderKind::StopLoss,
+            qty: Qty::from(10),
+            stop_price: Price::from(200),
+            limit_price: None,
+            expiry: StopExpiry::GoodTillCancel,
+        }
+    }
+
+    /// The stop order the broker holds for `request`, created at `created` (seconds).
+    fn broker_stop(id: &str, created: i64) -> pb::StopOrder {
+        pb::StopOrder {
+            stop_order_id: id.into(),
+            lots_requested: 1,
+            direction: pb::StopOrderDirection::Sell as i32,
+            order_type: pb::StopOrderType::StopLoss as i32,
+            create_date: Some(prost_types::Timestamp {
+                seconds: created,
+                nanos: 0,
+            }),
+            stop_price: Some(pb::MoneyValue {
+                currency: "rub".into(),
+                units: 200,
+                nano: 0,
+            }),
+            instrument_uid: "uid-sber".into(),
+            ticker: "SBER".into(),
+            class_code: "TQBR".into(),
+            status: pb::StopOrderStatusOption::StopOrderStatusActive as i32,
+            ..Default::default()
+        }
+    }
+
+    /// A lost placement of `request(n)`: sent at `T0`, given up one second later.
+    fn lost_book(ns: &[u8]) -> StopBook {
+        let mut book = StopBook::default();
+        for &n in ns {
+            assert!(book.begin(cid(n)));
+            book.lose(request(n), 1, T0, T0 + SEC);
+        }
+        book
+    }
+
+    #[test]
+    fn a_lost_placement_is_linked_to_the_only_stop_order_that_fits() {
+        let mut book = lost_book(&[1]);
+        book.adopt(&[broker_stop("S-1", 1_800_000_000)], T0 + 2 * SEC);
+        assert_eq!(book.cid_of("S-1"), Some(cid(1)));
+        assert_eq!(book.id_of(cid(1)).as_deref(), Some("S-1"));
+        assert!(book.lost.is_empty(), "linked: no longer waiting");
+    }
+
+    #[test]
+    fn the_creation_time_must_lie_in_the_window_of_the_request() {
+        // Sent at T0, given up at T0 + 1 s, 10 s of margin on both sides.
+        for (created, linked) in [
+            (1_800_000_000 - 11, false),
+            (1_800_000_000 - 9, true),
+            (1_800_000_000 + 10, true),
+            (1_800_000_000 + 12, false),
+        ] {
+            let mut book = lost_book(&[1]);
+            book.adopt(&[broker_stop("S-1", created)], T0 + 2 * SEC);
+            assert_eq!(book.cid_of("S-1").is_some(), linked, "created {created}");
+        }
+    }
+
+    #[test]
+    fn what_was_asked_for_must_match() {
+        let mut other_price = broker_stop("S-1", 1_800_000_000);
+        other_price.stop_price.as_mut().unwrap().units = 201;
+        let mut other_side = broker_stop("S-1", 1_800_000_000);
+        other_side.direction = pb::StopOrderDirection::Buy as i32;
+        let mut other_lots = broker_stop("S-1", 1_800_000_000);
+        other_lots.lots_requested = 2;
+        let mut other_instrument = broker_stop("S-1", 1_800_000_000);
+        other_instrument.instrument_uid = "uid-gazp".into();
+        other_instrument.ticker = "GAZP".into();
+        let mut with_limit = broker_stop("S-1", 1_800_000_000);
+        with_limit.order_type = pb::StopOrderType::StopLimit as i32;
+        with_limit.price = Some(pb::MoneyValue {
+            currency: "rub".into(),
+            units: 199,
+            nano: 0,
+        });
+        for o in [
+            other_price,
+            other_side,
+            other_lots,
+            other_instrument,
+            with_limit,
+        ] {
+            let mut book = lost_book(&[1]);
+            book.adopt(&[o], T0 + 2 * SEC);
+            assert_eq!(book.cid_of("S-1"), None);
+        }
+    }
+
+    #[test]
+    fn two_equal_stop_orders_for_one_placement_link_nothing() {
+        // One of them may be placed by hand: the connector does not guess which is ours.
+        let mut book = lost_book(&[1]);
+        book.adopt(
+            &[
+                broker_stop("S-1", 1_800_000_000),
+                broker_stop("S-2", 1_800_000_001),
+            ],
+            T0 + 2 * SEC,
+        );
+        assert_eq!((book.cid_of("S-1"), book.cid_of("S-2")), (None, None));
+        assert_eq!(book.lost.len(), 1, "still waiting: the window is open");
+    }
+
+    #[test]
+    fn two_equal_placements_link_nothing_even_for_two_stop_orders() {
+        let mut book = lost_book(&[1, 2]);
+        book.adopt(
+            &[
+                broker_stop("S-1", 1_800_000_000),
+                broker_stop("S-2", 1_800_000_001),
+            ],
+            T0 + 2 * SEC,
+        );
+        assert_eq!((book.cid_of("S-1"), book.cid_of("S-2")), (None, None));
+        // And one stop order for two equal placements: it is not ours more than the other's.
+        let mut book = lost_book(&[1, 2]);
+        book.adopt(&[broker_stop("S-1", 1_800_000_000)], T0 + 2 * SEC);
+        assert_eq!(book.cid_of("S-1"), None);
+    }
+
+    #[test]
+    fn different_placements_are_linked_each_to_its_own_stop_order() {
+        let mut book = lost_book(&[1]);
+        let mut second = request(2);
+        second.stop_price = brokapi_core::Price::from(150);
+        assert!(book.begin(cid(2)));
+        book.lose(second, 1, T0, T0 + SEC);
+        let mut s2 = broker_stop("S-2", 1_800_000_000);
+        s2.stop_price.as_mut().unwrap().units = 150;
+        book.adopt(&[s2, broker_stop("S-1", 1_800_000_000)], T0 + 2 * SEC);
+        assert_eq!(book.cid_of("S-1"), Some(cid(1)));
+        assert_eq!(book.cid_of("S-2"), Some(cid(2)));
+    }
+
+    #[test]
+    fn a_stop_order_that_already_has_a_cid_is_not_taken() {
+        let mut book = lost_book(&[1]);
+        assert!(book.begin(cid(9)));
+        book.bind(cid(9), "S-1");
+        book.adopt(&[broker_stop("S-1", 1_800_000_000)], T0 + 2 * SEC);
+        assert_eq!(book.cid_of("S-1"), Some(cid(9)), "the first owner keeps it");
+        assert_eq!(book.id_of(cid(1)), None);
+    }
+
+    #[test]
+    fn a_placement_is_forgotten_after_a_read_that_came_after_its_window() {
+        let mut book = lost_book(&[1]);
+        // Within the window nothing is found yet: the placement waits (the broker may be slow).
+        book.adopt(&[], T0 + 5 * SEC);
+        assert_eq!(book.lost.len(), 1);
+        // A read after the window (given up at T0 + 1 s, 10 s of margin) finds nothing: forgotten.
+        book.adopt(&[], T0 + 12 * SEC);
+        assert!(book.lost.is_empty());
+        // A stop order that shows up now is not linked to a forgotten placement.
+        book.adopt(&[broker_stop("S-1", 1_800_000_000)], T0 + 13 * SEC);
+        assert_eq!(book.cid_of("S-1"), None);
+    }
+
+    #[test]
+    fn the_waiting_placements_are_bounded() {
+        let mut book = StopBook::default();
+        for n in 0..(LOST_STOP_CAP + 5) {
+            book.lose(request(1), n as i64, T0, T0);
+        }
+        assert_eq!(book.lost.len(), LOST_STOP_CAP);
+        assert_eq!(book.lost[0].lots, 5, "the oldest went first");
     }
 
     #[test]

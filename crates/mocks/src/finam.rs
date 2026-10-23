@@ -80,6 +80,9 @@ pub struct MockOptions {
     pub place_error: Mutex<Option<Code>>,
     /// `PlaceOrder` applies the order but answers only after this delay (client timeout test).
     pub place_delay_ms: AtomicU64,
+    /// The broker takes a stop order (`PlaceOrder` of type STOP or STOP_LIMIT, `PlaceSLTPOrder`), then the answer is
+    /// lost: the stop order is in the book and the client gets `UNAVAILABLE`.
+    pub stop_answer_lost: std::sync::atomic::AtomicBool,
     /// The next N calls that need auth answer UNAUTHENTICATED.
     pub unauth_next: AtomicU32,
     /// Interval of periodic stream messages.
@@ -605,6 +608,9 @@ impl OrdersService for Mock {
         if delay > 0 {
             tokio::time::sleep(Duration::from_millis(delay)).await;
         }
+        if is_stop && self.0.options.stop_answer_lost.load(Ordering::SeqCst) {
+            return Err(Status::unavailable("connection reset by peer"));
+        }
         Ok(Response::new(os))
     }
 
@@ -768,6 +774,9 @@ impl OrdersService for Mock {
             a.orders.push(os.clone());
             let _ = a.orders_tx.send(os.clone());
         })?;
+        if self.0.options.stop_answer_lost.load(Ordering::SeqCst) {
+            return Err(Status::unavailable("connection reset by peer"));
+        }
         Ok(Response::new(os))
     }
 }

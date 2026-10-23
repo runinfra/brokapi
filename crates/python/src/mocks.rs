@@ -25,6 +25,8 @@ enum Server {
 pub struct NativeMock {
     broker: &'static str,
     server: Mutex<Option<Server>>,
+    /// Turns on and off the fault "the broker takes a stop order, the answer is lost".
+    lose_stop_answers: Box<dyn Fn(bool) + Send + Sync>,
 }
 
 /// Starts the imitation of `broker` (`"bcs"`, `"tbank"`, `"finam"` or `"alor"`) on a free port.
@@ -36,22 +38,31 @@ pub fn start_mock(
     synthetic_candles: bool,
 ) -> PyResult<Bound<'_, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        let (kind, server) = match broker.as_str() {
+        let (kind, server, lose): (_, _, Box<dyn Fn(bool) + Send + Sync>) = match broker.as_str() {
             "bcs" => {
                 let options = Arc::new(bcs::MockOptions::default());
                 options
                     .synthetic_candles
                     .store(synthetic_candles, Ordering::Relaxed);
-                ("bcs", Server::Bcs(bcs::MockServer::start(options).await))
+                let lose = Arc::clone(&options);
+                (
+                    "bcs",
+                    Server::Bcs(bcs::MockServer::start(options).await),
+                    Box::new(move |on| lose.stop_answer_lost.store(on, Ordering::SeqCst)),
+                )
             }
             "tbank" => {
                 let options = Arc::new(tbank::MockOptions::default());
                 options
                     .synthetic_candles
                     .store(synthetic_candles, Ordering::Relaxed);
+                // A stop order gets the time of the real clock, as the broker writes it.
+                options.stop_create_now.store(true, Ordering::Relaxed);
+                let lose = Arc::clone(&options);
                 (
                     "tbank",
                     Server::Tbank(tbank::MockServer::start(options).await),
+                    Box::new(move |on| lose.stop_answer_lost.store(on, Ordering::SeqCst)),
                 )
             }
             "finam" => {
@@ -61,17 +72,28 @@ pub fn start_mock(
                     .options
                     .synthetic_candles
                     .store(synthetic_candles, Ordering::Relaxed);
-                ("finam", Server::Finam(server))
+                let state = Arc::clone(&server.state);
+                (
+                    "finam",
+                    Server::Finam(server),
+                    Box::new(move |on| state.options.stop_answer_lost.store(on, Ordering::SeqCst)),
+                )
             }
-            "alor" => (
-                "alor",
-                Server::Alor(alor::MockServer::start(Default::default()).await),
-            ),
+            "alor" => {
+                let options = Arc::new(alor::MockOptions::default());
+                let lose = Arc::clone(&options);
+                (
+                    "alor",
+                    Server::Alor(alor::MockServer::start(options).await),
+                    Box::new(move |on| lose.stop_answer_lost.store(on, Ordering::SeqCst)),
+                )
+            }
             other => return Err(PyValueError::new_err(format!("no imitation of {other:?}"))),
         };
         Ok(NativeMock {
             broker: kind,
             server: Mutex::new(Some(server)),
+            lose_stop_answers: lose,
         })
     })
 }
@@ -167,6 +189,21 @@ impl NativeMock {
                 })?;
             }
         }
+        Ok(())
+    }
+
+    /// With `lose == true` the broker takes the next stop orders and the answer is lost: the stop order is at the
+    /// broker, the client gets a failure of the connection. `false` returns the usual answers.
+    fn lose_stop_answers(&self, lose: bool) -> PyResult<()> {
+        if self
+            .server
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_none()
+        {
+            return Err(gone());
+        }
+        (self.lose_stop_answers)(lose);
         Ok(())
     }
 

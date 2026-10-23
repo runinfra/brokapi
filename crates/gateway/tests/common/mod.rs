@@ -31,6 +31,9 @@ impl Mock {
             }
             Broker::Tbank => {
                 let opts = Arc::new(tbank::MockOptions::default());
+                // A stop order gets the time of the real clock, as the broker writes it.
+                opts.stop_create_now
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
                 Mock::Tbank(tbank::MockServer::start(Arc::clone(&opts)).await, opts)
             }
             Broker::Finam => Mock::Finam(finam::MockServer::start().await),
@@ -70,6 +73,17 @@ impl Mock {
             Mock::Tbank(_, o) => o.post_delay_ms.store(ms, SeqCst),
             Mock::Finam(s) => s.state.options.place_delay_ms.store(ms, SeqCst),
             Mock::Alor(_, o) => o.order_delay_ms.store(ms, SeqCst),
+        }
+    }
+
+    /// The imitation takes a stop order and then loses the answer (`true`), or answers as usual (`false`).
+    pub fn lose_stop_answers(&self, lose: bool) {
+        use std::sync::atomic::Ordering::SeqCst;
+        match self {
+            Mock::Bcs(_, o) => o.stop_answer_lost.store(lose, SeqCst),
+            Mock::Tbank(_, o) => o.stop_answer_lost.store(lose, SeqCst),
+            Mock::Finam(s) => s.state.options.stop_answer_lost.store(lose, SeqCst),
+            Mock::Alor(_, o) => o.stop_answer_lost.store(lose, SeqCst),
         }
     }
 

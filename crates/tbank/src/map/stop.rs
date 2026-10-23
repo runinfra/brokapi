@@ -136,6 +136,38 @@ fn state_of(s: pb::StopOrderStatusOption) -> StopOrderState {
     }
 }
 
+/// The limit price of a broker stop order: shown for a stop-limit order and for a limit child order.
+fn limit_of(o: &pb::StopOrder, kind: StopOrderKind) -> Option<Price> {
+    o.price.as_ref().map(price_of_money).filter(|p| {
+        p.is_positive()
+            && (kind == StopOrderKind::StopLimit
+                || o.exchange_order_type() == pb::ExchangeOrderType::Limit)
+    })
+}
+
+/// `true` when the broker stop order `o` is what `req` asks for: the same instrument, side, kind,
+/// number of lots (`lots`), stop price and limit price. Nothing else is compared: the broker does not
+/// return the `cid`, so this is how a stop order whose placement got no clear answer is recognised.
+pub fn same_as_request(o: &pb::StopOrder, req: &PlaceStopOrderRequest, lots: i64) -> bool {
+    let kind = kind_of(o.order_type());
+    let side = match o.direction() {
+        pb::StopOrderDirection::Sell => Side::Sell,
+        pb::StopOrderDirection::Buy => Side::Buy,
+        pb::StopOrderDirection::Unspecified => return false,
+    };
+    let instrument = id_from_parts(&o.instrument_uid, &o.figi, &o.ticker, &o.class_code);
+    let same_instrument = match (&req.instrument.native, &instrument.native) {
+        (a, b) if std::mem::discriminant(a) == std::mem::discriminant(b) => a == b,
+        _ => req.instrument.key == instrument.key,
+    };
+    same_instrument
+        && side == req.side
+        && kind == req.kind
+        && o.lots_requested == lots
+        && o.stop_price.as_ref().map(price_of_money) == Some(req.stop_price)
+        && limit_of(o, kind) == req.limit_price
+}
+
 /// Core snapshot of a broker stop order. `cid` comes from what this connector registered at
 /// `place_stop` (the broker's `StopOrder` does not carry the idempotency key). `lot` is the lot size of
 /// the instrument: the quantity of the snapshot is in units.
@@ -146,11 +178,7 @@ pub fn snapshot(
     lot: i64,
 ) -> StopOrderSnapshot {
     let kind = kind_of(o.order_type());
-    let limit = o.price.as_ref().map(price_of_money).filter(|p| {
-        p.is_positive()
-            && (kind == StopOrderKind::StopLimit
-                || o.exchange_order_type() == pb::ExchangeOrderType::Limit)
-    });
+    let limit = limit_of(o, kind);
     let expiry = match o.expiration_time.as_ref().filter(|t| t.seconds != 0) {
         Some(t) => StopExpiry::GoodTillDate(proto_to_nanos(t)),
         None => StopExpiry::GoodTillCancel,

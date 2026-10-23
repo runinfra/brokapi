@@ -1136,6 +1136,100 @@ pub async fn stop_order_far_from_market<U: StopOrderExecutor + ?Sized>(
     }
 }
 
+/// A stop order the broker took, whose answer was lost, comes back in the list with its `cid`.
+///
+/// The failure that costs money: the stop order is at the broker and the bot was told nothing. `lose` turns the
+/// fault of the imitation on (`true`: the broker takes a stop order, then the answer is lost) and off (`false`).
+/// The connector must not send again and must not lose the link between the stop order and the `cid`. Steps:
+/// 1. With the fault on, `place_stop` is [`Error::Unknown`].
+/// 2. The same `cid` again is `Rejected(duplicate_place)`: a stop order is never sent twice.
+/// 3. `active_stop_orders` shows exactly one stop order, and its `cid` is the one that was sent. Whether the
+///    broker returns the number or the connector finds the stop order by what was asked for, the bot sees the
+///    same.
+/// 4. `cancel_stop` by that `cid` removes it.
+///
+/// # Panics
+///
+/// With `[conformance:stop_without_answer_keeps_its_cid] <reason>`.
+///
+/// # Examples
+///
+/// ```
+/// # use std::sync::atomic::Ordering;
+/// # use brokapi_core::Price;
+/// # use brokapi_bcs::limits::default_limits;
+/// # use brokapi_bcs::{UserDataConfig, UserDataConnector};
+/// # use brokapi_core::{InstrumentId, InstrumentKey, NativeId, ShutdownMode};
+/// # use brokapi_runtime::BrokerLimiter;
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # let opts = std::sync::Arc::new(brokapi_mocks::bcs::MockOptions::default());
+/// # let server = brokapi_mocks::bcs::MockServer::start(std::sync::Arc::clone(&opts)).await;
+/// # let cfg = brokapi_bcs_protocol::config::BcsConfig::for_mock("mock-refresh-token", &server.http_base).with_write(true);
+/// # let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+/// # let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bcs-ud"), BrokerLimiter::new(&default_limits()), tx).await?;
+/// # let sber = InstrumentId::new(InstrumentKey::new("SBER", "TQBR"), NativeId::TickerClass { ticker: "SBER".into(), class_code: "TQBR".into() });
+/// brokapi_conformance::reconcile(&ud).await;
+/// brokapi_conformance::stop_without_answer_keeps_its_cid(&ud, &sber, Price::from(200), |lose| {
+///     opts.stop_answer_lost.store(lose, Ordering::SeqCst)
+/// })
+/// .await;
+/// # ud.shutdown(ShutdownMode::Immediate).await;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn stop_without_answer_keeps_its_cid<U: StopOrderExecutor + ?Sized>(
+    ud: &U,
+    id: &InstrumentId,
+    stop_price: Price,
+    lose: impl Fn(bool),
+) {
+    const S: &str = "stop_without_answer_keeps_its_cid";
+    let req = stop_request(id, StopOrderKind::StopLoss, stop_price, None);
+    let cid = req.cid;
+
+    lose(true);
+    let placed = ud.place_stop(req.clone()).await;
+    lose(false);
+    match placed {
+        Err(Error::Unknown) => {}
+        other => fail(
+            S,
+            format!("a stop order whose answer was lost must be Unknown, got {other:?}"),
+        ),
+    }
+    match ud.place_stop(req).await {
+        Err(Error::Rejected { code, .. }) if code == "duplicate_place" => {}
+        other => fail(
+            S,
+            format!(
+                "a stop order is never sent twice: expected Rejected(duplicate_place), got {other:?}"
+            ),
+        ),
+    }
+    let active = ud
+        .active_stop_orders()
+        .await
+        .unwrap_or_else(|e| fail(S, format!("active_stop_orders failed: {e:?}")));
+    match active.as_slice() {
+        [one] if one.cid == Some(cid) => {}
+        other => fail(
+            S,
+            format!("the list must hold the one stop order, with cid {cid}, got {other:?}"),
+        ),
+    }
+    ud.cancel_stop(StopOrderRef::Cid(cid))
+        .await
+        .unwrap_or_else(|e| fail(S, format!("cancel_stop by the cid failed: {e:?}")));
+    let after = ud
+        .active_stop_orders()
+        .await
+        .unwrap_or_else(|e| fail(S, format!("list after cancel failed: {e:?}")));
+    if !after.is_empty() {
+        fail(S, format!("nothing should be left, found {after:?}"));
+    }
+}
+
 /// A connector without stop orders says so: every stop method answers [`brokapi_core::Error::Unsupported`].
 ///
 /// Checks that `place_stop`, `cancel_stop`, `active_stop_orders` and `subscribe_stop_orders` each

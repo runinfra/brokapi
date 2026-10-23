@@ -85,6 +85,15 @@ class MockBroker:
             account,
         )
 
+    def lose_stop_answers(self, lose: bool = True) -> None:
+        """While on, the broker takes every stop order and the answer is lost.
+
+        The stop order is at the broker, and ``place_stop`` ends with :class:`~brokapi.Unknown`. This is the failure
+        a bot must survive without placing a second stop: look the stop up (``active_stop_orders``) and never send the
+        same ``cid`` again. ``lose_stop_answers(False)`` brings the usual answers back.
+        """
+        self._native.lose_stop_answers(lose)
+
     async def close(self) -> None:
         """Closes the clients that were connected through it, then stops the server."""
         for client in self._clients:

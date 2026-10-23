@@ -106,6 +106,9 @@ pub struct MockOptions {
     /// timeout of the client, or to keep one command in flight while others wait). The clock is the tokio
     /// clock of the test, so `brokapi_mocks::time::jump` ends the wait.
     pub order_delay_ms: std::sync::atomic::AtomicU64,
+    /// The broker takes a stop order (a conditional order, `orderType` 5), then the answer is lost: the order is
+    /// in the book and the client gets HTTP 503.
+    pub stop_answer_lost: AtomicBool,
     /// `GET /orders` answers an empty list of reports (`data: []`) for a known order: an answer that says
     /// nothing about the order.
     pub empty_reports: AtomicBool,
@@ -625,6 +628,15 @@ async fn http_handler(
                 json_response(StatusCode::INTERNAL_SERVER_ERROR, r#"{"type":"INTERNAL"}"#)
             });
         }
+    }
+    let lose_answer = state.options.stop_answer_lost.load(Ordering::SeqCst)
+        && method == Method::POST
+        && matches!(uri.path().strip_prefix(ORDERS_PATH), Some("" | "/sync"))
+        && serde_json::from_slice::<Value>(&body)
+            .is_ok_and(|v| v["orderType"].as_str() == Some("5"));
+    if lose_answer {
+        let _ = handle_http(state, method, uri, headers, body).await;
+        return json_response(StatusCode::SERVICE_UNAVAILABLE, r#"{"type":"UNAVAILABLE"}"#);
     }
     handle_http(state, method, uri, headers, body).await
 }

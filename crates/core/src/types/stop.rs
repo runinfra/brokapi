@@ -131,7 +131,9 @@ pub enum StopOrderRef {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StopOrderSnapshot {
     /// `None` when the connector cannot tie the broker's stop order to a cid (placed by someone else,
-    /// or the broker does not echo it and this process did not place it).
+    /// or the broker does not echo it and this process did not place it, or a placement whose answer
+    /// was lost fits this stop order and another one equally well). A stop order with `cid: None` next
+    /// to a lost answer may be yours.
     pub cid: Option<ClientOrderId>,
     /// The broker's id of the stop order. Use it with [`StopOrderRef::Broker`].
     pub broker_id: BrokerOrderId,

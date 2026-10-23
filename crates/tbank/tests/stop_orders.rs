@@ -197,6 +197,117 @@ async fn no_answer_is_unknown_and_never_repeated() {
     );
 }
 
+/// The mock where a stop order gets the time of the real clock, as the broker writes it.
+fn lossy_mock() -> Arc<MockOptions> {
+    let opts: Arc<MockOptions> = Arc::default();
+    opts.stop_create_now.store(true, Ordering::SeqCst);
+    opts
+}
+
+#[tokio::test]
+async fn a_stop_order_whose_answer_was_lost_comes_back_with_its_cid() {
+    // The broker took the stop order, the answer never arrived: the stop order is at the broker.
+    let opts = lossy_mock();
+    opts.stop_answer_lost.store(true, Ordering::SeqCst);
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let ud = ud(&server).await;
+    let req = stop(StopOrderKind::StopLoss, dec!(100.0), None);
+    let err = ud.place_stop(req.clone()).await.unwrap_err();
+    assert!(matches!(err, Error::Unknown), "{err:?}");
+
+    // It is in the list, and the list names it by the cid that was sent.
+    let active = ud.active_stop_orders().await.unwrap();
+    assert_eq!(active.len(), 1, "{active:?}");
+    assert_eq!(active[0].cid, Some(req.cid), "{active:?}");
+
+    // The cid is used up: it is never sent again, and the stop order is still cancelled by it.
+    let err = ud.place_stop(req.clone()).await.unwrap_err();
+    assert!(
+        matches!(err, Error::Rejected { ref code, .. } if code == "duplicate_place"),
+        "{err:?}"
+    );
+    assert_eq!(opts.stop_post_calls.load(Ordering::SeqCst), 1, "one send");
+    ud.cancel_stop(StopOrderRef::Cid(req.cid)).await.unwrap();
+    assert!(ud.active_stop_orders().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_answer_without_a_stop_order_id_is_found_in_the_list_too() {
+    let opts = lossy_mock();
+    opts.stop_answer_without_id.store(true, Ordering::SeqCst);
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let ud = ud(&server).await;
+    let req = stop(StopOrderKind::StopLimit, dec!(100.0), Some(dec!(99.0)));
+    let err = ud.place_stop(req.clone()).await.unwrap_err();
+    assert!(matches!(err, Error::Unknown), "{err:?}");
+    let active = ud.active_stop_orders().await.unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].cid, Some(req.cid));
+    assert_eq!(active[0].limit_price, req.limit_price);
+}
+
+#[tokio::test]
+async fn two_equal_lost_stop_orders_get_no_cid() {
+    // Two equal requests, both answers lost: either stop order could be either request. Nothing is guessed.
+    let opts = lossy_mock();
+    opts.stop_answer_lost.store(true, Ordering::SeqCst);
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let ud = ud(&server).await;
+    let first = stop(StopOrderKind::StopLoss, dec!(100.0), None);
+    let mut second = first.clone();
+    second.cid = ClientOrderId::new_v4();
+    for req in [first, second] {
+        assert!(matches!(ud.place_stop(req).await, Err(Error::Unknown)));
+    }
+    let active = ud.active_stop_orders().await.unwrap();
+    assert_eq!(active.len(), 2);
+    assert!(active.iter().all(|s| s.cid.is_none()), "{active:?}");
+}
+
+#[tokio::test]
+async fn a_lost_stop_order_is_not_mixed_up_with_an_equal_one_of_someone_else() {
+    let opts: Arc<MockOptions> = Arc::default();
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    // Someone else (here: another connector object, which knows nothing of ours) holds an equal stop order
+    // that was created long before.
+    let other = ud(&server).await;
+    let foreign = stop(StopOrderKind::StopLoss, dec!(100.0), None);
+    let foreign_ack = other.place_stop(foreign).await.unwrap();
+    // The mock gives it a time far in the past (its fixed old creation time).
+    let ud = ud(&server).await;
+    opts.stop_create_now.store(true, Ordering::SeqCst);
+    opts.stop_answer_lost.store(true, Ordering::SeqCst);
+    let req = stop(StopOrderKind::StopLoss, dec!(100.0), None);
+    assert!(matches!(
+        ud.place_stop(req.clone()).await,
+        Err(Error::Unknown)
+    ));
+    let active = ud.active_stop_orders().await.unwrap();
+    assert_eq!(active.len(), 2, "{active:?}");
+    for s in &active {
+        if s.broker_id == foreign_ack.broker_id {
+            assert_eq!(s.cid, None, "the old stop order is not ours");
+        } else {
+            assert_eq!(s.cid, Some(req.cid), "the new one is");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_lost_stop_order_that_never_reached_the_broker_leaves_nothing_to_link() {
+    // The request was lost on the way: the broker has nothing, and the list says so.
+    let opts = lossy_mock();
+    opts.stop_post_fail
+        .lock()
+        .unwrap()
+        .replace((tonic::Code::Unavailable, "no route".into()));
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let ud = ud(&server).await;
+    let req = stop(StopOrderKind::StopLoss, dec!(100.0), None);
+    assert!(matches!(ud.place_stop(req).await, Err(Error::Unknown)));
+    assert!(ud.active_stop_orders().await.unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn local_checks_spend_no_quota_and_send_nothing() {
     let server = MockServer::start(Arc::default()).await;

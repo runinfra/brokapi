@@ -63,6 +63,21 @@ async fn stop_orders(broker: Broker) {
     rig.stop().await;
 }
 
+/// A stop order the broker took whose answer was lost keeps its cid behind a gateway too.
+async fn a_stop_order_without_an_answer_keeps_its_cid(broker: Broker) {
+    let rig = Rig::start(broker).await;
+    let sber = rig.sber();
+    conf::reconcile(&rig.bot).await;
+    let (_, ud) = rig.bot.caps().await.expect("caps");
+    if ud.supports_stop_orders {
+        conf::stop_without_answer_keeps_its_cid(&rig.bot, &sber, rig.stop_price(), |lose| {
+            rig.mock.lose_stop_answers(lose)
+        })
+        .await;
+    }
+    rig.stop().await;
+}
+
 async fn portfolio(broker: Broker) {
     let mut rig = Rig::start(broker).await;
     let source = rig.ud_source();
@@ -301,6 +316,11 @@ macro_rules! per_broker {
             #[tokio::test]
             async fn stop_orders() {
                 super::stop_orders($broker).await
+            }
+
+            #[tokio::test]
+            async fn a_stop_order_without_an_answer_keeps_its_cid() {
+                super::a_stop_order_without_an_answer_keeps_its_cid($broker).await
             }
 
             #[tokio::test]

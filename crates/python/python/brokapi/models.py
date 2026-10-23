@@ -655,7 +655,8 @@ class StopOrderSnapshot:
     ts: Timestamps
     cid: Optional[uuid.UUID] = None
     """``None`` when the connector cannot tie the stop order to a ``cid`` (placed by someone else, or by an earlier run
-    of the program, at a broker that does not echo it)."""
+    of the program, at a broker that does not echo it, or a lost answer that fits this stop and another one equally
+    well). Next to a lost answer, a stop without a ``cid`` may be yours."""
     limit_price: Optional[Decimal] = None
     """The price of the exchange order put at the trigger. ``None`` is a market order."""
 

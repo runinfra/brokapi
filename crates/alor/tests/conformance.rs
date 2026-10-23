@@ -97,6 +97,19 @@ async fn stop_orders() {
 }
 
 #[tokio::test]
+async fn a_stop_order_without_an_answer_keeps_its_cid() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (ud, _rx) = ud(&server).await;
+    conf::reconcile(&ud).await;
+    conf::stop_without_answer_keeps_its_cid(&ud, &sber(), Price::new(dec!(200.0)), |lose| {
+        opts.stop_answer_lost.store(lose, Ordering::SeqCst)
+    })
+    .await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
 async fn portfolio() {
     let server = MockServer::start(Arc::new(MockOptions::default())).await;
     let (ud, mut rx) = ud(&server).await;
