@@ -10,9 +10,9 @@
 //! caller stops waiting.
 
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -48,6 +48,13 @@ fn config(text: impl Into<String>) -> Error {
     Error::Config(ConfigError::Message(text.into()))
 }
 
+/// The `authorization` value of a key.
+fn bearer(key: &str) -> Result<MetadataValue<Ascii>, Error> {
+    format!("Bearer {key}")
+        .parse()
+        .map_err(|_| config("the access key is not valid text"))
+}
+
 /// A reply that does not follow the `.proto`: a gateway of another version.
 fn bad_reply(e: Invalid) -> Error {
     transport(format!("the gateway sent a reply that cannot be read: {e}"))
@@ -77,7 +84,12 @@ pub struct RemoteClient {
 
 struct Inner {
     channel: Channel,
-    auth: MetadataValue<Ascii>,
+    auth: RwLock<MetadataValue<Ascii>>,
+    /// The state directory of the gateway, when the client was connected by it ([`RemoteClient::connect_dir`]). The
+    /// address is read from there each time the road is made again, so a gateway that was started anew is found where it
+    /// listens now (on Windows that is another port every time), and the key is read again when the gateway refuses the
+    /// old one.
+    dir: Option<PathBuf>,
     bot: MetadataValue<Ascii>,
     name: String,
     closed: watch::Sender<bool>,
@@ -153,6 +165,67 @@ pub(crate) async fn open_channel(
     .map_err(|e| transport(format!("cannot connect to {address}: {e}")))
 }
 
+/// What the road to a gateway is made of: a Unix socket or a TCP connection, whichever the address says.
+trait Io: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin> Io for T {}
+
+async fn connect_to(address: &Address) -> std::io::Result<Box<dyn Io>> {
+    match address {
+        #[cfg(unix)]
+        Address::Unix(path) => Ok(Box::new(tokio::net::UnixStream::connect(path).await?)),
+        #[cfg(not(unix))]
+        Address::Unix(_) => Err(std::io::Error::other(
+            "Unix sockets are not available on this platform",
+        )),
+        Address::Tcp(addr) => {
+            let stream = tokio::net::TcpStream::connect(addr).await?;
+            stream.set_nodelay(true)?;
+            Ok(Box::new(stream))
+        }
+    }
+}
+
+/// The address a gateway wrote in its state directory.
+fn read_address(dir: &Path) -> Result<Address, Error> {
+    std::fs::read_to_string(dir.join(ADDRESS_FILE))
+        .map_err(|e| config(format!("no gateway address in {}: {e}", dir.display())))?
+        .trim()
+        .parse()
+        .map_err(|e: String| config(e))
+}
+
+/// Opens the channel to the gateway whose state directory is `dir`. Unlike [`open_channel`], the address is not fixed:
+/// it is read from `gateway.addr` each time the channel connects, the first time and after every break. A gateway
+/// started anew listens at the same place on Unix, but on Windows at another port, and the file is where it says so.
+async fn open_channel_dir(dir: &Path, options: ConnectOptions) -> Result<Channel, Error> {
+    let tune = |endpoint: Endpoint| match options.http2_window {
+        Some(window) => endpoint
+            .initial_stream_window_size(window)
+            .initial_connection_window_size(window),
+        None => endpoint,
+    };
+    let dir = dir.to_owned();
+    let shown = dir.clone();
+    tune(Endpoint::from_static("http://gateway.local"))
+        .connect_with_connector(tower::service_fn(move |_: tonic::codegen::http::Uri| {
+            let dir = dir.clone();
+            async move {
+                let address = read_address(&dir).map_err(std::io::Error::other)?;
+                let stream = connect_to(&address).await.map_err(|e| {
+                    std::io::Error::new(e.kind(), format!("cannot connect to {address}: {e}"))
+                })?;
+                Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(stream))
+            }
+        }))
+        .await
+        .map_err(|e| {
+            transport(format!(
+                "cannot connect to the gateway in {}: {e}",
+                shown.display()
+            ))
+        })
+}
+
 impl RemoteClient {
     /// Connects to the gateway at `address` as the bot `bot`, with the access `key`.
     pub async fn connect(address: &Address, key: &str, bot: &str) -> Result<Self, Error> {
@@ -172,16 +245,25 @@ impl RemoteClient {
             )));
         }
         let channel = open_channel(address, options).await?;
-        let auth = format!("Bearer {key}")
-            .parse()
-            .map_err(|_| config("the access key is not valid text"))?;
+        Self::with_channel(channel, key, bot, None, options)
+    }
+
+    fn with_channel(
+        channel: Channel,
+        key: &str,
+        bot: &str,
+        dir: Option<PathBuf>,
+        options: ConnectOptions,
+    ) -> Result<Self, Error> {
+        let auth = bearer(key)?;
         let bot_value = bot
             .parse()
             .map_err(|_| config("the bot name is not valid text"))?;
         Ok(Self {
             inner: Arc::new(Inner {
                 channel,
-                auth,
+                auth: RwLock::new(auth),
+                dir,
                 bot: bot_value,
                 name: bot.to_owned(),
                 closed: watch::channel(false).0,
@@ -194,7 +276,9 @@ impl RemoteClient {
         })
     }
 
-    /// Connects to the gateway whose state directory is `dir`: the address and the key are read from there.
+    /// Connects to the gateway whose state directory is `dir`: the address and the key are read from there. The address is
+    /// read again whenever the client has to connect again, so a gateway that was stopped and started anew is found even
+    /// where it listens at another place than before (on Windows, at another port).
     pub async fn connect_dir(dir: &Path, bot: &str) -> Result<Self, Error> {
         Self::connect_dir_with(dir, bot, ConnectOptions::default()).await
     }
@@ -205,18 +289,21 @@ impl RemoteClient {
         bot: &str,
         options: ConnectOptions,
     ) -> Result<Self, Error> {
-        let address: Address = std::fs::read_to_string(dir.join(ADDRESS_FILE))
-            .map_err(|e| config(format!("no gateway address in {}: {e}", dir.display())))?
-            .trim()
-            .parse()
-            .map_err(|e: String| config(e))?;
+        if !valid_bot_name(bot) {
+            return Err(config(format!(
+                "the bot name {bot:?} is not valid: 1 to 64 letters, digits, '.', '_' or '-'"
+            )));
+        }
+        // The address is read here too, so that a directory without a gateway is named as such.
+        read_address(dir)?;
         let key = read_key(dir).map_err(|e| {
             config(format!(
                 "cannot read the access key in {}: {e}",
                 dir.display()
             ))
         })?;
-        Self::connect_with(&address, &key, bot, options).await
+        let channel = open_channel_dir(dir, options).await?;
+        Self::with_channel(channel, &key, bot, Some(dir.to_owned()), options)
     }
 
     /// The name this bot gave.
@@ -257,11 +344,34 @@ impl RemoteClient {
 
     fn request<T>(&self, message: T) -> Request<T> {
         let mut req = Request::new(message);
-        req.metadata_mut()
-            .insert(KEY_HEADER, self.inner.auth.clone());
+        let auth = self
+            .inner
+            .auth
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        req.metadata_mut().insert(KEY_HEADER, auth);
         req.metadata_mut()
             .insert(BOT_HEADER, self.inner.bot.clone());
         req
+    }
+
+    /// The gateway refused the key: when the client knows the state directory, the key is read from there again, since a
+    /// gateway whose directory was made anew has a new one. The next call carries it.
+    fn note_status(&self, status: &Status) {
+        if status.code() != tonic::Code::Unauthenticated {
+            return;
+        }
+        let Some(dir) = &self.inner.dir else { return };
+        if let Ok(key) = read_key(dir)
+            && let Ok(auth) = bearer(&key)
+        {
+            *self
+                .inner
+                .auth
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = auth;
+        }
     }
 
     /// One call. A command runs to its end even if the caller stops waiting.
@@ -281,11 +391,15 @@ impl RemoteClient {
             return Err(Error::ShuttingDown);
         }
         let (client, request) = (self.grpc(), self.request(message));
+        let me = self.clone();
         let work = async move {
             f(client, request)
                 .await
                 .map(Response::into_inner)
-                .map_err(|status| error_of(&status, command))
+                .map_err(|status| {
+                    me.note_status(&status);
+                    error_of(&status, command)
+                })
         };
         if command {
             brokapi::runtime::run_detached(work)
@@ -402,7 +516,10 @@ impl RemoteClient {
         let mut stream = client
             .events(self.request(msg))
             .await
-            .map_err(|s| error_of(&s, false))?
+            .map_err(|s| {
+                self.note_status(&s);
+                error_of(&s, false)
+            })?
             .into_inner();
         let first = stream
             .message()

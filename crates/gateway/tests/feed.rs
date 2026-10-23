@@ -10,7 +10,7 @@ use brokapi::core::{
     ShutdownMode, SubscribeOpts, Timeframe,
 };
 use brokapi_client::{Account, Broker, call_by_name, candle_pages_from_json};
-use brokapi_gateway::{ConnectOptions, FeedItem, Gateway, GatewayConfig, RemoteClient, pb};
+use brokapi_gateway::{ConnectOptions, FeedItem, Gateway, GatewayConfig, Listen, RemoteClient, pb};
 use common::{Mock, bcs_order, roomy_limits, sber_bcs};
 use serde_json::json;
 use tokio::time::timeout;
@@ -87,11 +87,28 @@ async fn a_feed_hands_over_events_and_ends_when_the_client_closes() {
 
 #[tokio::test]
 async fn a_feed_reports_a_new_gateway_as_a_gap_and_the_guard_closes_commands_until_reconcile() {
+    a_new_gateway_is_a_gap_and_the_guard_closes_commands(Listen::Auto).await;
+}
+
+/// On Windows the gateway listens at a port that is free, and the new process listens at another one: the bot has to find
+/// it by the file `gateway.addr`, not by the address it first knew. A port is asked for explicitly here to have the same on
+/// every system.
+#[tokio::test]
+async fn a_feed_finds_a_new_gateway_that_listens_at_another_port() {
+    a_new_gateway_is_a_gap_and_the_guard_closes_commands(Listen::Tcp(
+        "127.0.0.1:0".parse().unwrap(),
+    ))
+    .await;
+}
+
+async fn a_new_gateway_is_a_gap_and_the_guard_closes_commands(listen: Listen) {
     let mock = Mock::start(Broker::Bcs).await;
     let dir = tempfile::tempdir().unwrap();
     let start = || async {
+        let mut config = GatewayConfig::new("bcs", dir.path());
+        config.listen = listen.clone();
         let gateway = Gateway::start(
-            GatewayConfig::new("bcs", dir.path()),
+            config,
             mock.config(Broker::Bcs),
             Some(roomy_limits(Broker::Bcs)),
         )
@@ -144,6 +161,51 @@ async fn a_feed_reports_a_new_gateway_as_a_gap_and_the_guard_closes_commands_unt
     bot.place(request).await.unwrap();
     bot.cancel(cid).await.unwrap();
     until_final(&mut feed, cid).await;
+    second.shutdown(ShutdownMode::Immediate).await;
+}
+
+/// The state directory was made again, so the new gateway has another key: the bot reads it again after the gateway
+/// refuses the old one, and the calls go on.
+#[tokio::test]
+async fn a_bot_takes_the_new_key_of_a_gateway_that_was_started_anew() {
+    let mock = Mock::start(Broker::Bcs).await;
+    let dir = tempfile::tempdir().unwrap();
+    let start = || async {
+        let gateway = Gateway::start(
+            GatewayConfig::new("bcs", dir.path()),
+            mock.config(Broker::Bcs),
+            Some(roomy_limits(Broker::Bcs)),
+        )
+        .await
+        .unwrap();
+        gateway.ready().await;
+        gateway
+    };
+    let first = start().await;
+    let bot = RemoteClient::connect_dir(dir.path(), "bot").await.unwrap();
+    bot.health().await.expect("the first gateway answers");
+    let old_key = std::fs::read_to_string(dir.path().join("access.key")).unwrap();
+    first.kill().await;
+    std::fs::remove_file(dir.path().join("access.key")).unwrap();
+    let second = start().await;
+    assert_ne!(
+        std::fs::read_to_string(dir.path().join("access.key")).unwrap(),
+        old_key
+    );
+
+    // The call that meets the new gateway first may fail (the old connection, the old key), the ones after it do not.
+    let mut answered = false;
+    for _ in 0..10 {
+        if timeout(LIMIT, bot.health())
+            .await
+            .expect("an answer")
+            .is_ok()
+        {
+            answered = true;
+            break;
+        }
+    }
+    assert!(answered, "the bot did not find the new gateway and its key");
     second.shutdown(ShutdownMode::Immediate).await;
 }
 

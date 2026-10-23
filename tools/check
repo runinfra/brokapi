@@ -16,7 +16,7 @@
 #
 # The Python extension has a workspace of its own (crates/python), so steps 1-8 do not need a Python interpreter. Steps 9 and 10
 # use a virtualenv (BROKAPI_PY_VENV, default $XDG_CACHE_HOME/brokapi/venv): made on the first run, with maturin, pytest,
-# pytest-asyncio and pdoc from PyPI (network on that run).
+# pytest-asyncio, pytest-timeout and pdoc from PyPI (network on that run).
 #
 # Every example in the documentation is a doctest or a program in examples/, and all of them run
 # against the in-process broker imitations (crate brokapi-mocks): no network, no money.
@@ -68,9 +68,9 @@ python3 docs/llms.py docs docs/book
 
 step "9/10 Python: build the extension (maturin develop)"
 VENV="${BROKAPI_PY_VENV:-${XDG_CACHE_HOME:-$HOME/.cache}/brokapi/venv}"
-if [ ! -x "$VENV/bin/maturin" ] || ! "$VENV/bin/python" -c 'import pytest, pytest_asyncio, pdoc' 2>/dev/null; then
+if [ ! -x "$VENV/bin/maturin" ] || ! "$VENV/bin/python" -c 'import pytest, pytest_asyncio, pytest_timeout, pdoc' 2>/dev/null; then
     python3 -m venv "$VENV"
-    "$VENV/bin/pip" install --quiet 'maturin>=1.7,<2' pytest pytest-asyncio 'pdoc==16.0.0'
+    "$VENV/bin/pip" install --quiet 'maturin>=1.7,<2' pytest pytest-asyncio pytest-timeout 'pdoc==16.0.0'
 fi
 # The extension shares the target directory of the workspace, so the dependencies that both need are built once.
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$(pwd)/target}"

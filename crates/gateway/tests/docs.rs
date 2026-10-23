@@ -290,19 +290,52 @@ fn run(args: &[&str], cwd: &Path, registry: &Path, env: &[(String, String)]) -> 
 }
 
 /// A line as its shape: words with a digit or a slash in them (numbers, times, paths of any system) become `~`, spaces are one.
+/// The memory of a process after `cpu,` is one `~` whatever it is: a number with its unit (`9.1 MB`, `512 B`), or `-` while the
+/// service has not read it yet. The unit is a part of the number, and which one it is depends on the machine.
 fn shape(line: &str) -> String {
-    line.split_whitespace()
-        .map(|w| {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut words: Vec<&str> = Vec::new();
+    let mut after_cpu = false;
+    let mut after_memory = false;
+    for w in line.split_whitespace() {
+        if after_memory && UNITS.contains(&w) {
+            after_memory = false;
+            continue;
+        }
+        after_memory = false;
+        if after_cpu {
+            after_cpu = false;
+            after_memory = true;
+            words.push("~");
+            continue;
+        }
+        after_cpu = w == "cpu,";
+        words.push(
             if w.chars()
                 .any(|c| c.is_ascii_digit() || c == '/' || c == '\\')
             {
                 "~"
             } else {
                 w
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+            },
+        );
+    }
+    words.join(" ")
+}
+
+#[test]
+fn the_memory_of_a_process_is_one_word_of_the_shape_whatever_it_is() {
+    for memory in ["9.1 MB", "512 B", "1.2 GB", "-"] {
+        assert_eq!(
+            shape(&format!(
+                "process       pid 4133, up 1m12s, 0.3% cpu, {memory}"
+            )),
+            "process pid ~ up ~ ~ cpu, ~",
+            "{memory}"
+        );
+    }
+    // Only after `cpu,`: a unit elsewhere stays a word.
+    assert_eq!(shape("limit 5 B"), "limit ~ B");
 }
 
 /// The commands of a page and the output written under each: a `text` block where a line `$ ...` starts a command and the

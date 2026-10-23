@@ -270,11 +270,15 @@ async def test_a_recording_of_a_gateway_client_passes_a_gap_on_and_does_not_writ
         await client.subscribe_order_state()
         await gateway.restart()
         kinds: list[type] = []
-        async with contextlib.aclosing(brokapi.record.record_events(client.events, tmp_path / "run.jsonl")) as recorded:
-            async for envelope in recorded:
-                kinds.append(type(envelope.payload))
-                if isinstance(envelope.payload, brokapi.Gap):
-                    break
+
+        async def until_the_gap() -> None:
+            async with contextlib.aclosing(brokapi.record.record_events(client.events, tmp_path / "run.jsonl")) as recorded:
+                async for envelope in recorded:
+                    kinds.append(type(envelope.payload))
+                    if isinstance(envelope.payload, brokapi.Gap):
+                        break
+
+        await asyncio.wait_for(until_the_gap(), 20)
         assert kinds[-1] is brokapi.Gap
         # What was written reads back, without the Gap.
         written = [e.payload async for e in brokapi.record.replay(tmp_path / "run.jsonl")]
