@@ -1,0 +1,353 @@
+// The brokapi gateway: one process that holds the connection to one broker account and serves any number of bots.
+//
+// How a bot uses it:
+//
+//   1. Connect to the Unix socket of the gateway (or 127.0.0.1 on Windows) and send two metadata headers with every
+//      call: `authorization: Bearer <the key from the access.key file>` and `x-brokapi-bot: <name of the bot>`.
+//   2. Open `Events` first, then subscribe. The first frame of `Events` says the stream is registered; events that
+//      happen after it are yours.
+//   3. Call `Reconcile` once before any trading command.
+//
+// An error of the library comes back as a gRPC status with the `brokapi-error-bin` trailer, an `ErrorDetail`. The
+// status code is a hint for generic tools. The detail is the whole error: what a bot needs to decide whether to retry
+// is in `kind`.
+
+syntax = "proto3";
+
+package brokapi.gateway.v1;
+
+import "brokapi/gateway/v1/types.proto";
+
+service Gateway {
+  // ---- orders: a command is never repeated by the gateway, and it runs to its end if you stop waiting
+
+  rpc Place(PlaceOrderRequest) returns (OrderAck);
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+  rpc Replace(ReplaceOrderRequest) returns (OrderAck);
+  rpc OrderState(OrderStateRequest) returns (OrderSnapshot);
+  rpc ActiveOrders(ActiveOrdersRequest) returns (ActiveOrdersResponse);
+  rpc Reconcile(ReconcileRequest) returns (ReconcileReport);
+  rpc SubscribeOrderState(SubscribeRequest) returns (SubscribeResponse);
+
+  // ---- stop orders
+
+  rpc PlaceStop(PlaceStopOrderRequest) returns (OrderAck);
+  rpc CancelStop(CancelStopRequest) returns (CancelResponse);
+  rpc ActiveStopOrders(ActiveOrdersRequest) returns (ActiveStopOrdersResponse);
+  rpc SubscribeStopOrders(SubscribeRequest) returns (SubscribeResponse);
+
+  // ---- account
+
+  rpc Portfolio(AccountRequest) returns (Portfolio);
+  rpc Positions(AccountRequest) returns (PositionsResponse);
+  rpc Balances(AccountRequest) returns (BalancesResponse);
+  rpc Executions(ExecutionsRequest) returns (ExecutionsResponse);
+  rpc SubscribeExecutions(SubscribeRequest) returns (SubscribeResponse);
+  rpc SubscribePortfolio(SubscribeRequest) returns (SubscribeResponse);
+
+  // ---- market data
+
+  rpc OrderBook(OrderBookRequest) returns (OrderBook);
+  rpc LastTrades(LastTradesRequest) returns (LastTradesResponse);
+  rpc Candles(CandlesRequest) returns (CandlesResponse);
+  rpc SubscribeOrderBook(SubscribeInstrumentRequest) returns (SubscribeResponse);
+  rpc SubscribeMarketTrades(SubscribeInstrumentRequest) returns (SubscribeResponse);
+  rpc SubscribeQuotes(SubscribeInstrumentRequest) returns (SubscribeResponse);
+  rpc SubscribeCandles(SubscribeCandlesRequest) returns (SubscribeResponse);
+  // Stops a subscription for everybody: the subscriptions belong to the gateway, not to the bot that made them.
+  rpc Unsubscribe(UnsubscribeRequest) returns (UnsubscribeResponse);
+
+  // ---- instruments
+
+  rpc ResolveInstrument(ResolveInstrumentRequest) returns (InstrumentId);
+  rpc Find(FindRequest) returns (FindResponse);
+  rpc GetInstrument(InstrumentRequest) returns (Instrument);
+  rpc TradingParams(InstrumentRequest) returns (TradingParams);
+  rpc TradingStatus(InstrumentRequest) returns (TradingStatus);
+  rpc Schedule(ScheduleRequest) returns (Schedule);
+
+  // ---- the rest
+
+  // Any method of the broker's own API by name, arguments and reply as JSON text. See the page of the broker.
+  rpc Raw(RawRequest) returns (RawResponse);
+  rpc Caps(CapsRequest) returns (CapsResponse);
+  // Works while the gateway starts: this is how a bot waits for it.
+  rpc Health(HealthRequest) returns (HealthResponse);
+  // The events of the connection. See `EventsRequest`.
+  rpc Events(EventsRequest) returns (stream EventFrame);
+}
+
+// ---------------------------------------------------------------------------------------------------- requests
+
+message CancelRequest {
+  string cid = 1;
+}
+
+message CancelResponse {}
+
+message OrderStateRequest {
+  string cid = 1;
+}
+
+message ActiveOrdersRequest {}
+
+message ActiveOrdersResponse {
+  repeated OrderSnapshot orders = 1;
+}
+
+message ActiveStopOrdersResponse {
+  repeated StopOrderSnapshot stop_orders = 1;
+}
+
+message ReconcileRequest {
+  // The ids of the orders you placed and have not seen end.
+  repeated string ledger = 1;
+  // Add the orders of the gateway's own journal (all bots) to the ledger. Without it the orders of the other bots
+  // come back as `foreign`.
+  bool include_journal = 2;
+}
+
+message CancelStopRequest {
+  StopOrderRef stop = 1;
+}
+
+message AccountRequest {}
+
+message PositionsResponse {
+  repeated Position positions = 1;
+}
+
+message BalancesResponse {
+  repeated Balance balances = 1;
+}
+
+message ExecutionsRequest {
+  TimeRange range = 1;
+}
+
+message ExecutionsResponse {
+  repeated Execution executions = 1;
+}
+
+message OrderBookRequest {
+  InstrumentId instrument = 1;
+  uint32 depth = 2;
+}
+
+message LastTradesRequest {
+  InstrumentId instrument = 1;
+  uint32 limit = 2;
+}
+
+message LastTradesResponse {
+  repeated MarketTrade trades = 1;
+}
+
+message CandlesRequest {
+  InstrumentId instrument = 1;
+  Timeframe timeframe = 2;
+  TimeRange range = 3;
+}
+
+message CandlesResponse {
+  repeated Candle candles = 1;
+}
+
+message SubscribeRequest {
+  SubscribeOpts opts = 1;
+}
+
+message SubscribeInstrumentRequest {
+  InstrumentId instrument = 1;
+  SubscribeOpts opts = 2;
+}
+
+message SubscribeCandlesRequest {
+  InstrumentId instrument = 1;
+  Timeframe timeframe = 2;
+  SubscribeOpts opts = 3;
+}
+
+message SubscribeResponse {
+  // The id that marks the events of this subscription (`Event.sub`).
+  uint64 sub = 1;
+}
+
+message UnsubscribeRequest {
+  uint64 sub = 1;
+}
+
+message UnsubscribeResponse {}
+
+message ResolveInstrumentRequest {
+  string ticker = 1;
+  // The trading board ("TQBR"). Without it the default of the broker. "SBER@TQBR" in `ticker` names both.
+  optional string board = 2;
+}
+
+message FindRequest {
+  InstrumentQuery query = 1;
+}
+
+message FindResponse {
+  repeated Instrument instruments = 1;
+}
+
+message InstrumentRequest {
+  InstrumentId instrument = 1;
+}
+
+message ScheduleRequest {
+  string exchange = 1;
+  TimeRange range = 2;
+}
+
+message RawRequest {
+  // The name of the method of the broker's API, as the broker names it.
+  string method = 1;
+  // The arguments as a JSON object, empty for none.
+  string args_json = 2;
+  // True when the call changes something at the broker: a lost reply is then `Unknown` and the call is not repeated.
+  bool command = 3;
+}
+
+message RawResponse {
+  string reply_json = 1;
+}
+
+message CapsRequest {}
+
+message CapsResponse {
+  MarketDataCaps md = 1;
+  UserDataCaps ud = 2;
+}
+
+// ---------------------------------------------------------------------------------------------------- health
+
+message HealthRequest {}
+
+enum GatewayState {
+  GATEWAY_STATE_UNSPECIFIED = 0;
+  // The gateway runs the reconcile of its journal. Every call but Health and Caps is answered UNAVAILABLE.
+  GATEWAY_STATE_STARTING = 1;
+  GATEWAY_STATE_READY = 2;
+  // The gateway is stopping: no new commands.
+  GATEWAY_STATE_STOPPING = 3;
+}
+
+message BotInfo {
+  string name = 1;
+  // When the gateway first heard from the bot (since the gateway started).
+  int64 first_seen_ns = 2;
+  int64 last_seen_ns = 3;
+  uint64 calls = 4;
+  // The bot has an `Events` stream open.
+  bool streaming = 5;
+  // Events waiting in the buffer of its stream.
+  uint64 queued = 6;
+  // How many times its stream was closed because the bot read too slowly.
+  uint64 lagged = 7;
+}
+
+message HealthResponse {
+  GatewayState state = 1;
+  // The name of the gateway and the broker it serves.
+  string name = 2;
+  string broker = 3;
+  string version = 4;
+  // Chosen at random each time the gateway starts. A bot keeps it with its last event number.
+  uint64 epoch = 5;
+  // The number of the last event.
+  uint64 last_seq = 6;
+  // While STARTING: what the gateway is doing or what went wrong the last time.
+  string detail = 7;
+  // Orders of the journal that are not known to have ended.
+  uint64 open_orders = 8;
+  repeated BotInfo bots = 9;
+}
+
+// ---------------------------------------------------------------------------------------------------- events
+
+message EventsRequest {
+  // Where to continue. Without `epoch` the stream is live only.
+  uint64 epoch = 1;
+  // The number of the last event you handled.
+  uint64 last_seq = 2;
+  // Orders and executions of the orders that this bot placed (by the journal), not those of the other bots.
+  // Everything else comes to all.
+  bool own_orders_only = 3;
+}
+
+// A frame of the `Events` stream. The first is always `ready`.
+message EventFrame {
+  oneof frame {
+    Ready ready = 1;
+    Event event = 2;
+    Gap gap = 3;
+    Lagged lagged = 4;
+  }
+}
+
+message Ready {
+  // The epoch of this gateway run and the number the next live event will have.
+  uint64 epoch = 1;
+  uint64 next_seq = 2;
+  // How many events follow from the ring before the live ones begin.
+  uint64 replaying = 3;
+}
+
+// The events after `last_seq` are no longer there. Call Reconcile and read the account again: the stream goes on from
+// now.
+message Gap {
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    // The ring has already dropped them (by count or by age).
+    REASON_TOO_OLD = 1;
+    // The gateway was restarted: its numbers begin again.
+    REASON_NEW_EPOCH = 2;
+    // The number is ahead of the gateway.
+    REASON_AHEAD = 3;
+  }
+  Reason reason = 1;
+  uint64 requested_after = 2;
+  // The oldest event still in the ring (the next one to come if the ring is empty).
+  uint64 first_available = 3;
+}
+
+// The stream is closed because this bot read too slowly and its buffer filled. The events in the buffer were delivered
+// first. Reconnect with the last number you got.
+message Lagged {
+  uint64 last_seq = 1;
+}
+
+// ---------------------------------------------------------------------------------------------------- errors
+
+// The error of the library, whole. Sent in the `brokapi-error-bin` trailer of a failed call.
+message ErrorDetail {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_CONFIG = 1;
+    KIND_TRANSPORT = 2;
+    KIND_RATE_LIMITED = 3;
+    KIND_REJECTED = 4;
+    // The command may or may not have reached the broker: look at the order before anything else.
+    KIND_UNKNOWN = 5;
+    KIND_UNSUPPORTED = 6;
+    KIND_NOT_RECONCILED = 7;
+    KIND_DEGRADED = 8;
+    KIND_SHUTTING_DOWN = 9;
+    // The gateway is not ready yet. The command was not run.
+    KIND_GATEWAY_STARTING = 10;
+    // The request could not be read: a bad id, a bad number. The command was not run.
+    KIND_BAD_REQUEST = 11;
+  }
+  Kind kind = 1;
+  // REJECTED: the code of the refusal ("not_found", "price_off_step", ...).
+  string code = 2;
+  // CONFIG, TRANSPORT, REJECTED, GATEWAY_STARTING, BAD_REQUEST: the text.
+  string message = 3;
+  // RATE_LIMITED.
+  uint64 retry_after_ns = 4;
+  // UNSUPPORTED.
+  string capability = 5;
+}

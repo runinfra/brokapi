@@ -1,0 +1,501 @@
+// The types of the brokapi gateway: the same values as the types of `brokapi-core`, written for the wire.
+//
+// Rules that hold for every message in this file:
+//
+//   * A price, a quantity, an amount of money is a string with a decimal number ("101.25", "-0.5"). Never a double:
+//     a double cannot hold 0.1 and a bot that adds prices loses kopecks. Parse it into a decimal type of your language.
+//   * A moment of time is an integer of nanoseconds since 1970-01-01 UTC, in a field that ends with `_ns`.
+//   * An order id (`cid`) is a UUID in the text form with hyphens, made by the bot.
+//   * `optional` marks a value that may be absent: absent is not the same as an empty string or zero.
+
+syntax = "proto3";
+
+package brokapi.gateway.v1;
+
+enum Side {
+  SIDE_UNSPECIFIED = 0;
+  SIDE_BUY = 1;
+  SIDE_SELL = 2;
+}
+
+enum OrderType {
+  ORDER_TYPE_UNSPECIFIED = 0;
+  ORDER_TYPE_MARKET = 1;
+  ORDER_TYPE_LIMIT = 2;
+}
+
+enum Timeframe {
+  TIMEFRAME_UNSPECIFIED = 0;
+  TIMEFRAME_M1 = 1;
+  TIMEFRAME_M5 = 2;
+  TIMEFRAME_M10 = 3;
+  TIMEFRAME_M15 = 4;
+  TIMEFRAME_M30 = 5;
+  TIMEFRAME_H1 = 6;
+  TIMEFRAME_H4 = 7;
+  TIMEFRAME_D1 = 8;
+  TIMEFRAME_W1 = 9;
+  TIMEFRAME_MN = 10;
+}
+
+enum InstrumentKind {
+  INSTRUMENT_KIND_UNSPECIFIED = 0;
+  INSTRUMENT_KIND_STOCK = 1;
+  INSTRUMENT_KIND_BOND = 2;
+  INSTRUMENT_KIND_OPTION = 3;
+  INSTRUMENT_KIND_FUTURE = 4;
+  INSTRUMENT_KIND_ETF = 5;
+  INSTRUMENT_KIND_MUTUAL_FUND = 6;
+  INSTRUMENT_KIND_CURRENCY = 7;
+  INSTRUMENT_KIND_OTHER = 8;
+}
+
+enum TradingAvailability {
+  TRADING_AVAILABILITY_UNSPECIFIED = 0;
+  TRADING_AVAILABILITY_OPEN = 1;
+  TRADING_AVAILABILITY_CLOSED = 2;
+  TRADING_AVAILABILITY_BREAK = 3;
+  TRADING_AVAILABILITY_UNKNOWN = 4;
+}
+
+enum SessionKind {
+  SESSION_KIND_UNSPECIFIED = 0;
+  SESSION_KIND_PRE_MARKET = 1;
+  SESSION_KIND_MAIN = 2;
+  SESSION_KIND_POST_MARKET = 3;
+  SESSION_KIND_AUCTION = 4;
+  SESSION_KIND_OTHER = 5;
+}
+
+enum ResyncReason {
+  RESYNC_REASON_UNSPECIFIED = 0;
+  RESYNC_REASON_SEQUENCE_GAP = 1;
+  RESYNC_REASON_SUBSCRIPTION_RESET = 2;
+  RESYNC_REASON_MANUAL = 3;
+}
+
+enum StopOrderKind {
+  STOP_ORDER_KIND_UNSPECIFIED = 0;
+  STOP_ORDER_KIND_STOP_LOSS = 1;
+  STOP_ORDER_KIND_TAKE_PROFIT = 2;
+  STOP_ORDER_KIND_STOP_LIMIT = 3;
+}
+
+// When the library saw something. `broker_ts_ns` is the broker's own time when the broker gives one.
+message Timestamps {
+  int64 rx_ts_ns = 1;
+  optional int64 broker_ts_ns = 2;
+}
+
+message TimeRange {
+  int64 from_ns = 1;
+  int64 to_ns = 2;
+}
+
+// An instrument: the same in every broker (`symbol` and `mic`) and the way this broker names it (`native`).
+// Take it from `ResolveInstrument`, `Find` or `GetInstrument` and pass it back as it is.
+message InstrumentId {
+  string symbol = 1;
+  string mic = 2;
+  NativeId native = 3;
+}
+
+message NativeId {
+  oneof id {
+    SymbolMic symbol_mic = 1;
+    TickerClass ticker_class = 2;
+    string figi = 3;
+    string uid = 4;
+  }
+}
+
+message SymbolMic {
+  string symbol = 1;
+  string mic = 2;
+}
+
+message TickerClass {
+  string ticker = 1;
+  string class_code = 2;
+}
+
+// ---------------------------------------------------------------------------------------------------- subscriptions
+
+enum Backpressure {
+  BACKPRESSURE_UNSPECIFIED = 0;
+  // The latest value replaces older ones that nobody has read yet. For prices.
+  BACKPRESSURE_CONFLATE = 1;
+  // Every value is kept up to `cap`. When the buffer is full the stream is marked lost and trading stops until Reconcile.
+  BACKPRESSURE_LOSSLESS = 2;
+  // At `cap` the newest value is dropped.
+  BACKPRESSURE_DROP_NEWEST = 3;
+}
+
+message SubscribeOpts {
+  Backpressure backpressure = 1;
+  // The buffer size for LOSSLESS and DROP_NEWEST.
+  uint64 cap = 2;
+  optional uint32 depth = 3;
+}
+
+// ---------------------------------------------------------------------------------------------------- orders
+
+message PlaceOrderRequest {
+  string cid = 1;
+  InstrumentId instrument = 2;
+  Side side = 3;
+  OrderType order_type = 4;
+  string qty = 5;
+  // Required for a limit order.
+  optional string price = 6;
+}
+
+message ReplaceOrderRequest {
+  // The id of the new order.
+  string cid = 1;
+  string original_cid = 2;
+  optional string qty = 3;
+  optional string price = 4;
+}
+
+message OrderAck {
+  string cid = 1;
+  string broker_id = 2;
+  Timestamps ts = 3;
+}
+
+enum OrderStateKind {
+  ORDER_STATE_KIND_UNSPECIFIED = 0;
+  // Sent, no answer yet.
+  ORDER_STATE_KIND_IN_FLIGHT = 1;
+  // No answer and the outcome is not known: ask with OrderState, do not send again.
+  ORDER_STATE_KIND_UNKNOWN = 2;
+  // Accepted by the broker (`broker_id`).
+  ORDER_STATE_KIND_ACKED = 3;
+  // Partly executed (`filled`, `left`).
+  ORDER_STATE_KIND_PARTIALLY_FILLED = 4;
+  ORDER_STATE_KIND_FILLED = 5;
+  ORDER_STATE_KIND_CANCELLED = 6;
+  // Refused (`reason`).
+  ORDER_STATE_KIND_REJECTED = 7;
+}
+
+message OrderState {
+  OrderStateKind kind = 1;
+  string cid = 2;
+  // ACKED.
+  string broker_id = 3;
+  // PARTIALLY_FILLED.
+  string filled = 4;
+  string left = 5;
+  // REJECTED.
+  string reason = 6;
+}
+
+message OrderSnapshot {
+  string cid = 1;
+  optional string broker_id = 2;
+  InstrumentId instrument = 3;
+  OrderState state = 4;
+  Side side = 5;
+  OrderType order_type = 6;
+  string qty = 7;
+  string filled = 8;
+  optional string price = 9;
+  Timestamps ts = 10;
+}
+
+message ReconcileReport {
+  // In your ledger and active at the broker.
+  repeated OrderSnapshot confirmed = 1;
+  // In your ledger, not active at the broker: filled, cancelled or refused while you were away. Ask OrderState.
+  repeated string closed_offline = 2;
+  // Active at the broker, not in your ledger: somebody else's orders. Do not touch them.
+  repeated OrderSnapshot foreign = 3;
+}
+
+// ---------------------------------------------------------------------------------------------------- stop orders
+
+message StopExpiry {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_GOOD_TILL_CANCEL = 1;
+    KIND_END_OF_DAY = 2;
+    KIND_GOOD_TILL_DATE = 3;
+  }
+  Kind kind = 1;
+  // KIND_GOOD_TILL_DATE.
+  int64 date_ns = 2;
+}
+
+message PlaceStopOrderRequest {
+  string cid = 1;
+  InstrumentId instrument = 2;
+  Side side = 3;
+  StopOrderKind kind = 4;
+  string qty = 5;
+  string stop_price = 6;
+  optional string limit_price = 7;
+  StopExpiry expiry = 8;
+}
+
+message StopOrderState {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_ACTIVE = 1;
+    KIND_TRIGGERED = 2;
+    KIND_CANCELLED = 3;
+    KIND_EXPIRED = 4;
+    // A state this version does not know: the broker's word is in `other`.
+    KIND_OTHER = 5;
+  }
+  Kind kind = 1;
+  string other = 2;
+}
+
+// A stop order by your id or by the broker's id.
+message StopOrderRef {
+  oneof ref {
+    string cid = 1;
+    string broker_id = 2;
+  }
+}
+
+message StopOrderSnapshot {
+  optional string cid = 1;
+  string broker_id = 2;
+  InstrumentId instrument = 3;
+  Side side = 4;
+  StopOrderKind kind = 5;
+  string qty = 6;
+  string stop_price = 7;
+  optional string limit_price = 8;
+  StopExpiry expiry = 9;
+  StopOrderState state = 10;
+  Timestamps ts = 11;
+}
+
+// ---------------------------------------------------------------------------------------------------- market data
+
+message BookLevel {
+  string price = 1;
+  string qty = 2;
+}
+
+// A full book (`incremental` false) or a change of it (`incremental` true, then `seq` is the number of the change).
+message OrderBook {
+  InstrumentId instrument = 1;
+  bool incremental = 2;
+  uint64 seq = 3;
+  repeated BookLevel bids = 4;
+  repeated BookLevel asks = 5;
+  Timestamps ts = 6;
+}
+
+message MarketTrade {
+  InstrumentId instrument = 1;
+  string price = 2;
+  string qty = 3;
+  Side side = 4;
+  optional string trade_id = 5;
+  Timestamps ts = 6;
+}
+
+message Quote {
+  InstrumentId instrument = 1;
+  optional BookLevel bid = 2;
+  optional BookLevel ask = 3;
+  Timestamps ts = 4;
+}
+
+message Candle {
+  InstrumentId instrument = 1;
+  Timeframe timeframe = 2;
+  string open = 3;
+  string high = 4;
+  string low = 5;
+  string close = 6;
+  string volume = 7;
+  int64 open_ts_ns = 8;
+  int64 close_ts_ns = 9;
+  Timestamps ts = 10;
+}
+
+// ---------------------------------------------------------------------------------------------------- account
+
+message Balance {
+  string currency = 1;
+  string available = 2;
+  string blocked = 3;
+  Timestamps ts = 4;
+}
+
+message Position {
+  InstrumentId instrument = 1;
+  string qty = 2;
+  optional string avg_price = 3;
+  optional string current_price = 4;
+  Timestamps ts = 5;
+}
+
+message Portfolio {
+  repeated Balance balances = 1;
+  repeated Position positions = 2;
+  Timestamps ts = 3;
+}
+
+message Execution {
+  optional string cid = 1;
+  string broker_order_id = 2;
+  InstrumentId instrument = 3;
+  Side side = 4;
+  string price = 5;
+  string qty = 6;
+  string commission = 7;
+  string trade_id = 8;
+  Timestamps ts = 9;
+}
+
+// ---------------------------------------------------------------------------------------------------- instruments
+
+message Instrument {
+  InstrumentId id = 1;
+  string name = 2;
+  optional string isin = 3;
+  InstrumentKind kind = 4;
+  string currency = 5;
+  string exchange = 6;
+}
+
+message InstrumentQuery {
+  message ByTicker {
+    string ticker = 1;
+    optional string exchange = 2;
+  }
+  oneof query {
+    ByTicker by_ticker = 1;
+    string by_isin = 2;
+    InstrumentKind by_kind = 3;
+  }
+}
+
+message TradingParams {
+  InstrumentId instrument = 1;
+  string lot_size = 2;
+  string min_qty = 3;
+  string price_step = 4;
+  string price_step_value = 5;
+  string currency = 6;
+}
+
+message TradingStatus {
+  InstrumentId instrument = 1;
+  TradingAvailability availability = 2;
+  optional string reason = 3;
+  optional int64 ts_ns = 4;
+}
+
+message SessionInterval {
+  int64 start_ns = 1;
+  int64 end_ns = 2;
+  SessionKind kind = 3;
+}
+
+message Schedule {
+  string exchange = 1;
+  repeated SessionInterval sessions = 2;
+  Timestamps ts = 3;
+}
+
+// ---------------------------------------------------------------------------------------------------- capabilities
+
+message StreamingCaps {
+  bool order_book = 1;
+  bool market_trades = 2;
+  bool quotes = 3;
+  bool candles = 4;
+}
+
+message MarketDataCaps {
+  uint32 max_order_book_depth = 1;
+  bool incremental_order_book = 2;
+  StreamingCaps streaming = 3;
+}
+
+message PlaceIdempotency {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    // The broker only keeps the label: a second place with the same id may open a second order.
+    KIND_LABEL_ONLY = 1;
+    KIND_REJECT_DUPLICATE = 2;
+    KIND_IDEMPOTENT = 3;
+  }
+  Kind kind = 1;
+  // How long the broker remembers an id (the two last kinds).
+  uint64 window_secs = 2;
+}
+
+message UserDataCaps {
+  PlaceIdempotency place_idempotency = 1;
+  bool ws_rpc = 2;
+  bool ordered_command_channel = 3;
+  bool supports_replace = 4;
+  bool supports_stop_orders = 5;
+  bool streams_executions = 6;
+  bool sandbox = 7;
+}
+
+// ---------------------------------------------------------------------------------------------------- events
+
+message PositionList {
+  repeated Position positions = 1;
+}
+
+message BalanceList {
+  repeated Balance balances = 1;
+}
+
+message Resync {
+  uint64 sub = 1;
+  InstrumentId instrument = 2;
+  ResyncReason reason = 3;
+}
+
+message Overflow {
+  uint64 sub = 1;
+  int64 lost_from_ns = 2;
+}
+
+message Reconnected {
+  uint64 sub = 1;
+  int64 gap_from_ns = 2;
+}
+
+// One event of the broker connection. `seq` counts the events of this gateway from 1, without holes, in the order the
+// gateway got them: keep the last one you handled and give it to `Events` when you reconnect.
+message Event {
+  uint64 seq = 1;
+  // The connector that produced it: "NAME-md" or "NAME-ud", NAME being the name of the gateway.
+  string source = 2;
+  // The subscription it belongs to, if it belongs to one.
+  optional uint64 sub = 3;
+  Timestamps ts = 4;
+  oneof payload {
+    OrderBook order_book = 10;
+    MarketTrade market_trade = 11;
+    Quote quote = 12;
+    Candle candle = 13;
+    // Your order changed state.
+    OrderSnapshot order = 14;
+    Execution execution = 15;
+    Portfolio portfolio = 16;
+    PositionList positions = 17;
+    BalanceList balances = 18;
+    // A stream of order book changes lost its place: ask for a snapshot.
+    Resync resync = 19;
+    // A lossless subscription of the connector overflowed. Trading stops until you call Reconcile.
+    Overflow overflow = 20;
+    // A stream was cut and came back: whatever happened from `gap_from_ns` may be missing.
+    Reconnected reconnected = 21;
+  }
+}

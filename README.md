@@ -35,6 +35,7 @@ pip install brokapi
 | `brokapi-bcs`, `brokapi-tbank`, `brokapi-finam`, `brokapi-alor` | коннекторы брокеров |
 | `brokapi-bcs-protocol`, `brokapi-tbank-protocol`, `brokapi-finam-protocol`, `brokapi-alor-protocol` | клиенты протоколов брокеров |
 | `brokapi-client` | один счет у любого из четырех брокеров за одним типом: события, лимиты, вызовы по имени (на нем стоит Python) |
+| `brokapi-gateway` | гейтвей: один процесс держит подключение к брокеру и обслуживает много ботов по gRPC (контракт - `proto/`), плюс клиент для ботов на Rust |
 | `brokapi-mocks`, `brokapi-conformance` | имитации и общие сценарии для тестов, не публикуются |
 
 ## Участие

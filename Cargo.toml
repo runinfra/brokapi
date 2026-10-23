@@ -13,6 +13,7 @@ members = [
     "crates/bcs",
     "crates/tbank",
     "crates/client",
+    "crates/gateway",
     "crates/conformance",
     "crates/mocks",
 ]
@@ -69,6 +70,7 @@ brokapi-bcs = { path = "crates/bcs", version = "0.1.0-alpha.3" }
 brokapi-tbank-protocol = { path = "crates/tbank-protocol", version = "0.1.0-alpha.3" }
 brokapi-tbank = { path = "crates/tbank", version = "0.1.0-alpha.3" }
 brokapi-client = { path = "crates/client", version = "0.1.0-alpha.3" }
+brokapi-gateway = { path = "crates/gateway", version = "0.1.0-alpha.3" }
 brokapi-conformance = { path = "crates/conformance" }
 brokapi-mocks = { path = "crates/mocks" }
 

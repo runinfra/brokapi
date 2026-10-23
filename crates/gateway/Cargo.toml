@@ -1,0 +1,43 @@
+[package]
+name = "brokapi-gateway"
+description = "The brokapi gateway: one process holds the connection to a broker account and serves many bots over gRPC. The server, and a client that speaks the traits of brokapi-core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+documentation.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+brokapi = { path = "../..", version = "0.1.0-alpha.3" }
+brokapi-client.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+prost = "0.14"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "macros", "net", "fs", "time"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+tonic = { version = "0.14", default-features = false, features = ["codegen", "transport", "router", "server", "channel"] }
+tonic-prost = "0.14"
+tower = { version = "0.5", default-features = false, features = ["util"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tracing.workspace = true
+uuid.workspace = true
+
+[build-dependencies]
+prost = "0.14"
+protox = "0.10"
+tonic-prost-build = { version = "0.14", default-features = false }
+
+[dev-dependencies]
+brokapi-conformance.workspace = true
+brokapi-mocks.workspace = true
+tempfile = "3"
+tokio = { workspace = true, features = ["full", "test-util"] }
