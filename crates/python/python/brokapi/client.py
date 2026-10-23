@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import os
 import uuid
 from collections.abc import AsyncIterator, Mapping
 from datetime import datetime, timedelta
@@ -41,7 +42,7 @@ from .models import (
     TradingStatus,
 )
 
-__all__ = ["CandlePager", "Client", "EventStream", "Limiter", "connect", "merge", "new_cid"]
+__all__ = ["CandlePager", "Client", "EventStream", "Limiter", "connect", "connect_gateway", "merge", "new_cid"]
 
 _BROKERS = {
     "bcs": {"refresh_token", "write", "endpoint"},
@@ -176,8 +177,9 @@ def _opts(depth: Optional[int], backpressure: Optional[Backpressure]) -> dict[st
 class Client:
     """A connection to one broker account: market data, orders, the account, and the stream of events.
 
-    Make one with :func:`connect`. Every method is a coroutine. A client is an ``async with`` context: it is closed
-    when the block ends.
+    Make one with :func:`connect` (the connection to the broker is in this process) or with :func:`connect_gateway`
+    (the connection is in a gateway, which several bots share). It is the same class with the same methods either way.
+    Every method is a coroutine. A client is an ``async with`` context: it is closed when the block ends.
 
     The rules of the core hold here as they do in Rust. Trading starts after :meth:`reconcile`. The ``cid`` of an
     order is made by the bot (:func:`new_cid`). :class:`~brokapi.Unknown` is never repeated: ask :meth:`order_state`.
@@ -206,12 +208,23 @@ class Client:
 
     @property
     def name(self) -> str:
-        """The name given to :func:`connect`. Events say ``<name>-md`` and ``<name>-ud`` in ``source``."""
+        """The name given to :func:`connect`. Events say ``<name>-md`` and ``<name>-ud`` in ``source``. For a client of a
+        gateway it is the name of the bot, and the events say ``<gateway>-md`` and ``<gateway>-ud``: the gateway named the
+        connection."""
         return self._native.name
 
     @property
+    def gateway(self) -> Optional[str]:
+        """The name of the gateway this client reaches the broker through, ``None`` for a connection made by :func:`connect`."""
+        return self._native.gateway
+
+    @property
     def limiter(self) -> Limiter:
-        """The rate limit counter of this client. Pass it to the next :func:`connect` to share it."""
+        """The rate limit counter of this client. Pass it to the next :func:`connect` to share it.
+
+        A client of a gateway has none: the counter is the gateway's, one for all its bots, and it is not in this process.
+        This raises :class:`~brokapi.Unsupported` there.
+        """
         return Limiter(self._native.limiter)
 
     @property
@@ -229,6 +242,10 @@ class Client:
         ``deadline`` is how many seconds a graceful stop may take, ``None`` stops at once. **Orders at the exchange are
         not cancelled**: cancel them yourself before, if the bot should leave none. Returns the reports of the two
         connectors (empty if the client was closed already).
+
+        A client of a gateway only ends its own connection: the gateway keeps running, and the subscriptions this bot
+        opened are let go by the gateway when the bot has been away for a while. ``deadline`` has no meaning there and the
+        list is empty.
         """
         if self._closed:
             return []
@@ -689,6 +706,58 @@ async def connect(
         None if limiter is None else limiter._native,
         event_buffer,
     )
+    return Client(native)
+
+
+async def connect_gateway(
+    gateway: Optional[str] = None,
+    *,
+    bot: str,
+    state: Optional[str | os.PathLike[str]] = None,
+    dir: Optional[str | os.PathLike[str]] = None,
+    ready_timeout: float = 30.0,
+    event_buffer: int = 8192,
+    own_orders_only: bool = False,
+) -> Client:
+    """Connects to a broker account through a gateway: the same :class:`Client` that :func:`connect` makes.
+
+    A gateway is a process of the program ``brokapi`` that holds the connection to one broker account for several bots
+    (``brokapi up``, see the Gateway section of the book). A bot that moves from the broker to a gateway changes this one line
+    and keeps every call it makes.
+
+    The gateway is named in one of two ways:
+
+    - ``gateway``: its name in ``brokapi.toml``. Its directory is ``<state>/gateways/<gateway>``, where ``state`` is the
+      ``state_dir`` of the service: the argument ``state``, else the environment variable ``BROKAPI_STATE``, else
+      ``brokapi.state`` in the working directory (what ``brokapi init`` makes next to ``brokapi.toml``).
+    - ``dir``: the directory of the gateway itself. It holds ``gateway.addr`` and ``access.key``, which the client reads.
+
+    ``bot`` is the name of this bot, 1 to 64 letters, digits, ``.``, ``_`` or ``-``. The gateway shows it in ``brokapi
+    status`` and uses it for ``own_orders_only``. Give each bot its own: two bots with one name are one bot to the gateway.
+
+    ``ready_timeout`` is how many seconds to wait for a gateway that is still comparing its journal with the broker
+    (it takes commands after that). ``event_buffer`` is how many events wait for the reader before the gateway cuts the bot
+    off and the client mends the stream from the last event it handled. ``own_orders_only`` leaves out the order and
+    fill events of the orders other bots placed.
+
+    What is the same as with the broker: every method of :class:`Client`, the errors, ``async for`` over
+    :attr:`Client.events`, the rule that trading starts after :meth:`~Client.reconcile`, and :class:`~brokapi.Degraded`
+    after events were lost. What differs, and why: :class:`Gap` is a new event, :attr:`Client.limiter` is not there, and
+    :meth:`~Client.close` does not stop the gateway. The page "Подключить бота" of the Gateway section of the book lists them.
+
+    Raises :class:`~brokapi.Config` when the directory has no gateway in it (it is not running, or the name is wrong) or
+    the key is refused, :class:`~brokapi.Transport` when the gateway does not become ready in time.
+    """
+    if dir is not None and gateway is not None:
+        raise TypeError("name the gateway with `gateway` or with `dir`, not both")
+    if dir is not None:
+        directory = os.fspath(dir)
+    elif gateway is not None:
+        root = os.fspath(state) if state is not None else os.environ.get("BROKAPI_STATE") or "brokapi.state"
+        directory = os.path.join(root, "gateways", gateway)
+    else:
+        raise TypeError("name the gateway: connect_gateway('<name in brokapi.toml>', bot=...) or dir=<its directory>")
+    native = await _native.connect_gateway(directory, bot, ready_timeout, event_buffer, own_orders_only)
     return Client(native)
 
 

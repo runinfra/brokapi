@@ -1,4 +1,5 @@
-"""The same day on every imitation: the interface does not depend on the broker."""
+"""The same day on every imitation: the interface does not depend on the broker, nor on whether the bot reaches it directly
+or through a gateway."""
 
 from __future__ import annotations
 
@@ -13,9 +14,11 @@ import brokapi
 from brokapi import testing
 
 BROKERS = ["bcs", "tbank", "finam", "alor"]
+# Each scenario runs twice: with the connection in this process, and through a gateway.
+ROADS = BROKERS + [f"gw_{b}" for b in BROKERS]
 
 
-@pytest.fixture(params=BROKERS)
+@pytest.fixture(params=ROADS)
 def pair(request: pytest.FixtureRequest) -> tuple[testing.MockBroker, brokapi.Client]:
     return request.getfixturevalue(request.param)
 

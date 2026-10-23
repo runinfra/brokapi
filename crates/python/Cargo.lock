@@ -354,6 +354,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "brokapi-gateway"
+version = "0.1.0-alpha.3"
+dependencies = [
+ "async-trait",
+ "brokapi",
+ "brokapi-client",
+ "futures-util",
+ "hyper-util",
+ "prost",
+ "protox",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tower",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "brokapi-mocks"
 version = "0.1.0-alpha.3"
 dependencies = [
@@ -384,10 +408,12 @@ version = "0.1.0-alpha.3"
 dependencies = [
  "brokapi",
  "brokapi-client",
+ "brokapi-gateway",
  "brokapi-mocks",
  "pyo3",
  "pyo3-async-runtimes",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

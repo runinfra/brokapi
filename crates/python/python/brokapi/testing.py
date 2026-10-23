@@ -28,9 +28,56 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from . import _codec, _native
-from .client import Client, connect
+from .client import Client, connect, connect_gateway
 
-__all__ = ["MockBroker", "mock_alor", "mock_bcs", "mock_finam", "mock_tbank"]
+__all__ = ["MockBroker", "MockGateway", "mock_alor", "mock_bcs", "mock_finam", "mock_tbank"]
+
+
+class MockGateway:
+    """A gateway that runs in this process on an imitation of a broker: the way to test a bot that talks to a gateway.
+
+    Make one with :meth:`MockBroker.start_gateway`. ``await gateway.connect(bot="my-bot")`` gives a
+    :class:`~brokapi.Client` of the gateway, the one :func:`brokapi.connect_gateway` makes. :meth:`restart` is the failure
+    a bot behind a gateway must survive: the gateway process dies and a new one starts. It stops with the imitation it
+    runs on.
+    """
+
+    def __init__(self, native: Any) -> None:
+        self._native = native
+        self._clients: list[Client] = []
+
+    @property
+    def name(self) -> str:
+        """The name of the gateway (it is in the ``source`` of the events)."""
+        return self._native.name
+
+    @property
+    def directory(self) -> str:
+        """The directory of the gateway: ``dir=`` of :func:`brokapi.connect_gateway`."""
+        return self._native.directory
+
+    async def connect(self, bot: str = "test-bot", **options: Any) -> Client:
+        """A client of the gateway. ``options`` are the arguments of :func:`brokapi.connect_gateway`
+        (``own_orders_only``, ``event_buffer`` ...). It is closed when the gateway is."""
+        client = await connect_gateway(bot=bot, dir=self.directory, **options)
+        self._clients.append(client)
+        return client
+
+    async def restart(self) -> None:
+        """Ends the gateway as a crash would and starts a new one in the same directory.
+
+        The clients stay connected: they find the new process, and are told of the loss with a :class:`~brokapi.Gap`
+        (``new_epoch``). The orders at the imitation are untouched, and the new gateway compares its journal with them
+        before it takes a command.
+        """
+        await self._native.restart()
+
+    async def close(self) -> None:
+        """Closes the clients that were connected through it, then stops the gateway."""
+        for client in self._clients:
+            await client.close()
+        self._clients.clear()
+        await self._native.close()
 
 
 class MockBroker:
@@ -39,6 +86,7 @@ class MockBroker:
     def __init__(self, native: Any) -> None:
         self._native = native
         self._clients: list[Client] = []
+        self._gateways: list[MockGateway] = []
 
     @property
     def broker(self) -> str:
@@ -63,6 +111,12 @@ class MockBroker:
         client = await connect(self.broker, **args)
         self._clients.append(client)
         return client
+
+    async def start_gateway(self, name: str = "mock-gateway") -> MockGateway:
+        """Starts a gateway on this imitation, ready for bots. The gateway stops when the imitation does."""
+        gateway = MockGateway(await self._native.start_gateway(name))
+        self._gateways.append(gateway)
+        return gateway
 
     def fill(
         self,
@@ -95,7 +149,10 @@ class MockBroker:
         self._native.lose_stop_answers(lose)
 
     async def close(self) -> None:
-        """Closes the clients that were connected through it, then stops the server."""
+        """Closes the clients that were connected through it, the gateways started on it, then stops the server."""
+        for gateway in self._gateways:
+            await gateway.close()
+        self._gateways.clear()
         for client in self._clients:
             await client.close(None)
         self._clients.clear()

@@ -14,10 +14,11 @@ from brokapi import testing
 from brokapi.models import StopExpiry, StopOrderKind, StopOrderRef, StopOrderState, StopOrderStateKind
 
 BROKERS = ["bcs", "tbank", "finam"]
+ROADS = BROKERS + [f"gw_{b}" for b in BROKERS]  # the connection in this process, and through a gateway
 FAR = Decimal("100")  # far below the market of the imitations (about 250): a sell stop that only waits
 
 
-@pytest.fixture(params=BROKERS)
+@pytest.fixture(params=ROADS)
 def pair(request: pytest.FixtureRequest) -> tuple[testing.MockBroker, brokapi.Client]:
     return request.getfixturevalue(request.param)
 
