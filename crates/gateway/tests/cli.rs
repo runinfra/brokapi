@@ -4,7 +4,8 @@
 mod common;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use brokapi::core::{Error, Event, OrderExecutor};
 use brokapi_client::Broker;
@@ -14,6 +15,12 @@ use common::Mock;
 use serde_json::Value;
 
 const EXE: &str = env!("CARGO_BIN_EXE_brokapi");
+
+/// How long one command of the program may run. These are real processes, so the limit is on the real clock: a command that
+/// hangs fails the test with the logs, it does not hold the machine until the CI gives up.
+const COMMAND_LIMIT: Duration = Duration::from_secs(60);
+/// How long a test waits for the service or a gateway to reach a state.
+const STATE_LIMIT: Duration = Duration::from_secs(45);
 
 /// A config file, its state directory and the machine registry of one test.
 struct Env {
@@ -142,23 +149,90 @@ impl Env {
     async fn run_with(&self, prefix: &[&str], args: &[&str]) -> Out {
         let all: Vec<String> = prefix.iter().chain(args).map(|s| (*s).to_owned()).collect();
         let (registry, cwd) = (self.registry.clone(), self.dir.path().to_owned());
-        tokio::task::spawn_blocking(move || {
-            let output = Command::new(EXE)
-                .args(&all)
-                .env("BROKAPI_REGISTRY_DIR", registry)
-                .env_remove("BROKAPI_CONFIG")
-                .env_remove("BROKAPI_LOG")
-                .current_dir(cwd)
-                .output()
-                .expect("the program runs");
-            Out {
-                code: output.status.code().unwrap_or(-1),
-                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        let shown = all.join(" ");
+        let (out, timed_out) =
+            tokio::task::spawn_blocking(move || run_bounded(&all, &registry, &cwd, COMMAND_LIMIT))
+                .await
+                .unwrap();
+        if timed_out {
+            panic!(
+                "`brokapi {shown}` did not end in {COMMAND_LIMIT:?}\nstdout: {}\nstderr: {}\n{}",
+                out.stdout,
+                out.stderr,
+                self.diagnostics()
+            );
+        }
+        out
+    }
+
+    /// What is left of the service and its gateways: the end of every log, the files of the state directory, the processes.
+    /// A test that waits in vain prints it, so that a failure on a machine nobody can log in to says why.
+    fn diagnostics(&self) -> String {
+        let mut text = format!(
+            "--- state of the test, directory {}\n",
+            self.state.display()
+        );
+        let mut files = Vec::new();
+        collect_files(&self.state, &mut files);
+        files.sort();
+        for file in &files {
+            let rel = file.strip_prefix(&self.state).unwrap_or(file);
+            let size = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
+            text.push_str(&format!("file {} ({size} bytes)\n", rel.display()));
+        }
+        for file in &files {
+            let is_log = file.extension().is_some_and(|e| e == "log");
+            let is_small = file
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with(".addr") || n.ends_with(".pid"));
+            if !(is_log || is_small) {
+                continue;
             }
-        })
-        .await
-        .unwrap()
+            let rel = file.strip_prefix(&self.state).unwrap_or(file);
+            let body =
+                std::fs::read_to_string(file).unwrap_or_else(|e| format!("(cannot read: {e})"));
+            let lines: Vec<&str> = body.lines().collect();
+            let from = lines.len().saturating_sub(40);
+            text.push_str(&format!(
+                "--- {}\n{}\n",
+                rel.display(),
+                lines[from..].join("\n")
+            ));
+        }
+        for (what, pid_file) in std::iter::once(("service", self.state.join("service.pid"))).chain(
+            files
+                .iter()
+                .filter(|f| f.file_name().is_some_and(|n| n == "gateway.pid"))
+                .map(|f| ("gateway", f.clone())),
+        ) {
+            if let Some(pid) = proc::read_pid(&pid_file) {
+                text.push_str(&format!(
+                    "{what} pid {pid}: alive {}, brokapi {}\n",
+                    proc::is_alive(pid),
+                    proc::is_brokapi(pid)
+                ));
+            }
+        }
+        text
+    }
+
+    /// Waits for `probe` on the real clock. When it does not come true in time the test fails with the logs of the service.
+    async fn wait_for<F, Fut>(&self, what: &str, mut probe: F)
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
+        let until = Instant::now() + STATE_LIMIT;
+        while !probe().await {
+            if Instant::now() >= until {
+                panic!(
+                    "gave up after {STATE_LIMIT:?}, still waiting for: {what}\n{}",
+                    self.diagnostics()
+                );
+            }
+            tokio::task::yield_now().await;
+        }
     }
 
     /// `brokapi <args> --json`, which must succeed.
@@ -191,7 +265,7 @@ impl Env {
 
     async fn wait_state(&self, name: &str, state: &str) -> Value {
         let found = std::sync::Mutex::new(Value::Null);
-        brokapi_mocks::time::wait_until_async(&format!("{name} is {state}"), || async {
+        self.wait_for(&format!("{name} is {state}"), || async {
             match self.gateway(name).await {
                 Some(g) if g["state"] == state => {
                     *found.lock().unwrap() = g;
@@ -227,10 +301,13 @@ struct Guard<'a>(&'a Env);
 impl Drop for Guard<'_> {
     fn drop(&mut self) {
         let env = self.0;
-        let _ = Command::new(EXE)
-            .args(["-c", env.config.to_str().unwrap(), "down"])
-            .env("BROKAPI_REGISTRY_DIR", &env.registry)
-            .output();
+        let config = env.config.to_str().unwrap().to_owned();
+        let _ = run_bounded(
+            &["-c".to_owned(), config, "down".to_owned()],
+            &env.registry,
+            env.dir.path(),
+            Duration::from_secs(20),
+        );
         // Whatever is left of a test that failed half way.
         if let Ok(dirs) = std::fs::read_dir(env.state.join("gateways")) {
             for d in dirs.flatten() {
@@ -241,6 +318,69 @@ impl Drop for Guard<'_> {
         }
         if let Some(pid) = proc::read_pid(&env.state.join("service.pid")) {
             proc::kill(pid);
+        }
+    }
+}
+
+/// Runs the program to its end, or for `limit`, and returns what it printed. The second value is true when the limit
+/// came first and the process was killed.
+///
+/// The output goes to temporary files, not to pipes: a service or a gateway that a command starts in the background must
+/// not hold the pipe of the command, and with files nothing can keep the reader waiting after the process is gone.
+fn run_bounded(args: &[String], registry: &Path, cwd: &Path, limit: Duration) -> (Out, bool) {
+    let stdout = tempfile::tempfile().unwrap();
+    let stderr = tempfile::tempfile().unwrap();
+    let mut child = Command::new(EXE)
+        .args(args)
+        .env("BROKAPI_REGISTRY_DIR", registry)
+        .env_remove("BROKAPI_CONFIG")
+        .env_remove("BROKAPI_LOG")
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(stdout.try_clone().unwrap())
+        .stderr(stderr.try_clone().unwrap())
+        .spawn()
+        .expect("the program runs");
+    let until = Instant::now() + limit;
+    let (status, timed_out) = loop {
+        if let Some(status) = child.try_wait().expect("the process can be asked") {
+            break (status.code().unwrap_or(-1), false);
+        }
+        if Instant::now() >= until {
+            let _ = child.kill();
+            let _ = child.wait();
+            break (-1, true);
+        }
+        // Polling a process, not waiting for time of the library: a std process has nothing to wait on with a limit.
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let read = |mut file: std::fs::File| {
+        use std::io::{Read, Seek};
+        let mut bytes = Vec::new();
+        file.rewind().unwrap();
+        file.read_to_end(&mut bytes).unwrap();
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
+    (
+        Out {
+            code: status,
+            stdout: read(stdout),
+            stderr: read(stderr),
+        },
+        timed_out,
+    )
+}
+
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(&path, out);
+        } else {
+            out.push(path);
         }
     }
 }
@@ -447,7 +587,7 @@ async fn a_killed_gateway_is_started_again_checks_its_journal_and_the_bot_catche
             other => panic!("unexpected {other:?}"),
         }
     }
-    brokapi_mocks::time::wait_until_async("the journal is closed", || async {
+    env.wait_for("the journal is closed", || async {
         bot.health()
             .await
             .map(|h| h.open_orders == 0)
@@ -1096,7 +1236,7 @@ async fn a_gateway_runs_in_the_foreground_without_the_service() {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    brokapi_mocks::time::wait_until_async("the gateway answers", || async {
+    env.wait_for("the gateway answers", || async {
         match RemoteClient::connect_dir(&env.gateway_dir("bcs-main"), "bot-1").await {
             Ok(bot) => bot
                 .health()
