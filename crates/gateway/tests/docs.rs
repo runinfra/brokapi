@@ -30,8 +30,10 @@ const EXE: &str = env!("CARGO_BIN_EXE_brokapi");
 const BOOK: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/src/gateway");
 
 fn page(name: &str) -> String {
+    // The number of the version is put in by the book (`{{brokapi_version}}`): here any number will do.
     std::fs::read_to_string(Path::new(BOOK).join(name))
         .unwrap_or_else(|e| panic!("docs/src/gateway/{name}: {e}"))
+        .replace("{{brokapi_version}}", "0")
 }
 
 /// The fenced blocks of a page: (the language written after the fence, the text).

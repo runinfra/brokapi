@@ -98,7 +98,7 @@ restarts      0
 listens at    unix:/home/me/bots/brokapi.state/gateways/tbank-sandbox/gateway.sock
 directory     /home/me/bots/brokapi.state/gateways/tbank-sandbox
 gateway says  ready
-version       0.1.0-alpha.3
+version       {{brokapi_version}}
 events        0 so far, 0.0 per second, last number 0
 journal       0 order(s) not known to have ended
 
