@@ -48,6 +48,7 @@ enum InstrumentKind {
   INSTRUMENT_KIND_MUTUAL_FUND = 6;
   INSTRUMENT_KIND_CURRENCY = 7;
   INSTRUMENT_KIND_OTHER = 8;
+  INSTRUMENT_KIND_PERPETUAL = 9;
 }
 
 enum TradingAvailability {

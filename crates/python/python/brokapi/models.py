@@ -132,6 +132,7 @@ class InstrumentKind(enum.Enum):
     BOND = "Bond"
     OPTION = "Option"
     FUTURE = "Future"
+    PERPETUAL = "Perpetual"
     ETF = "Etf"
     MUTUAL_FUND = "MutualFund"
     CURRENCY = "Currency"

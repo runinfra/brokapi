@@ -1024,6 +1024,11 @@ impl MarketDataConnector {
                     capability: "find_by_kind: T-Bank has no listing of mutual funds".into(),
                 });
             }
+            InstrumentKind::Perpetual => {
+                return Err(Error::Unsupported {
+                    capability: "find_by_kind: T-Bank has no perpetual futures".into(),
+                });
+            }
             InstrumentKind::Other => {
                 return Err(Error::Unsupported {
                     capability: "find_by_kind: kind Other has no T-Bank listing (indicatives, assets are not requested)".into(),
