@@ -236,7 +236,7 @@ mod tests {
         let file = dir.path().join("s.sock");
         assert!(matches!(inspect(&file), Ok(false)));
         std::fs::write(&file, "mine").unwrap();
-        let refused = inspect(&file).err().expect("a file is refused").to_string();
+        let refused = inspect(&file).expect_err("a file is refused").to_string();
         assert!(refused.contains("not a socket"), "{refused}");
         std::fs::remove_file(&file).unwrap();
         let _listener = std::os::unix::net::UnixListener::bind(&file).unwrap();
