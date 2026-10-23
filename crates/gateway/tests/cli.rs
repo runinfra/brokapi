@@ -812,9 +812,10 @@ async fn when_the_service_dies_the_gateways_live_and_a_new_service_takes_them_ov
         3,
         "the commands see that there is no service"
     );
+    let listed = env.json(&["services"]).await;
     assert!(
-        env.json(&["services"]).await.as_array().unwrap().is_empty(),
-        "the dead one is not listed"
+        listed.as_array().unwrap().is_empty(),
+        "the dead one (pid {service_pid}) is not listed: {listed}"
     );
 
     // A new service finds the processes and takes them over instead of starting new ones.

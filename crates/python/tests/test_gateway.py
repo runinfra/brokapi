@@ -232,8 +232,8 @@ async def test_the_gateway_is_named_by_its_name_and_the_state_directory(monkeypa
     monkeypatch.setattr(_native, "connect_gateway", fake)
     monkeypatch.delenv("BROKAPI_STATE", raising=False)
     for kwargs, expected in [
-        ({"state": "/srv/state"}, os.path.join("/srv/state", "gateways", "bcs-main")),
-        ({}, os.path.join("brokapi.state", "gateways", "bcs-main")),
+        ({"state": "/srv/state"}, os.path.normpath(os.path.join("/srv/state", "gateways", "bcs-main"))),
+        ({}, os.path.normpath(os.path.join("brokapi.state", "gateways", "bcs-main"))),
     ]:
         with pytest.raises(brokapi.Config):
             await brokapi.connect_gateway("bcs-main", bot="b", **kwargs)
@@ -241,7 +241,7 @@ async def test_the_gateway_is_named_by_its_name_and_the_state_directory(monkeypa
     monkeypatch.setenv("BROKAPI_STATE", "/from/env")
     with pytest.raises(brokapi.Config):
         await brokapi.connect_gateway("bcs-main", bot="b")
-    assert asked.pop() == os.path.join("/from/env", "gateways", "bcs-main")
+    assert asked.pop() == os.path.normpath(os.path.join("/from/env", "gateways", "bcs-main"))
     with pytest.raises(brokapi.Config):
         await brokapi.connect_gateway(bot="b", dir="/the/dir")
     assert asked.pop() == os.path.normpath("/the/dir")
