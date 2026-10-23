@@ -1,0 +1,19 @@
+{
+ "topic": "publicTrade.BTCUSDT",
+ "type": "snapshot",
+ "ts": 1792760157291,
+ "data": [
+  {
+   "T": 1792760157290,
+   "s": "BTCUSDT",
+   "S": "Buy",
+   "v": "0.074",
+   "p": "81695.90",
+   "L": "PlusTick",
+   "i": "0f06d7d1-6cfc-55fc-853f-26c082150ba0",
+   "BT": false,
+   "RPI": false,
+   "seq": 831240722478
+  }
+ ]
+}

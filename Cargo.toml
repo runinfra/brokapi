@@ -4,6 +4,8 @@ members = [
     "crates/bcs-protocol",
     "crates/alor-protocol",
     "crates/alor",
+    "crates/bybit-protocol",
+    "crates/bybit",
     "crates/finam-protocol",
     "crates/finam",
     "crates/tbank-protocol",
@@ -61,6 +63,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 brokapi-bcs-protocol = { path = "crates/bcs-protocol", version = "0.1.0-alpha.3" }
 brokapi-alor-protocol = { path = "crates/alor-protocol", version = "0.1.0-alpha.3" }
 brokapi-alor = { path = "crates/alor", version = "0.1.0-alpha.3" }
+brokapi-bybit-protocol = { path = "crates/bybit-protocol", version = "0.1.0-alpha.3" }
+brokapi-bybit = { path = "crates/bybit", version = "0.1.0-alpha.3" }
 brokapi-finam-protocol = { path = "crates/finam-protocol", version = "0.1.0-alpha.3" }
 brokapi-finam = { path = "crates/finam", version = "0.1.0-alpha.3" }
 brokapi-core = { path = "crates/core", version = "0.1.0-alpha.3" }
@@ -103,6 +107,8 @@ brokapi-finam = { workspace = true, optional = true }
 brokapi-finam-protocol = { workspace = true, optional = true }
 brokapi-alor = { workspace = true, optional = true }
 brokapi-alor-protocol = { workspace = true, optional = true }
+brokapi-bybit = { workspace = true, optional = true }
+brokapi-bybit-protocol = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -111,12 +117,13 @@ bcs = ["dep:brokapi-bcs", "dep:brokapi-bcs-protocol"]
 tbank = ["dep:brokapi-tbank", "dep:brokapi-tbank-protocol"]
 finam = ["dep:brokapi-finam", "dep:brokapi-finam-protocol"]
 alor = ["dep:brokapi-alor", "dep:brokapi-alor-protocol"]
+bybit = ["dep:brokapi-bybit", "dep:brokapi-bybit-protocol"]
 
 # The programs in examples/ are the code of the book (docs/src) and run in tests/examples.rs against
 # the in-process broker imitations: no network, no money.
 [dev-dependencies]
 # The crate itself with all brokers: examples and tests use it as a user does (`use brokapi::...`).
-brokapi = { path = ".", features = ["bcs", "tbank", "finam", "alor"] }
+brokapi = { path = ".", features = ["bcs", "tbank", "finam", "alor", "bybit"] }
 brokapi-mocks.workspace = true
 dotenvy.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }

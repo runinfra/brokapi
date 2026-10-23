@@ -13,6 +13,7 @@
 //! | [`tbank`] | T-Bank | gRPC (tonic) | [`tbank::MockServer::start`] |
 //! | [`finam`] | Finam | gRPC (tonic) | [`finam::MockServer::start`] |
 //! | [`alor`] | ALOR | HTTP + WebSocket (axum) | [`alor::MockServer::start`] |
+//! | [`bybit`] | Bybit | HTTP + WebSocket (axum) | [`bybit::MockServer::start`] |
 //!
 //! The servers keep real state (placed orders can be listed, cancelled, filled through a test hook), so
 //! a scenario written for the mock reads the same as one for the live API. What they do **not** prove
@@ -35,6 +36,7 @@
 
 pub mod alor;
 pub mod bcs;
+pub mod bybit;
 pub mod finam;
 pub mod gate;
 pub mod live;

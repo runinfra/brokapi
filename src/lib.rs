@@ -69,3 +69,11 @@ pub mod alor {
     /// The ALOR HTTP and WebSocket client (lower layer).
     pub use brokapi_alor_protocol as protocol;
 }
+
+/// Bybit connectors and the Bybit wire client.
+#[cfg(feature = "bybit")]
+pub mod bybit {
+    pub use brokapi_bybit::*;
+    /// The Bybit HTTP and WebSocket client (lower layer).
+    pub use brokapi_bybit_protocol as protocol;
+}

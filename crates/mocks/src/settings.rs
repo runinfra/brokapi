@@ -5,7 +5,7 @@
 
 use serde_json::{Value, json};
 
-use crate::{alor, bcs, finam, tbank};
+use crate::{alor, bcs, bybit, finam, tbank};
 
 /// Settings for the BCS imitation.
 pub fn bcs(server: &bcs::MockServer) -> Value {
@@ -41,5 +41,14 @@ pub fn alor(server: &alor::MockServer) -> Value {
         "endpoint": server.http_base,
         "refresh_token": "mock-refresh-token",
         "portfolio": alor::PORTFOLIO,
+    })
+}
+
+/// Settings for the Bybit imitation (the demo contour, the default account).
+pub fn bybit(server: &bybit::MockServer) -> Value {
+    json!({
+        "endpoint": server.http_base,
+        "api_key": bybit::DEFAULT_KEY,
+        "api_secret": bybit::SECRET,
     })
 }

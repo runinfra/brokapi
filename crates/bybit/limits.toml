@@ -1,0 +1,82 @@
+# Bybit API V5 rate limits for brokapi-bybit.
+#
+# Source: the page "Rate Limit Rules" of the Bybit documentation (checked 2026-10-23).
+#   * Per user (UID) and endpoint, per second: placing, amending, cancelling, cancelling all and the batch methods of
+#     category linear 10/s; the reads (/v5/order/realtime, /v5/order/history, /v5/execution/list, /v5/position/list,
+#     /v5/account/wallet-balance) 50/s. The demo contour has the default limits and they cannot be raised.
+#   * Per IP address: 600 requests in a 5 second window for api.bybit.com. Beyond that HTTP 403 and a ban of 10 minutes.
+#     The market data reads have no limit of their own, they spend the address limit.
+#   * WebSocket: no more than 500 connections in 5 minutes per IP, no more than 1000 connections per IP for market
+#     data. The number of subscriptions of a futures connection is not limited in the documentation.
+#
+# What is NOT verified against a live account: that the demo contour counts the same way, and the headers
+# X-Bapi-Limit-Status that the exchange sends with every answer are not read (the limiter keeps its own count).
+#
+# One bucket per documented endpoint limit, so a flood of placements can never use the budget of cancels, plus one
+# bucket for the address that every request spends. 100 a second with a burst of 100 keeps the address inside 600 in 5
+# seconds even with another program on the same address.
+
+[bybit.buckets.ip]
+rate = 100
+per = "1s"
+burst = 100
+
+[bybit.buckets.create]
+rate = 10
+per = "1s"
+burst = 10
+
+[bybit.buckets.amend]
+rate = 10
+per = "1s"
+burst = 10
+
+[bybit.buckets.cancel]
+rate = 10
+per = "1s"
+burst = 10
+
+[bybit.buckets.cancel_all]
+rate = 10
+per = "1s"
+burst = 10
+
+[bybit.buckets.trade_read]
+rate = 50
+per = "1s"
+burst = 50
+
+[bybit.buckets.account_read]
+rate = 50
+per = "1s"
+burst = 50
+
+[bybit.route]
+# "*" = any method with no route below (raw() calls). It spends the address limit, so a call is never free.
+"*" = ["ip"]
+PlaceOrder = ["ip", "create"]
+PlaceStopOrder = ["ip", "create"]
+ReplaceOrder = ["ip", "amend"]
+CancelOrder = ["ip", "cancel"]
+CancelStopOrder = ["ip", "cancel"]
+CancelAll = ["ip", "cancel_all"]
+GetOrder = ["ip", "trade_read"]
+GetOrders = ["ip", "trade_read"]
+GetOrderHistory = ["ip", "trade_read"]
+GetExecutions = ["ip", "trade_read"]
+GetPositions = ["ip", "trade_read"]
+Reconcile = ["ip", "trade_read"]
+GetWallet = ["ip", "account_read"]
+GetOrderBook = ["ip"]
+GetTickers = ["ip"]
+GetLastTrades = ["ip"]
+GetCandles = ["ip"]
+GetInstruments = ["ip"]
+GetServerTime = ["ip"]
+
+[bybit.conns]
+# One connection for the public data and one for the private streams of a login. Bybit allows far more, this keeps
+# a runaway loop from reconnecting in a storm.
+max_conns = 4
+max_subs_per_conn = 500
+supports_multiplex = true

@@ -1,0 +1,6 @@
+{
+ "success": false,
+ "ret_msg": "API key is invalid.",
+ "op": "auth",
+ "conn_id": "daq8uprnufgc738popp0-30swo"
+}

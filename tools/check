@@ -5,7 +5,7 @@
 #      `cli` (the program brokapi), then cargo check of the live tests (integration-live)
 #   3. cargo test --workspace
 #   4. cargo test --doc --workspace
-#   5. RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam,brokapi/alor,
+#   5. RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam,brokapi/alor,brokapi/bybit,
 #      then docs/rustdoc_nofonts.py: the reference must not preload the fonts of rustdoc
 #   6. cargo build --examples
 #   7. mdbook build docs
@@ -20,7 +20,8 @@
 #
 # Every example in the documentation is a doctest or a program in examples/, and all of them run
 # against the in-process broker imitations (crate brokapi-mocks): no network, no money.
-# CARGO_INCREMENTAL=0 is the default here to keep target/ small.
+# CARGO_INCREMENTAL=0 is the default here to keep target/ small. On a machine with a small disk BROKAPI_CHECK_TRIM=1 also
+# deletes the test programs of cargo after the steps that ran them (they are most of target/ and are built again by the next run).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
@@ -28,6 +29,12 @@ export PATH="$HOME/.local/bin:$PATH" # mdbook lives here on the build machines
 
 start=$(date +%s)
 step() { printf '\n==> %s\n' "$*"; }
+trim() {
+    if [ "${BROKAPI_CHECK_TRIM:-0}" = 1 ]; then
+        find "${CARGO_TARGET_DIR:-target}/debug/deps" -maxdepth 1 -type f -perm -u+x \
+            ! -name '*.so' ! -name '*.dylib' ! -name '*.dll' ! -name '*.rlib' -delete 2>/dev/null || true
+    fi
+}
 
 step "1/10 cargo fmt --all --check"
 cargo fmt --all --check
@@ -42,16 +49,18 @@ cargo build -p brokapi-gateway --bin brokapi
 # The live tests (tests/live*.rs, feature integration-live) are never run here, they need tokens. Without this
 # line nothing would notice when a change of the library breaks them.
 cargo check --workspace --all-targets \
-    --features brokapi-bcs/integration-live,brokapi-tbank/integration-live,brokapi-finam/integration-live,brokapi-alor/integration-live,brokapi-bcs-protocol/integration-live,brokapi-alor-protocol/integration-live
+    --features brokapi-bcs/integration-live,brokapi-tbank/integration-live,brokapi-finam/integration-live,brokapi-alor/integration-live,brokapi-bybit/integration-live,brokapi-bcs-protocol/integration-live,brokapi-alor-protocol/integration-live,brokapi-bybit-protocol/integration-live
 
 step "3/10 cargo test --workspace"
+trim
 cargo test --workspace
+trim
 
 step "4/10 cargo test --doc --workspace"
 cargo test --doc --workspace
 
 step "5/10 cargo doc --no-deps --workspace (warnings are errors, no font preload left)"
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam,brokapi/alor
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam,brokapi/alor,brokapi/bybit
 python3 docs/rustdoc_nofonts.py --selftest
 python3 docs/rustdoc_nofonts.py "${CARGO_TARGET_DIR:-target}/doc"
 
