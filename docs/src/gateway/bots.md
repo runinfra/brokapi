@@ -27,11 +27,13 @@
 ## Бот на Rust
 
 Клиент `RemoteClient` лежит в крейте `brokapi-gateway`. Боту нужна только библиотека, без программы `brokapi`, поэтому зависимость берется с
-`default-features = false`. Крейт пока не опубликован в реестре, его берут из репозитория:
+`default-features = false`:
 
 ```bash
-cargo add --git https://github.com/runinfra/brokapi brokapi-gateway --no-default-features
+cargo add brokapi-gateway --no-default-features
 ```
+
+Самая свежая версия, из репозитория: `cargo add --git https://github.com/runinfra/brokapi brokapi-gateway --no-default-features`.
 
 `RemoteClient` умеет те же трейты ядра, что коннектор, поэтому код для прямого подключения почти не меняется: [Торговый бот на событиях, Rust](../rust/howto-trading-bot.md).
 Отличия, с причинами: [Чем гейтвей отличается от прямого подключения](differences.md).

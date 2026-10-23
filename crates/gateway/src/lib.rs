@@ -9,7 +9,7 @@
 //!
 //! | You want | Use |
 //! |---|---|
-//! | Run gateways for your bots, keep them alive, look after them | the program `brokapi` (`cargo install brokapi-gateway`), see below |
+//! | Run gateways for your bots, keep them alive, look after them | the program `brokapi` (a ready-made file from the GitHub releases or `cargo install brokapi-gateway`, see below) |
 //! | Run a gateway in your program | [`Gateway`], [`GatewayConfig`] |
 //! | A bot in Rust | [`RemoteClient`], which speaks the traits of `brokapi-core`, and [`Feed`] for its events |
 //! | A bot in Python | `brokapi.connect_gateway`, which hands out the same `brokapi.Client` as `brokapi.connect` (it uses [`RemoteClient`] and [`Feed`] inside) |

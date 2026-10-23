@@ -22,6 +22,7 @@ Python 3.10 или новее (готовые пакеты для Linux x86_64, 
 pip install brokapi
 ```
 
+Программа `brokapi` (Gateway): готовые файлы для Linux, macOS и Windows - на [странице выпусков](https://github.com/runinfra/brokapi/releases), либо `cargo install brokapi-gateway`.
 Самая свежая версия - из этого репозитория, команды на странице [Установка](https://brokapi.ru/docs/install.html).
 Быстрый старт с пошаговым примером: [Rust](https://brokapi.ru/docs/rust/quickstart.html),
 [Python](https://brokapi.ru/docs/python/quickstart.html), [Gateway](https://brokapi.ru/docs/gateway/quickstart.html).
