@@ -57,7 +57,8 @@ tracing = "0.1"
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 
-# Internal crates
+# Internal crates (the root crate is `brokapi` itself: the client and the gateway take it from here)
+brokapi = { path = ".", version = "0.1.0-alpha.3" }
 brokapi-bcs-protocol = { path = "crates/bcs-protocol", version = "0.1.0-alpha.3" }
 brokapi-alor-protocol = { path = "crates/alor-protocol", version = "0.1.0-alpha.3" }
 brokapi-alor = { path = "crates/alor", version = "0.1.0-alpha.3" }

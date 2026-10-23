@@ -78,14 +78,16 @@ fn internal_crates_are_pinned_to_the_workspace_version() {
     let manifest = read(&root().join("Cargo.toml"));
     let mut seen = 0;
     for line in table(&manifest, "workspace.dependencies").lines() {
-        // brokapi-conformance and brokapi-mocks are not published and carry no version.
-        if line.starts_with("brokapi-") && line.contains("version") {
+        // brokapi-conformance and brokapi-mocks are not published and carry no version. `brokapi` is the root crate.
+        if (line.starts_with("brokapi-") || line.starts_with("brokapi ="))
+            && line.contains("version")
+        {
             let got = quoted_version(line).expect("a quoted version");
             assert_eq!(got, want, "{line}");
             seen += 1;
         }
     }
-    assert!(seen >= 10, "the published crates are pinned, saw {seen}");
+    assert!(seen >= 14, "the published crates are pinned, saw {seen}");
 }
 
 #[test]
