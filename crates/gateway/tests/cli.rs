@@ -596,6 +596,50 @@ async fn a_killed_gateway_is_started_again_checks_its_journal_and_the_bot_catche
     .await;
 }
 
+/// A script or a supervisor starts `brokapi up -d` and reads what it prints through a pipe. The service it leaves behind must
+/// not keep that pipe open: the reader would wait for the end of the output until the service stops. (On Windows a process
+/// started with the console and the handles of its parent inherits every handle that can be inherited, a pipe included.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn up_in_the_background_does_not_hold_the_pipe_of_the_caller() {
+    let bcs = Mock::start(Broker::Bcs).await;
+    let env = Env::new(&[("bcs-main", Broker::Bcs, &bcs)]);
+    let _guard = env.guard();
+    let (config, registry, cwd) = (
+        env.config.clone(),
+        env.registry.clone(),
+        env.dir.path().to_owned(),
+    );
+    let (done, ended) = std::sync::mpsc::channel();
+    // With pipes, as a script does. If the pipe is held, `output` does not return, so it runs on a thread of its own.
+    std::thread::spawn(move || {
+        let output = Command::new(EXE)
+            .args(["-c", config.to_str().unwrap(), "up", "-d"])
+            .env("BROKAPI_REGISTRY_DIR", registry)
+            .env_remove("BROKAPI_CONFIG")
+            .current_dir(cwd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output();
+        let _ = done.send(output);
+    });
+    let output = match ended.recv_timeout(COMMAND_LIMIT) {
+        Ok(output) => output.expect("the program runs"),
+        Err(_) => panic!(
+            "`brokapi up -d` returned, but the pipe of its output was still open {COMMAND_LIMIT:?} later: the service \
+             inherited it\n{}",
+            env.diagnostics()
+        ),
+    };
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("service started in the background"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    env.wait_all_running(&["bcs-main"]).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_services_with_two_configs_run_side_by_side() {
     let (bcs, tbank) = (
