@@ -117,11 +117,41 @@ pub fn detach(cmd: &mut tokio::process::Command) {
     {
         // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
         cmd.creation_flags(0x0000_0008 | 0x0000_0200 | 0x0800_0000);
+        keep_std_handles();
     }
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(false);
+}
+
+/// Takes the handles of this process's input and output out of what a child inherits.
+///
+/// Windows hands a new process every handle that is marked inheritable, whatever the new process was told to use for its own
+/// input and output. Whoever started this program with a pipe for its output (a script, a supervisor, a test) made the
+/// handle of that pipe inheritable, so a service started in the background kept the pipe open: the reader waited for the
+/// end of the output until the service stopped. Only the handles of the standard streams are cleared, in this process, which
+/// is the short-lived `brokapi up -d`; the child gets the null device for its own streams.
+#[cfg(windows)]
+fn keep_std_handles() {
+    use std::ffi::c_void;
+    // `kernel32` is linked by the standard library already.
+    unsafe extern "system" {
+        fn GetStdHandle(which: u32) -> *mut c_void;
+        fn SetHandleInformation(handle: *mut c_void, mask: u32, flags: u32) -> i32;
+    }
+    const HANDLE_FLAG_INHERIT: u32 = 0x1;
+    // STD_INPUT_HANDLE, STD_OUTPUT_HANDLE and STD_ERROR_HANDLE: -10, -11 and -12 as the unsigned numbers the call takes.
+    for which in [-10_i32, -11, -12] {
+        // SAFETY: both calls only read or change a flag of a handle this process owns, and a handle that is missing (null)
+        // or not valid (-1) is skipped. A failed call changes nothing, the result is not needed.
+        unsafe {
+            let handle = GetStdHandle(which as u32);
+            if !handle.is_null() && handle as isize != -1 {
+                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+    }
 }
 
 /// Reads the pid in a pid file.
