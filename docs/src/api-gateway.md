@@ -373,6 +373,16 @@ is in `kind`.
 |---|---|---|---|
 | `md` | [`MarketDataCaps`](#brokapi-gateway-v1-marketdatacaps) | 1 |  |
 | `ud` | [`UserDataCaps`](#brokapi-gateway-v1-userdatacaps) | 2 |  |
+| `candle_spans` | список [`CandleSpan`](#brokapi-gateway-v1-candlespan) | 3 | The longest span one Candles request may cover, per timeframe, as the broker documents it. A timeframe that is not listed has no known limit. A client that reads a long history cuts it into windows of this span. |
+
+<a id="brokapi-gateway-v1-candlespan"></a>
+
+### CandleSpan
+
+| Поле | Тип | № | Описание |
+|---|---|---|---|
+| `timeframe` | [`Timeframe`](#brokapi-gateway-v1-timeframe) | 1 |  |
+| `span_ns` | `uint64` | 2 |  |
 
 <a id="brokapi-gateway-v1-healthrequest"></a>
 

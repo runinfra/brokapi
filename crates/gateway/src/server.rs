@@ -1270,6 +1270,7 @@ impl pb::gateway_server::Gateway for GatewayService {
             Some(caps) => Ok(Response::new(pb::CapsResponse {
                 md: Some(cv::md_caps_to(&caps.md)),
                 ud: Some(cv::ud_caps_to(&caps.ud)),
+                candle_spans: cv::candle_spans_to(&self.shared.client),
             })),
             None => Err(status_of(&Error::ShuttingDown)),
         }

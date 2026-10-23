@@ -129,6 +129,7 @@ async fn a_slow_bot_is_cut_off_and_does_not_slow_the_others() {
         "slow",
         ConnectOptions {
             http2_window: Some(2048),
+            ..ConnectOptions::default()
         },
     )
     .await
@@ -387,6 +388,12 @@ async fn a_restart_with_an_open_order_compares_the_journal_before_taking_command
     assert_eq!(health.state, pb::GatewayState::Starting as i32);
     assert_eq!(health.open_orders, 1, "the journal of run 1 is there");
     assert_ne!(health.epoch, epoch_before);
+    // A bot that waits for the gateway gives up after its time, and says what the gateway is doing.
+    let early = beta.wait_ready(Duration::from_millis(30)).await;
+    assert!(
+        matches!(&early, Err(Error::Transport(m)) if m.to_string().contains("still starting") && m.to_string().contains("rate limited")),
+        "{early:?}"
+    );
     // A command is refused, and nothing reached the broker.
     let refused = beta.place(common::bcs_order("1.0")).await;
     assert!(
@@ -409,6 +416,9 @@ async fn a_restart_with_an_open_order_compares_the_journal_before_taking_command
         .await
         .expect("the gateway becomes ready");
     assert_eq!(second.state(), GatewayState::Ready);
+    // A bot that waits for it is let through at once.
+    let ready = beta.wait_ready(Duration::from_secs(5)).await.unwrap();
+    assert_eq!(ready.state, pb::GatewayState::Ready as i32);
     // The order of run 1 is still active at the broker: it is confirmed, and the journal keeps it.
     assert_eq!(second.health().open_orders, 1);
     assert_eq!(second.health().detail, "");

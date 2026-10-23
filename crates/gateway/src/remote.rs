@@ -11,7 +11,9 @@
 
 use std::future::Future;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use brokapi::core::{
@@ -23,7 +25,7 @@ use brokapi::core::{
     StopOrderSnapshot, SubscribeOpts, SubscriptionId, TimeRange, Timeframe, TradingParams,
     TradingStatus, TransportError, UserDataCaps,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tonic::metadata::{Ascii, MetadataValue};
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Response, Status, Streaming};
@@ -58,6 +60,13 @@ pub struct ConnectOptions {
     /// to a bot that does not read: a small window keeps the memory of a stalled stream small. Without it the default of
     /// the transport.
     pub http2_window: Option<u32>,
+    /// Keep the rule that the connectors of the library keep: a command (`place`, `cancel`, `replace`, `place_stop`,
+    /// `cancel_stop`) is refused on the bot's side, before it is sent, with [`Error::NotReconciled`] until a `reconcile`
+    /// has succeeded and with [`Error::Degraded`] after the event stream reported a [`pb::Gap`] until the next
+    /// `reconcile` has succeeded. Off by default: the gateway takes commands from a bot that did not reconcile, and a bot
+    /// of Rust that handles the gap itself does not need the guard. The Python module turns it on, so that a bot written
+    /// for a broker gets the same refusals from a gateway.
+    pub trading_gate: bool,
 }
 
 /// A bot's connection to a gateway. A clone is the same connection.
@@ -71,6 +80,35 @@ struct Inner {
     auth: MetadataValue<Ascii>,
     bot: MetadataValue<Ascii>,
     name: String,
+    closed: watch::Sender<bool>,
+    gate: Gate,
+    /// The longest span of one `candles` request per timeframe, learned by [`RemoteClient::caps`].
+    spans: OnceLock<Vec<(Timeframe, Duration)>>,
+}
+
+/// The guard of commands of [`ConnectOptions::trading_gate`].
+#[derive(Default)]
+struct Gate {
+    on: bool,
+    reconciled: AtomicBool,
+    /// How many gaps the event streams of this client reported, and how many of them a `reconcile` has covered.
+    gaps: AtomicU64,
+    covered: AtomicU64,
+}
+
+impl Gate {
+    fn check(&self) -> Result<(), Error> {
+        if !self.on {
+            return Ok(());
+        }
+        if self.gaps.load(Ordering::SeqCst) > self.covered.load(Ordering::SeqCst) {
+            return Err(Error::Degraded);
+        }
+        if !self.reconciled.load(Ordering::SeqCst) {
+            return Err(Error::NotReconciled);
+        }
+        Ok(())
+    }
 }
 
 /// Opens the channel to a gateway (or a service) at an address.
@@ -146,6 +184,12 @@ impl RemoteClient {
                 auth,
                 bot: bot_value,
                 name: bot.to_owned(),
+                closed: watch::channel(false).0,
+                gate: Gate {
+                    on: options.trading_gate,
+                    ..Gate::default()
+                },
+                spans: OnceLock::new(),
             }),
         })
     }
@@ -180,6 +224,31 @@ impl RemoteClient {
         &self.inner.name
     }
 
+    /// Ends this connection on the bot's side: later calls fail with [`Error::ShuttingDown`], and the feeds of the
+    /// client end. The gateway and the orders at the exchange are not touched, and what this bot subscribed to is
+    /// let go by the gateway after `bot_grace`. A clone of the client is closed with it.
+    pub fn close(&self) {
+        self.inner.closed.send_replace(true);
+    }
+
+    /// Whether [`RemoteClient::close`] has been called.
+    pub fn is_closed(&self) -> bool {
+        *self.inner.closed.borrow()
+    }
+
+    /// Resolves when [`RemoteClient::close`] is called (at once if it was).
+    pub(crate) async fn closed(&self) {
+        let _ = self.inner.closed.subscribe().wait_for(|c| *c).await;
+    }
+
+    /// The refusal of a command by the guard of [`ConnectOptions::trading_gate`], if it is on.
+    fn check_command(&self) -> Result<(), Error> {
+        if self.is_closed() {
+            return Err(Error::ShuttingDown);
+        }
+        self.inner.gate.check()
+    }
+
     fn grpc(&self) -> GrpcClient {
         pb::gateway_client::GatewayClient::new(self.inner.channel.clone())
             .max_decoding_message_size(MAX_MESSAGE)
@@ -208,6 +277,9 @@ impl RemoteClient {
         F: FnOnce(GrpcClient, Request<Req>) -> Fut + Send + 'static,
         Fut: Future<Output = Result<Response<Resp>, Status>> + Send + 'static,
     {
+        if self.is_closed() {
+            return Err(Error::ShuttingDown);
+        }
         let (client, request) = (self.grpc(), self.request(message));
         let work = async move {
             f(client, request)
@@ -234,6 +306,30 @@ impl RemoteClient {
         .await
     }
 
+    /// Waits until the gateway takes commands, at most `timeout`, and returns what `Health` said then. A gateway starts by
+    /// comparing its journal with the broker, which takes a moment and can take longer when the broker is slow or the
+    /// rate limit is spent: until then every call but `health` and `caps` is refused. The error is [`Error::Transport`]
+    /// with the last thing the gateway said about its start, or [`Error::ShuttingDown`] for a gateway that is stopping.
+    pub async fn wait_ready(&self, timeout: Duration) -> Result<pb::HealthResponse, Error> {
+        let started = tokio::time::Instant::now();
+        loop {
+            let health = self.health().await?;
+            match pb::GatewayState::try_from(health.state) {
+                Ok(pb::GatewayState::Ready) => return Ok(health),
+                Ok(pb::GatewayState::Stopping) => return Err(Error::ShuttingDown),
+                _ => {}
+            }
+            let left = timeout.saturating_sub(started.elapsed());
+            if left.is_zero() {
+                return Err(transport(format!(
+                    "the gateway {} is still starting after {timeout:?}: {}",
+                    health.name, health.detail
+                )));
+            }
+            tokio::time::sleep(left.min(Duration::from_millis(200))).await;
+        }
+    }
+
     /// The capabilities of the two connectors.
     pub async fn caps(&self) -> Result<(MarketDataCaps, UserDataCaps), Error> {
         let r = self
@@ -241,6 +337,8 @@ impl RemoteClient {
                 c.caps(r).await
             })
             .await?;
+        // Once per connection: a limit does not change while the gateway runs.
+        let _ = self.inner.spans.set(cv::candle_spans_from(&r.candle_spans));
         Ok((
             cv::md_caps_from(&r.md).map_err(bad_reply)?,
             cv::ud_caps_from(&r.ud).map_err(bad_reply)?,
@@ -322,6 +420,7 @@ impl RemoteClient {
         };
         Ok(EventStream {
             stream,
+            client: self.clone(),
             epoch: ready.epoch,
             next_seq: ready.next_seq,
             last_seq,
@@ -386,6 +485,7 @@ pub enum RemoteEvent {
 /// The event stream of a bot, from [`RemoteClient::events`].
 pub struct EventStream {
     stream: Streaming<pb::EventFrame>,
+    client: RemoteClient,
     epoch: u64,
     next_seq: u64,
     last_seq: u64,
@@ -432,6 +532,7 @@ impl EventStream {
                 Frame::Gap(gap) => {
                     // The stream goes on from now: this is the new point to resume from.
                     self.last_seq = self.next_seq.saturating_sub(1);
+                    self.client.inner.gate.gaps.fetch_add(1, Ordering::SeqCst);
                     Ok(RemoteEvent::Gap(gap))
                 }
                 Frame::Lagged(l) => Ok(RemoteEvent::Lagged {
@@ -559,6 +660,17 @@ impl MarketDataSource for RemoteClient {
             .map_err(bad_reply)
     }
 
+    /// The limit the gateway reported in `Caps`, so a long history is read in windows that the broker accepts. `None`
+    /// until [`RemoteClient::caps`] has been called once: call it first when you read history.
+    fn candles_max_span(&self, tf: Timeframe) -> Option<Duration> {
+        self.inner
+            .spans
+            .get()?
+            .iter()
+            .find(|(t, _)| *t == tf)
+            .map(|(_, span)| *span)
+    }
+
     async fn subscribe_candles(
         &self,
         id: &InstrumentId,
@@ -651,6 +763,7 @@ impl InstrumentSource for RemoteClient {
 #[async_trait]
 impl OrderExecutor for RemoteClient {
     async fn place(&self, req: PlaceOrderRequest) -> Result<OrderAck, Error> {
+        self.check_command()?;
         let r = self
             .call(true, cv::place_to(&req), |mut c, r| async move {
                 c.place(r).await
@@ -660,6 +773,7 @@ impl OrderExecutor for RemoteClient {
     }
 
     async fn cancel(&self, cid: ClientOrderId) -> Result<(), Error> {
+        self.check_command()?;
         let msg = pb::CancelRequest {
             cid: cv::cid_to(&cid),
         };
@@ -669,6 +783,7 @@ impl OrderExecutor for RemoteClient {
     }
 
     async fn replace(&self, req: ReplaceOrderRequest) -> Result<OrderAck, Error> {
+        self.check_command()?;
         let r = self
             .call(true, cv::replace_to(&req), |mut c, r| async move {
                 c.replace(r).await
@@ -712,14 +827,22 @@ impl OrderExecutor for RemoteClient {
     /// Asks the gateway to compare `ledger` with the broker. The orders of the other bots of the gateway are not in
     /// your ledger, so they come back as `foreign`.
     async fn reconcile(&self, ledger: &[ClientOrderId]) -> Result<ReconcileReport, Error> {
+        if self.is_closed() {
+            return Err(Error::ShuttingDown);
+        }
         let msg = pb::ReconcileRequest {
             ledger: cv::cids_to(ledger),
             include_journal: false,
         };
+        // The gaps counted before the call are the ones this reconcile covers: one that arrives while it runs is not.
+        let gaps = self.inner.gate.gaps.load(Ordering::SeqCst);
         let r = self
             .call(true, msg, |mut c, r| async move { c.reconcile(r).await })
             .await?;
-        cv::report_from(&r).map_err(bad_reply)
+        let report = cv::report_from(&r).map_err(bad_reply)?;
+        self.inner.gate.reconciled.store(true, Ordering::SeqCst);
+        self.inner.gate.covered.fetch_max(gaps, Ordering::SeqCst);
+        Ok(report)
     }
 }
 
@@ -793,6 +916,7 @@ impl PortfolioSource for RemoteClient {
 #[async_trait]
 impl StopOrderExecutor for RemoteClient {
     async fn place_stop(&self, req: PlaceStopOrderRequest) -> Result<OrderAck, Error> {
+        self.check_command()?;
         let r = self
             .call(true, cv::place_stop_to(&req), |mut c, r| async move {
                 c.place_stop(r).await
@@ -802,6 +926,7 @@ impl StopOrderExecutor for RemoteClient {
     }
 
     async fn cancel_stop(&self, stop: StopOrderRef) -> Result<(), Error> {
+        self.check_command()?;
         let msg = pb::CancelStopRequest {
             stop: Some(cv::stop_ref_to(&stop)),
         };
@@ -830,5 +955,36 @@ impl StopOrderExecutor for RemoteClient {
         })
         .await
         .map(sub)
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------- the account
+
+#[async_trait]
+impl brokapi_client::Account for RemoteClient {
+    fn is_closed(&self) -> bool {
+        RemoteClient::is_closed(self)
+    }
+
+    async fn account_caps(&self) -> Result<brokapi_client::Caps, brokapi_client::ClientError> {
+        let (md, ud) = self.caps().await?;
+        Ok(brokapi_client::Caps { md, ud })
+    }
+
+    async fn account_instrument(
+        &self,
+        ticker: &str,
+        board: Option<&str>,
+    ) -> Result<InstrumentId, brokapi_client::ClientError> {
+        Ok(self.resolve_instrument(ticker, board).await?)
+    }
+
+    async fn account_raw(
+        &self,
+        method: &str,
+        args: &serde_json::Value,
+        command: bool,
+    ) -> Result<serde_json::Value, brokapi_client::ClientError> {
+        Ok(self.raw(method, args, command).await?)
     }
 }

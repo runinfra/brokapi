@@ -115,6 +115,46 @@ pub fn timeframe_to(t: Timeframe) -> i32 {
     value as i32
 }
 
+/// Every timeframe, for a table that has a row for each.
+pub const TIMEFRAMES: [Timeframe; 10] = [
+    Timeframe::M1,
+    Timeframe::M5,
+    Timeframe::M10,
+    Timeframe::M15,
+    Timeframe::M30,
+    Timeframe::H1,
+    Timeframe::H4,
+    Timeframe::D1,
+    Timeframe::W1,
+    Timeframe::MN,
+];
+
+/// The longest span of one `candles` request for each timeframe that the source knows a limit for.
+pub fn candle_spans_to(source: &impl brokapi::core::MarketDataSource) -> Vec<pb::CandleSpan> {
+    TIMEFRAMES
+        .iter()
+        .filter_map(|&tf| {
+            source.candles_max_span(tf).map(|span| pb::CandleSpan {
+                timeframe: timeframe_to(tf),
+                span_ns: u64::try_from(span.as_nanos()).unwrap_or(u64::MAX),
+            })
+        })
+        .collect()
+}
+
+/// The table of [`candle_spans_to`] read back.
+pub fn candle_spans_from(spans: &[pb::CandleSpan]) -> Vec<(Timeframe, std::time::Duration)> {
+    spans
+        .iter()
+        .filter_map(|s| {
+            Some((
+                timeframe_from(s.timeframe).ok()?,
+                std::time::Duration::from_nanos(s.span_ns),
+            ))
+        })
+        .collect()
+}
+
 /// A timeframe from its number on the wire.
 pub fn timeframe_from(v: i32) -> R<Timeframe> {
     Ok(match pb::Timeframe::try_from(v) {
