@@ -306,6 +306,18 @@ fn transcript(text: &str) -> Vec<(String, Vec<String>)> {
     out
 }
 
+/// Stops the service of a directory when the test ends, however it ends: a failed test must not leave processes behind.
+struct Down {
+    cwd: std::path::PathBuf,
+    registry: std::path::PathBuf,
+}
+
+impl Drop for Down {
+    fn drop(&mut self) {
+        let _ = run(&["down"], &self.cwd, &self.registry, &[]);
+    }
+}
+
 /// Plays the transcript of a page against the imitation of T-Bank: every `$ brokapi ...` command of its `text` blocks is run in a
 /// directory of its own, and what it prints must have the shape of what the page shows. `from_scratch`: the page starts with
 /// `brokapi init` (the quick start). Otherwise the service of the quick start is already running when the page begins.
@@ -343,6 +355,10 @@ async fn play(page_name: &str, from_scratch: bool) -> usize {
     let dir = tempfile::tempdir().unwrap();
     let registry = dir.path().join("registry");
     let cwd = dir.path().to_owned();
+    let _down = Down {
+        cwd: cwd.clone(),
+        registry: registry.clone(),
+    };
     let mut env: Vec<(String, String)> = vec![("TBANK_TOKEN".into(), token.clone())];
     let wait_running = |cwd: &Path, registry: &Path, env: &[(String, String)]| {
         // The gateway may still be starting: the page says to repeat the command, the test waits.
