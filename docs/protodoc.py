@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Makes the reference of the gRPC API (docs/src/api-gateway.md) from the .proto files in proto/.
+"""Makes the reference of the gRPC API (docs/src/api-gateway.md) from the .proto files in crates/gateway/proto/.
 
 The page is not written by hand: the text between the lines `<!-- proto:begin -->` and `<!-- proto:end -->` is made here from the
 files and their comments, the text around it is the introduction. Python 3 standard library only.
@@ -136,7 +136,7 @@ def anchor(package, name):
 
 
 def render():
-    parsed = [(path, title, read_proto(os.path.join(ROOT, "proto", path))) for path, title in FILES]
+    parsed = [(path, title, read_proto(os.path.join(ROOT, "crates", "gateway", "proto", path))) for path, title in FILES]
     # every type name -> (package, full name), so that a field type becomes a link
     known = {}
     for _, _, (package, _, _, items) in parsed:
@@ -245,7 +245,7 @@ def main():
     new = build_page()
     if "--check" in sys.argv:
         if open(PAGE, encoding="utf-8").read() != new:
-            sys.exit("docs/src/api-gateway.md is not what proto/ gives: run `python3 docs/protodoc.py`")
+            sys.exit("docs/src/api-gateway.md is not what crates/gateway/proto/ gives: run `python3 docs/protodoc.py`")
         print("api-gateway.md matches the .proto files")
     else:
         open(PAGE, "w", encoding="utf-8").write(new)

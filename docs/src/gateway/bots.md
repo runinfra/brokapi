@@ -161,7 +161,7 @@ cargo add --git https://github.com/runinfra/brokapi brokapi-gateway --no-default
 
 ## Бот на другом языке
 
-Готового клиента для Go пока нет (для Python он есть, выше). Любой язык, в котором есть gRPC, подключается сам: контракт - файлы `.proto` в каталоге `proto/` репозитория, справочник
+Готового клиента для Go пока нет (для Python он есть, выше). Любой язык, в котором есть gRPC, подключается сам: контракт - файлы `.proto` в каталоге `crates/gateway/proto/` репозитория (они же лежат в пакете `brokapi-gateway` на crates.io), справочник
 по ним - [Gateway (gRPC)](../api-gateway.md). Что нужно сделать:
 
 1. **Сгенерировать клиент** из `proto/brokapi/gateway/v1/gateway.proto` (он подключает `types.proto`) обычным для вашего языка инструментом (`protoc` с плагином gRPC или `buf`).

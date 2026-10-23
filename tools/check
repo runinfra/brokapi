@@ -8,7 +8,7 @@
 #   5. RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam,brokapi/alor,
 #      then docs/rustdoc_nofonts.py: the reference must not preload the fonts of rustdoc
 #   6. cargo build --examples
-#   7. docs/protodoc.py --check (the reference of the gRPC API is what proto/ gives), mdbook build docs
+#   7. docs/protodoc.py --check (the reference of the gRPC API is what crates/gateway/proto/ gives), mdbook build docs
 #   8. docs/llms.py: the files for AI agents (llms.txt, llms-full.txt, page.md), every page of the book described
 #   9. Python: build the extension (maturin develop, crates/python) into a virtualenv
 #  10. Python: pytest (tests/, the examples of the book run against the imitations), the doctests of the package, and the
