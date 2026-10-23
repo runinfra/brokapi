@@ -4,7 +4,7 @@
 //
 //   1. Connect to the Unix socket of the gateway (or 127.0.0.1 on Windows) and send two metadata headers with every
 //      call: `authorization: Bearer <the key from the access.key file>` and `x-brokapi-bot: <name of the bot>`.
-//   2. Open `Events` first, then subscribe. The first frame of `Events` says the stream is registered; events that
+//   2. Open `Events` first, then subscribe. The first frame of `Events` says the stream is registered. Events that
 //      happen after it are yours.
 //   3. Call `Reconcile` once before any trading command.
 //
@@ -288,7 +288,7 @@ message LimitInfo {
   uint32 capacity = 3;
 }
 
-// A subscription at the broker. The same request of several bots is one subscription with several owners; only an
+// A subscription at the broker. The same request of several bots is one subscription with several owners. Only an
 // owner can close it. The gateway's own subscriptions (the states of orders) have the owner "(gateway)".
 message SubscriptionInfo {
   uint64 sub = 1;

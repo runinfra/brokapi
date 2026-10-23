@@ -636,8 +636,8 @@ token_env = "TBANK_TOKEN"    # or: token_file = "/path/to/token"
 # size = 10000
 # max_age = "5m"
 
-# Replace a bucket of the rate limit of the broker (the buckets are on the page of the broker).
-# [gateway.limits.place]
+# Replace a bucket of the rate limit of the broker. The names of the buckets of this gateway are in `brokapi status <name>`.
+# [gateway.limits.order_post]
 # rate = 5
 # per = "1s"
 # burst = 5
