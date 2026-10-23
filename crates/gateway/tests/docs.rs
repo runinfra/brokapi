@@ -29,11 +29,16 @@ mod bot;
 const EXE: &str = env!("CARGO_BIN_EXE_brokapi");
 const BOOK: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/src/gateway");
 
-fn page(name: &str) -> String {
-    // The number of the version is put in by the book (`{{brokapi_version}}`): here any number will do.
+/// A text file of the book with `\n` line ends. Git on Windows may check the files out with `\r\n`.
+fn read_book(name: &str) -> String {
     std::fs::read_to_string(Path::new(BOOK).join(name))
         .unwrap_or_else(|e| panic!("docs/src/gateway/{name}: {e}"))
-        .replace("{{brokapi_version}}", "0")
+        .replace("\r\n", "\n")
+}
+
+fn page(name: &str) -> String {
+    // The number of the version is put in by the book (`{{brokapi_version}}`): here any number will do.
+    read_book(name).replace("{{brokapi_version}}", "0")
 }
 
 /// The fenced blocks of a page: (the language written after the fence, the text).
@@ -108,7 +113,7 @@ fn generated_help() -> String {
 #[test]
 fn the_reference_of_the_commands_is_what_the_program_prints() {
     let path = Path::new(BOOK).join("commands.md");
-    let current = std::fs::read_to_string(&path).expect("docs/src/gateway/commands.md");
+    let current = read_book("commands.md");
     let (head, rest) = current
         .split_once(HELP_BEGIN)
         .expect("commands.md has the line <!-- help:begin -->");
@@ -123,11 +128,20 @@ fn the_reference_of_the_commands_is_what_the_program_prints() {
         std::fs::write(&path, wanted).unwrap();
         return;
     }
-    assert!(
-        current == wanted,
-        "docs/src/gateway/commands.md is not what the program prints. Rewrite it: \
-         BROKAPI_UPDATE_DOCS=1 cargo test -p brokapi-gateway --test docs"
-    );
+    if current != wanted {
+        let line = current
+            .lines()
+            .zip(wanted.lines())
+            .position(|(a, b)| a != b)
+            .unwrap_or_else(|| current.lines().count().min(wanted.lines().count()));
+        panic!(
+            "docs/src/gateway/commands.md is not what the program prints (first difference at line {}: the page has {:?}, \
+             the program prints {:?}). Rewrite it: BROKAPI_UPDATE_DOCS=1 cargo test -p brokapi-gateway --test docs",
+            line + 1,
+            current.lines().nth(line),
+            wanted.lines().nth(line)
+        );
+    }
 }
 
 #[test]
@@ -275,11 +289,13 @@ fn run(args: &[&str], cwd: &Path, registry: &Path, env: &[(String, String)]) -> 
     }
 }
 
-/// A line as its shape: words with a digit or a slash in them (numbers, times, paths) become `~`, spaces are one.
+/// A line as its shape: words with a digit or a slash in them (numbers, times, paths of any system) become `~`, spaces are one.
 fn shape(line: &str) -> String {
     line.split_whitespace()
         .map(|w| {
-            if w.chars().any(|c| c.is_ascii_digit() || c == '/') {
+            if w.chars()
+                .any(|c| c.is_ascii_digit() || c == '/' || c == '\\')
+            {
                 "~"
             } else {
                 w

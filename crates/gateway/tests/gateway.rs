@@ -621,6 +621,107 @@ async fn a_second_gateway_on_the_same_socket_is_refused() {
     rig.stop().await;
 }
 
+/// A state directory deeper than a Unix socket path can be (108 bytes on Linux, 104 on macOS): `~/Library/Application Support/...`
+/// with a long name of a gateway gets there, and so does a long path after `-c`.
+#[cfg(unix)]
+fn long_state_dir(root: &std::path::Path) -> std::path::PathBuf {
+    let dir = root
+        .join("a-state-directory-with-a-long-name-".repeat(2))
+        .join("and-a-long-gateway-name");
+    assert!(dir.join("gateway.sock").as_os_str().len() > 108);
+    dir
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_state_directory_too_long_for_a_socket_gets_a_socket_in_a_short_private_directory() {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+    let root = tempfile::tempdir().unwrap();
+    let state = long_state_dir(root.path());
+    let mock = Mock::start(Broker::Bcs).await;
+    let gateway = Gateway::start(
+        GatewayConfig::new("long", &state),
+        mock.config(Broker::Bcs),
+        Some(roomy_limits(Broker::Bcs)),
+    )
+    .await
+    .expect("the gateway starts although the natural path of its socket is too long");
+    gateway.ready().await;
+
+    let Address::Unix(socket) = gateway.address().clone() else {
+        panic!("a Unix socket on this system");
+    };
+    assert!(socket.as_os_str().len() < 104, "{}", socket.display());
+    assert!(!socket.starts_with(&state));
+    // The socket is the user's and nobody else's, and so is the directory it stands in.
+    let meta = std::fs::symlink_metadata(&socket).unwrap();
+    assert!(meta.file_type().is_socket());
+    assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+    let dir_meta = std::fs::metadata(socket.parent().unwrap()).unwrap();
+    assert_eq!(dir_meta.permissions().mode() & 0o777, 0o700);
+    assert_eq!(dir_meta.uid(), meta.uid());
+
+    // The commands and the bots read the real address from the state directory.
+    let written = std::fs::read_to_string(state.join("gateway.addr")).unwrap();
+    assert_eq!(written, gateway.address().to_string());
+    let bot = RemoteClient::connect_dir(&state, "reader")
+        .await
+        .expect("a bot finds the socket by the address file");
+    assert!(bot.health().await.is_ok());
+    drop(bot);
+
+    gateway
+        .shutdown(brokapi::core::ShutdownMode::Immediate)
+        .await;
+    assert!(
+        !socket.exists(),
+        "the socket is removed when the gateway stops"
+    );
+    assert!(!state.join("gateway.addr").exists());
+
+    // The same state directory starts again on the same place.
+    let again = Gateway::start(
+        GatewayConfig::new("long", &state),
+        mock.config(Broker::Bcs),
+        Some(roomy_limits(Broker::Bcs)),
+    )
+    .await
+    .expect("the gateway starts again");
+    assert_eq!(again.address(), &Address::Unix(socket));
+    again.shutdown(brokapi::core::ShutdownMode::Immediate).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_socket_path_the_user_chose_and_the_system_cannot_take_is_refused_in_words() {
+    let root = tempfile::tempdir().unwrap();
+    let state = long_state_dir(root.path());
+    let mock = Mock::start(Broker::Bcs).await;
+    let mut config = GatewayConfig::new("long", root.path().join("state"));
+    config.listen = Listen::Unix(state.join("gateway.sock"));
+    let started = Gateway::start(config, mock.config(Broker::Bcs), None).await;
+    let text = started.err().expect("refused").to_string();
+    assert!(
+        text.contains("Unix socket path may have") && text.contains("leave `listen` out"),
+        "{text}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_file_in_the_place_of_the_socket_is_left_alone() {
+    let root = tempfile::tempdir().unwrap();
+    let place = root.path().join("not-a-socket");
+    std::fs::write(&place, "my notes").unwrap();
+    let mock = Mock::start(Broker::Bcs).await;
+    let mut config = GatewayConfig::new("file", root.path().join("state"));
+    config.listen = Listen::Unix(place.clone());
+    let started = Gateway::start(config, mock.config(Broker::Bcs), None).await;
+    let text = started.err().expect("refused").to_string();
+    assert!(text.contains("not a socket"), "{text}");
+    assert_eq!(std::fs::read_to_string(&place).unwrap(), "my notes");
+}
+
 #[tokio::test]
 async fn a_command_runs_to_its_end_when_the_bot_stops_waiting() {
     let rig = Rig::start(Broker::Bcs).await;

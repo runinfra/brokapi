@@ -108,6 +108,8 @@ mod remote;
 mod server;
 #[cfg(feature = "cli")]
 pub mod service;
+#[cfg(unix)]
+mod socket;
 mod subs;
 
 /// The messages and the service of the `.proto` files, generated.

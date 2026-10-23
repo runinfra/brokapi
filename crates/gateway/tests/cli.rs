@@ -693,6 +693,57 @@ async fn two_services_with_two_configs_run_side_by_side() {
     assert_eq!(test.json(&["services"]).await.as_array().unwrap().len(), 1);
 }
 
+/// `~/Library/Application Support/...` on macOS, or a config far down a tree of directories: the natural path of a socket in the
+/// state directory is longer than the system takes (108 bytes on Linux, 104 on macOS). The sockets go to a short directory
+/// of the user, and everything finds them by the address files.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_state_directory_too_long_for_a_socket_works_for_the_service_and_the_gateways() {
+    let mock = Mock::start(Broker::Tbank).await;
+    let name = "gateway-with-a-rather-long-name";
+    let mut env = Env::new(&[(name, Broker::Tbank, &mock)]);
+    env.state = env.dir.path().join("x".repeat(60)).join("y".repeat(40));
+    let text = std::fs::read_to_string(&env.config).unwrap().replacen(
+        "state_dir = \"state\"",
+        &format!("state_dir = {:?}", env.state.display().to_string()),
+        1,
+    );
+    std::fs::write(&env.config, text).unwrap();
+    assert!(env.gateway_dir(name).join("gateway.sock").as_os_str().len() > 108);
+    let _guard = env.guard();
+
+    env.up().await;
+    env.wait_all_running(&[name]).await;
+
+    // Both sockets are away from the state directory, and the address files say where.
+    let service = std::fs::read_to_string(env.state.join("service.addr")).unwrap();
+    let gateway = std::fs::read_to_string(env.gateway_dir(name).join("gateway.addr")).unwrap();
+    for address in [&service, &gateway] {
+        let socket = address.strip_prefix("unix:").expect("a Unix socket");
+        assert!(!socket.starts_with(env.state.to_str().unwrap()), "{socket}");
+        assert!(socket.len() < 104, "{socket}");
+        assert!(Path::new(socket).exists(), "{socket}");
+    }
+    assert_eq!(
+        env.gateway(name).await.unwrap()["address"]
+            .as_str()
+            .unwrap(),
+        gateway
+    );
+
+    // The commands reach the service and the gateway, and so does a bot.
+    assert_eq!(env.run(&["portfolio", name]).await.code, 0);
+    let bot = env.bot(name, "long-path-bot").await;
+    assert!(bot.health().await.is_ok());
+    drop(bot);
+
+    assert_eq!(env.run(&["down"]).await.code, 0);
+    for address in [&service, &gateway] {
+        let socket = address.strip_prefix("unix:").unwrap();
+        assert!(!Path::new(socket).exists(), "{socket} is left after down");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_gateway_that_keeps_stopping_is_marked_failed_and_start_brings_it_back() {
     let bcs = Mock::start(Broker::Bcs).await;
