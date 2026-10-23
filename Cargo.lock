@@ -250,7 +250,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "brokapi",
  "brokapi-alor",
@@ -271,7 +271,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-alor"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "async-trait",
  "brokapi-alor-protocol",
@@ -296,7 +296,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-alor-protocol"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "base64",
  "brokapi-mocks",
@@ -320,7 +320,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-bcs"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "async-trait",
  "brokapi-bcs-protocol",
@@ -343,7 +343,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-bcs-protocol"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "anyhow",
  "brokapi-conformance",
@@ -372,7 +372,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-client"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "async-trait",
  "brokapi",
@@ -390,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-conformance"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "brokapi-bcs",
  "brokapi-bcs-protocol",
@@ -403,7 +403,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-core"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "async-trait",
  "brokapi-bcs",
@@ -424,7 +424,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-finam"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "async-trait",
  "brokapi-conformance",
@@ -447,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-finam-protocol"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "async-trait",
  "base64",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-gateway"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "async-trait",
  "brokapi",
@@ -499,7 +499,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-mocks"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "axum",
  "brokapi-bcs-protocol",
@@ -524,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-runtime"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "async-trait",
  "brokapi-core",
@@ -540,7 +540,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-sansio"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "brokapi-core",
  "serde_json",
@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-tbank"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "async-trait",
  "brokapi-conformance",
@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "brokapi-tbank-protocol"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "brokapi-mocks",
  "dotenvy",
