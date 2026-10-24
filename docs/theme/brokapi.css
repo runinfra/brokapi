@@ -160,7 +160,7 @@ main:focus, body:focus { outline: none; }
 }
 .skip-link:focus { top: 10px; }
 
-/* Menu bar: toggle, theme, search | mark, word, "Документация" | language, link to the site */
+/* Menu bar: toggle, theme, search, print | mark and word (a link to brokapi.ru) | language */
 .menu-bar { background: var(--bg); border-bottom: 1px solid var(--bk-line) !important; }
 #mdbook-menu-bar { align-items: center; }
 .menu-bar .menu-title { display: none; }
@@ -171,16 +171,9 @@ main:focus, body:focus { outline: none; }
 .brand-mark path { fill: none; stroke: var(--bk-link); stroke-width: 2.4; stroke-linecap: round; }
 .brand-mark circle { fill: var(--bk-signal); }
 .brand-word { font-family: var(--bk-sans); font-weight: 600; font-size: 21px; letter-spacing: -0.01em; color: var(--bk-heading); }
-.brand-docs, .brand-docs:link, .brand-docs:visited {
-  display: inline-flex; align-items: center; min-height: 44px; font-size: 15px; color: var(--bk-heading) !important;
-  border-bottom: 2px solid transparent; box-sizing: border-box; padding-top: 2px;
-}
-.brand-docs:hover { border-bottom-color: var(--bk-link); }
 .right-buttons { align-items: center; display: flex; }
-.right-buttons a.site-link, .right-buttons a.site-link:visited {
-  font-size: 15px; color: var(--bk-heading); text-decoration: none; padding: 0 12px; display: inline-flex; align-items: center; min-height: 44px;
-}
-.right-buttons a.site-link:hover { color: var(--bk-link); }
+.left-buttons a.print-link { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; color: var(--icons); }
+.left-buttons a.print-link:hover { color: var(--icons-hover); }
 .menu-bar .icon-button { color: var(--icons); }
 .menu-bar .icon-button:hover { color: var(--icons-hover); }
 .theme-popup { border-radius: 3px; font-size: 14px; box-shadow: none; }
@@ -502,7 +495,6 @@ html.search-open .content { pointer-events: none; }
 
 /* Narrow screens */
 @media (max-width: 700px) {
-  .right-buttons a.site-link { display: none; }
   .lang-switch { margin-inline-end: 2px; }
 }
 @media (max-width: 560px) {
@@ -511,7 +503,7 @@ html.search-open .content { pointer-events: none; }
   h2 { font-size: 24px; }
   .brand { gap: 12px; margin-inline-start: 2px; }
   .brand-word { font-size: 19px; }
-  .brand .brand-docs, .brand .brand-docs:link, .brand .brand-docs:visited { display: none; }
+  .left-buttons a.print-link { display: none; }
   .right-buttons > a { display: none; }
   .brand-mark { width: 26px; height: 26px; }
   .right-buttons { margin: 0 8px 0 0; }
