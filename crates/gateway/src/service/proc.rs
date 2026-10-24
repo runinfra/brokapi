@@ -18,8 +18,9 @@ pub fn is_alive(pid: u32) -> bool {
         .is_some_and(|p| !matches!(p.status(), ProcessStatus::Zombie | ProcessStatus::Dead))
 }
 
-/// Whether the process is a running `brokapi`. A pid in a file that outlived a reboot may belong to anything.
-pub fn is_brokapi(pid: u32) -> bool {
+/// When the process started (seconds since 1970), if it is a running `brokapi`. A pid in a file that outlived a reboot may
+/// belong to anything.
+fn brokapi_start(pid: u32) -> Option<u64> {
     let mut sys = System::new();
     let pid = Pid::from_u32(pid);
     sys.refresh_processes_specifics(
@@ -27,11 +28,9 @@ pub fn is_brokapi(pid: u32) -> bool {
         true,
         ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
     );
-    let Some(p) = sys.process(pid) else {
-        return false;
-    };
+    let p = sys.process(pid)?;
     if matches!(p.status(), ProcessStatus::Zombie | ProcessStatus::Dead) {
-        return false;
+        return None;
     }
     let name = p.name().to_string_lossy().to_ascii_lowercase();
     let exe = p
@@ -39,7 +38,29 @@ pub fn is_brokapi(pid: u32) -> bool {
         .and_then(Path::file_stem)
         .map(|s| s.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
-    name.trim_end_matches(".exe") == "brokapi" || exe == "brokapi"
+    (name.trim_end_matches(".exe") == "brokapi" || exe == "brokapi").then(|| p.start_time())
+}
+
+/// Whether the process is a running `brokapi`.
+pub fn is_brokapi(pid: u32) -> bool {
+    brokapi_start(pid).is_some()
+}
+
+/// How much later than the record the start of the process may be read: the system reports a start in whole seconds, and
+/// on Linux it is worked out from the boot time, which moves by a second or two.
+const START_SLACK_SECS: u64 = 5;
+
+/// Whether a process that started at `start` can be the one that wrote a record at `recorded` (both in seconds since
+/// 1970): a process writes its record after it has started, never before.
+pub(crate) fn started_before(start: u64, recorded: u64) -> bool {
+    start <= recorded.saturating_add(START_SLACK_SECS)
+}
+
+/// Whether the process is a running `brokapi` that was already running when the record of `recorded_unix` was written. The
+/// number of a process is given to the next one when it ends (soon, on Windows), and a `brokapi` that is only a command
+/// of the user, started later, is not the service whose record is left.
+pub fn is_brokapi_since(pid: u32, recorded_unix: u64) -> bool {
+    brokapi_start(pid).is_some_and(|start| started_before(start, recorded_unix))
 }
 
 /// Asks the process to stop: SIGTERM on Unix. Windows has no such request for a process without a window, so the
@@ -172,6 +193,19 @@ mod tests {
         );
         // No process has the largest pid.
         assert!(!is_alive(u32::MAX - 1));
+    }
+
+    #[test]
+    fn a_process_that_started_after_the_record_is_not_the_one_that_wrote_it() {
+        // Started before the record, or in the same second, or a little after by the error of the clock: the same process.
+        assert!(started_before(1_000, 1_000));
+        assert!(started_before(990, 1_000));
+        assert!(started_before(1_000 + START_SLACK_SECS, 1_000));
+        // Started later: the number of the dead process went to another one.
+        assert!(!started_before(1_000 + START_SLACK_SECS + 1, 1_000));
+        assert!(!started_before(2_000, 1_000));
+        // A process that is not brokapi is not one, whatever the time.
+        assert!(!is_brokapi_since(std::process::id(), u64::MAX));
     }
 
     #[test]

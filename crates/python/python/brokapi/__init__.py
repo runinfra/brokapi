@@ -22,7 +22,9 @@ Read first, then trade. For example, against the imitations of the brokers (no n
     asyncio.run(main())
 
 With a real account, leave out the mock: ``client = await brokapi.connect("bcs")`` reads ``BCS_REFRESH_TOKEN`` from the
-environment. The book at https://brokapi.ru/docs/ has the quick start, the how-to pages and the explanations.
+environment. Through a gateway (the program ``brokapi``, which holds the connection for several bots) it is the same
+client: ``client = await brokapi.connect_gateway("bcs-main", bot="my-bot")``. The book at https://brokapi.ru/docs/ has the
+quick start, the how-to pages and the explanations.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from __future__ import annotations
 from importlib import metadata as _metadata
 
 from . import errors, models, numbers, record, testing
-from .client import CandlePager, Client, EventStream, Limiter, connect, merge, new_cid
+from .client import CandlePager, Client, EventStream, Limiter, connect, connect_gateway, merge, new_cid
 from .errors import (
     BrokapiError,
     Config,
@@ -55,6 +57,7 @@ from .models import (
     Envelope,
     Event,
     Execution,
+    Gap,
     Instrument,
     InstrumentId,
     InstrumentKey,
@@ -126,6 +129,7 @@ __all__ = [
     "Event",
     "EventStream",
     "Execution",
+    "Gap",
     "Instrument",
     "InstrumentId",
     "InstrumentKey",
@@ -182,6 +186,7 @@ __all__ = [
     "Unsupported",
     "UserDataCaps",
     "connect",
+    "connect_gateway",
     "errors",
     "merge",
     "models",

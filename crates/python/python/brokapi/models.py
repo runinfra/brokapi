@@ -29,6 +29,7 @@ __all__ = [
     "Envelope",
     "Event",
     "Execution",
+    "Gap",
     "Instrument",
     "InstrumentId",
     "InstrumentKey",
@@ -736,6 +737,33 @@ class Reconnected:
 
 
 @dataclass(frozen=True, slots=True)
+class Gap:
+    """Events were lost between the gateway and this client: the gateway no longer has what came after the last event the
+    client was given. Only a client made by :func:`~brokapi.connect_gateway` gets it (``source`` is ``<gateway>-gateway``).
+
+    It is the gateway's counterpart of :class:`Overflow` and :class:`Reconnected`, and the rule is the same: read the state
+    from the broker (``active_orders``, ``order_state``, ``executions``) and call ``reconcile``. Trading is closed
+    (:class:`~brokapi.Degraded`) until you have. The stream goes on from the present moment, nothing needs to be reopened.
+
+    ``reason`` is ``"too_old"`` (the gateway keeps a limited number of recent events and the client was away longer),
+    ``"new_epoch"`` (the gateway was restarted: it is a new process, and the numbers of events begin again) or ``"ahead"``
+    (the client's number is ahead of the gateway's, which does not happen unless the gateway's data was replaced).
+    ``requested_after`` is the number the client asked to continue from, ``first_available`` the oldest event the
+    gateway still has.
+    """
+
+    reason: str
+    requested_after: int
+    first_available: int
+
+    @property
+    def subscriptions_lost(self) -> bool:
+        """``True`` after ``"new_epoch"``: the new gateway holds none of the subscriptions this client made. Subscribe
+        again (the ids are new)."""
+        return self.reason == "new_epoch"
+
+
+@dataclass(frozen=True, slots=True)
 class UnknownEvent:
     """An event of a kind this version of the Python package does not know (the core is newer than the package).
 
@@ -763,6 +791,7 @@ Event = Union[
     Resync,
     Overflow,
     Reconnected,
+    Gap,
     UnknownEvent,
 ]
 """What an :class:`Envelope` carries."""
@@ -786,6 +815,7 @@ def _decode_event(value: dict[str, Any]) -> Event:
         "Resync": Resync,
         "Overflow": Overflow,
         "Reconnected": Reconnected,
+        "Gap": Gap,
     }
     if variant not in known:
         return UnknownEvent(variant, body)

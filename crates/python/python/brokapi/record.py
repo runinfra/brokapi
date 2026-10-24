@@ -45,7 +45,7 @@ from datetime import timedelta
 from typing import Optional
 
 from . import _native
-from .models import Envelope
+from .models import Envelope, Gap
 
 __all__ = ["EnvelopeReader", "EnvelopeWriter", "LOG_FORMAT", "ReplaySpeed", "record_events", "replay"]
 
@@ -191,9 +191,13 @@ async def record_events(
     it is written, so a program that stops in the middle of a run (a crash, ``break``) leaves a log that is complete up
     to the last envelope it read. The file is closed when the stream ends or the generator is closed
     (``contextlib.aclosing``), not at the ``break`` itself.
+
+    A :class:`~brokapi.Gap` (the stream of a client made by :func:`~brokapi.connect_gateway`) is passed on and not written:
+    it is not an event of a connector, and the file has the format of those.
     """
     with EnvelopeWriter(path, overwrite=overwrite) as log:
         async for envelope in events:
-            log.write(envelope)
-            log.flush()
+            if not isinstance(envelope.payload, Gap):
+                log.write(envelope)
+                log.flush()
             yield envelope

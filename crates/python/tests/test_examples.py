@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import types
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import uuid
@@ -17,6 +18,7 @@ from brokapi import testing
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 sys.path.insert(0, str(EXAMPLES))
 
+import gateway_bot  # noqa: E402
 import history  # noqa: E402
 import infrastructure  # noqa: E402
 import quickstart_bcs  # noqa: E402
@@ -357,3 +359,52 @@ async def test_record_example_one_analysis_for_the_live_stream_and_for_the_file(
     assert live.traded == qty * Decimal("250.25")
     assert await record_example.analyze_file(path) == live  # the file says the same as the live run
     assert record_example.sources(path) == {"bcs-ud"}
+
+
+async def test_the_gateway_bot_survives_a_new_gateway_process() -> None:
+    async with await testing.mock_bcs() as mock:
+        gateway = await mock.start_gateway("bcs-main")
+        client = await gateway.connect(bot="my-bot")
+        bot = gateway_bot.Bot(client)
+        task = asyncio.create_task(gateway_bot.run(bot))
+        await asyncio.wait_for(bot.placed.wait(), 10)
+        cid = bot.cid
+        assert cid is not None
+
+        # The gateway dies and a new process takes its place. The bot is told (Gap), subscribes again and reconciles.
+        await gateway.restart()
+        await asyncio.wait_for(bot.mended.wait(), 10)
+        assert bot.ledger == {cid} and bot.ended is None
+
+        # The order is filled at the broker: the bot hears it through the new process.
+        mock.fill(cid, qty=Decimal(1), price=Decimal("100.00"))
+        await asyncio.wait_for(task, 10)
+        assert bot.ended is brokapi.OrderStateKind.FILLED and bot.ledger == set()
+
+
+async def test_the_gateway_bot_runs_unchanged_at_the_broker() -> None:
+    """Only the line that makes the client differs: the bot is the same."""
+    async with await testing.mock_bcs() as mock:
+        client = await mock.connect()
+        bot = gateway_bot.Bot(client)
+        task = asyncio.create_task(gateway_bot.run(bot))
+        await asyncio.wait_for(bot.placed.wait(), 10)
+        assert bot.cid is not None
+        mock.fill(bot.cid, qty=Decimal(1), price=Decimal("100.00"))
+        await asyncio.wait_for(task, 10)
+        assert bot.ended is brokapi.OrderStateKind.FILLED
+
+
+async def test_the_gateway_bot_connects_by_the_name_of_the_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with await testing.mock_bcs() as mock:
+        gateway = await mock.start_gateway("bcs-main")
+        # `brokapi.state/gateways/bcs-main` is where the service keeps the gateway; here it is a temporary directory.
+        real = brokapi.connect_gateway
+
+        async def connect_gateway(name: str, *, bot: str) -> brokapi.Client:
+            assert name == "bcs-main"
+            return await real(dir=gateway.directory, bot=bot)
+
+        monkeypatch.setattr(gateway_bot, "brokapi", types.SimpleNamespace(connect_gateway=connect_gateway))
+        client = await gateway_bot.connect()
+        assert (client.gateway, client.name) == ("bcs-main", "my-bot")

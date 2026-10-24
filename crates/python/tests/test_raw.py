@@ -13,6 +13,7 @@ import brokapi
 from brokapi import testing
 
 BROKERS = ["bcs", "tbank", "finam", "alor"]
+ROADS = BROKERS + [f"gw_{b}" for b in BROKERS]  # the connection in this process, and through a gateway
 
 # One read that each imitation answers, and the typed call that spends the same quota.
 READ: dict[str, tuple[str, dict[str, Any]]] = {
@@ -23,7 +24,7 @@ READ: dict[str, tuple[str, dict[str, Any]]] = {
 }
 
 
-@pytest.fixture(params=BROKERS)
+@pytest.fixture(params=ROADS)
 def pair(request: pytest.FixtureRequest) -> tuple[testing.MockBroker, brokapi.Client]:
     return request.getfixturevalue(request.param)
 
@@ -171,7 +172,11 @@ async def test_raw_of_two_clients_on_one_limiter_counts_together(
     pair: tuple[testing.MockBroker, brokapi.Client],
 ) -> None:
     mock, first = pair
-    second = await mock.connect(limiter=first.limiter, name="second")
+    if first.gateway is None:
+        second = await mock.connect(limiter=first.limiter, name="second")
+    else:
+        # Behind a gateway the counter is the gateway's and every bot of it is on it.
+        second = await mock._gateways[0].connect(bot="second")
     method, args = READ[mock.broker]
     await exhaust(first, method, args)
     # The quota was spent by the other client. A bucket of a fast broker (ALOR: 100 a second) refills between two calls,

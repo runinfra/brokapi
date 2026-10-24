@@ -83,7 +83,7 @@ jobs:
         run: |
           python -m venv venv
           if [ -d venv/Scripts ]; then PY=venv/Scripts/python; else PY=venv/bin/python; fi
-          $PY -m pip install pytest pytest-asyncio
+          $PY -m pip install pytest pytest-asyncio pytest-timeout
           $PY -m pip install --no-index --find-links dist brokapi
           $PY -c "import brokapi; print(brokapi.__version__)"
       # A user has the wheel and nothing else. Remove the sources of the other crates, so that a mock or anything else

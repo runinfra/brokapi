@@ -22,9 +22,10 @@ Python 3.10 или новее (готовые пакеты для Linux x86_64, 
 pip install brokapi
 ```
 
+Программа `brokapi` (Gateway): готовые файлы для Linux, macOS и Windows - на [странице выпусков](https://github.com/runinfra/brokapi/releases), либо `cargo install brokapi-gateway`.
 Самая свежая версия - из этого репозитория, команды на странице [Установка](https://brokapi.ru/docs/install.html).
 Быстрый старт с пошаговым примером: [Rust](https://brokapi.ru/docs/rust/quickstart.html),
-[Python](https://brokapi.ru/docs/python/quickstart.html).
+[Python](https://brokapi.ru/docs/python/quickstart.html), [Gateway](https://brokapi.ru/docs/gateway/quickstart.html).
 
 ## Состав
 
@@ -35,7 +36,7 @@ pip install brokapi
 | `brokapi-bcs`, `brokapi-tbank`, `brokapi-finam`, `brokapi-alor` | коннекторы брокеров |
 | `brokapi-bcs-protocol`, `brokapi-tbank-protocol`, `brokapi-finam-protocol`, `brokapi-alor-protocol` | клиенты протоколов брокеров |
 | `brokapi-client` | один счет у любого из четырех брокеров за одним типом: события, лимиты, вызовы по имени (на нем стоит Python) |
-| `brokapi-gateway` | гейтвей: один процесс держит подключение к брокеру и обслуживает много ботов по gRPC (контракт - `proto/`), плюс клиент для ботов на Rust |
+| `brokapi-gateway` | гейтвей: один процесс держит подключение к брокеру и обслуживает много ботов по gRPC (контракт - `crates/gateway/proto/`), клиент для ботов на Rust и Python (`brokapi.connect_gateway`) и программа `brokapi` (служба и команды, [Gateway](https://brokapi.ru/docs/gateway/index.html)) |
 | `brokapi-mocks`, `brokapi-conformance` | имитации и общие сценарии для тестов, не публикуются |
 
 ## Участие

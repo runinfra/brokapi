@@ -54,10 +54,13 @@
 # Gateway
 
 - [Gateway](gateway/index.md)
-
-# CLI
-
-- [CLI](cli/index.md)
+  - [Быстрый старт: служба brokapi](gateway/quickstart.md)
+  - [Подключить бота](gateway/bots.md)
+  - [Запуск и обслуживание](gateway/operations.md)
+  - [События и сверка после перезапуска](gateway/events.md)
+  - [Чем гейтвей отличается от прямого подключения](gateway/differences.md)
+  - [Конфиг brokapi.toml](gateway/config.md)
+  - [Команды brokapi](gateway/commands.md)
 
 # Справочник
 

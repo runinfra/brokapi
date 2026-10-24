@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Checks before a release and publishing the crates to crates.io, in the right order.
+#
+#   tools/release order               the crates in the order they must be published (a crate after the crates it uses)
+#   tools/release check              what is in each package and that nothing is missing, offline and fast
+#   tools/release dry-run [--no-verify]
+#                                     `check`, then `cargo publish --workspace --dry-run`: every package is built from its own
+#                                     unpacked files, as a user of crates.io gets it. Without --no-verify it compiles the
+#                                     whole workspace (long, several GB of disk: set CARGO_TARGET_DIR to a place with room)
+#   tools/release publish             `check`, then publishes for real. Asks to type the version first (--yes skips the question)
+#
+# Publishing cannot be undone: a version of a crate stays on crates.io for good. The Python package (PyPI) and the files of
+# the program `brokapi` (GitHub release, started by the tag `v<version>`, see .github/workflows/release.yml) are separate steps.
+#
+# `cargo publish --workspace` takes the crates in the order of their dependencies, publishes one, waits until the index shows
+# it, then the next. If it stops half way (network, the limit of crates.io), run the same command again: it skips what is
+# already there.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+cmd="${1:-check}"
+shift || true
+
+version() { grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2; }
+
+# Name and directory of every crate that goes to crates.io, one per line, in publish order.
+order() {
+  cargo metadata --format-version 1 --no-deps --locked | python3 -c '
+import json, sys
+meta = json.load(sys.stdin)
+pkgs = {p["name"]: p for p in meta["packages"] if p["publish"] != []}
+deps = {n: {d["name"] for d in p["dependencies"] if d["name"] in pkgs and d["kind"] != "dev"} for n, p in pkgs.items()}
+done, rest = [], set(pkgs)
+while rest:
+    ready = sorted(n for n in rest if deps[n] <= set(done))
+    if not ready:
+        sys.exit("a cycle between the crates: " + ", ".join(sorted(rest)))
+    done += ready
+    rest -= set(ready)
+for n in done:
+    print(n, pkgs[n]["manifest_path"].rsplit("/", 1)[0])
+'
+}
+
+check() {
+  local v
+  v="$(version)"
+  echo "version $v"
+  if [ -n "$(git status --porcelain -- .)" ]; then
+    echo "uncommitted changes in $(pwd): commit them first (the package is made from the files, the tag from the commit)" >&2
+    git status --short -- . >&2
+    exit 1
+  fi
+  echo "publish order:"
+  local n=0 name dir list
+  while read -r name dir; do
+    n=$((n + 1))
+    list="$(cd "$dir" && cargo package --list --locked --offline 2>&1)" || { echo "$list" >&2; echo "cargo package --list failed for $name" >&2; exit 1; }
+    printf '  %2d. %-26s %3d files\n' "$n" "$name" "$(echo "$list" | wc -l)"
+    # Every package has the README and the license (cargo takes them from the root), and no file of ours.
+    echo "$list" | grep -qx 'README.md' || { echo "$name: no README.md in the package" >&2; exit 1; }
+    if echo "$list" | grep -E '(^|/)(\.env|CLAUDE\.md|AGENTS\.md|\.claude/|target/)'; then
+      echo "$name: files that must not be published" >&2
+      exit 1
+    fi
+  done < <(order)
+  # The gateway compiles its .proto files in build.rs: without them in the package `cargo install brokapi-gateway` fails.
+  local gw
+  gw="$(cd crates/gateway && cargo package --list --locked --offline)"
+  for f in build.rs proto/brokapi/gateway/v1/gateway.proto proto/brokapi/gateway/v1/types.proto proto/brokapi/service/v1/service.proto src/bin/brokapi.rs; do
+    echo "$gw" | grep -qx "$f" || { echo "brokapi-gateway: $f is not in the package" >&2; exit 1; }
+  done
+  echo "brokapi-gateway: .proto files and build.rs are in the package"
+}
+
+case "$cmd" in
+  order)
+    order | awk '{ printf "%2d. %s\n", NR, $1 }'
+    ;;
+  check)
+    check
+    ;;
+  dry-run)
+    check
+    cargo publish --workspace --dry-run --locked "$@"
+    echo "dry run is fine: $(version) can be published"
+    ;;
+  publish)
+    check
+    if [ "${1:-}" != "--yes" ]; then
+      read -r -p "Publish $(version) of all crates to crates.io? Type the version to confirm: " answer
+      [ "$answer" = "$(version)" ] || { echo "not confirmed" >&2; exit 1; }
+    fi
+    cargo publish --workspace --locked
+    echo "published $(version)"
+    ;;
+  *)
+    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    exit 2
+    ;;
+esac

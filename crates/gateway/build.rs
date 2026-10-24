@@ -2,8 +2,8 @@
 //! a user on Windows needs a protobuf compiler. Client and server code are both generated: the server is the gateway,
 //! the client is `RemoteClient` and any Rust bot.
 //!
-//! The files live in `out/proto/` of the repository, next to the crates, because they are the contract for bots in
-//! every language and not a detail of this crate.
+//! The files live in `proto/` of this crate (`crates/gateway/proto/`): they are the contract for bots in every language,
+//! and they have to be inside the crate, or a package from crates.io would have nothing to compile.
 
 use std::env;
 use std::path::PathBuf;
@@ -15,12 +15,12 @@ const PROTOS: &[&str] = &[
 
 fn main() {
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    // `../../proto` in the repository, `proto/` when the crate is packaged alone.
-    let proto = ["../../proto", "proto"]
-        .iter()
-        .map(|p| manifest.join(p))
-        .find(|p| p.join(PROTOS[0]).exists())
-        .expect("the .proto files of the gateway");
+    let proto = manifest.join("proto");
+    assert!(
+        proto.join(PROTOS[0]).exists(),
+        "the .proto files of the gateway are not in {}",
+        proto.display()
+    );
     println!("cargo:rerun-if-changed={}", proto.display());
     println!("cargo:rerun-if-changed=build.rs");
 

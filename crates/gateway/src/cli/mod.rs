@@ -63,6 +63,9 @@ pub(crate) type Res = Result<(), Fail>;
 #[derive(Parser, Debug)]
 #[command(
     name = "brokapi",
+    // The program is `brokapi.exe` on Windows, and clap would print that in `Usage:`. The help names the program the same on
+    // every system, as the book does.
+    bin_name = "brokapi",
     version,
     about = "The brokapi gateway: one process per broker account that many bots share. `brokapi up` runs the service that keeps the gateways alive, the other commands look after them.",
     after_help = EXIT_CODES,

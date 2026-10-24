@@ -15,6 +15,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard, mpsc};
 
+use crate::Account;
 use crate::conn::{Conn, start};
 use crate::error::{ClientError, config_error};
 use crate::settings::Settings;
@@ -437,15 +438,7 @@ impl Client {
         range: TimeRange,
         opts: HistoryOpts,
     ) -> CandlePager {
-        CandlePager {
-            client: self.clone(),
-            instrument,
-            timeframe,
-            next_from: range.from,
-            to: range.to,
-            last_open: None,
-            opts,
-        }
+        CandlePager::new(self.clone(), instrument, timeframe, range, opts)
     }
 
     /// The connectors for one call, or [`Error::ShuttingDown`] after close.
@@ -455,9 +448,11 @@ impl Client {
     }
 }
 
-/// A candle history read window by window ([`CandlePages`] of the runtime), from [`Client::candle_pages`].
-pub struct CandlePager {
-    client: Client,
+/// A candle history read window by window ([`CandlePages`] of the runtime), from [`Client::candle_pages`] or
+/// [`candle_pages_from_json`](crate::candle_pages_from_json). It reads through any [`Account`]: the default is a
+/// [`Client`].
+pub struct CandlePager<A: Account = Client> {
+    account: A,
     instrument: InstrumentId,
     timeframe: Timeframe,
     next_from: brokapi::core::UnixNanos,
@@ -484,17 +479,42 @@ pub struct CandlePageError {
     pub resume_from: Option<brokapi::core::UnixNanos>,
 }
 
-impl CandlePager {
+impl<A: Account> CandlePager<A> {
+    /// A reader of `timeframe` bars of `instrument` from `range.from` to `range.to`.
+    pub fn new(
+        account: A,
+        instrument: InstrumentId,
+        timeframe: Timeframe,
+        range: TimeRange,
+        opts: HistoryOpts,
+    ) -> Self {
+        Self {
+            account,
+            instrument,
+            timeframe,
+            next_from: range.from,
+            to: range.to,
+            last_open: None,
+            opts,
+        }
+    }
+
     /// The next window, or `None` when the range is read.
     pub async fn next_page(&mut self) -> Result<Option<CandlePage>, CandlePageError> {
-        let guard = self.client.inner.conn.read().await;
-        let conn = guard.as_ref().ok_or(CandlePageError {
-            error: ClientError::Closed,
-            resume_from: None,
-        })?;
-        let md = conn.md();
+        if self.account.is_closed() {
+            return Err(CandlePageError {
+                error: ClientError::Closed,
+                resume_from: None,
+            });
+        }
         let range = TimeRange::new(self.next_from, self.to);
-        let mut pages = CandlePages::new(md, &self.instrument, self.timeframe, range, self.opts);
+        let mut pages = CandlePages::new(
+            &self.account,
+            &self.instrument,
+            self.timeframe,
+            range,
+            self.opts,
+        );
         match pages.next_page().await {
             Ok(None) => Ok(None),
             Ok(Some(mut bars)) => {
@@ -509,6 +529,12 @@ impl CandlePager {
                     bars,
                     resume_from: self.next_from,
                 }))
+            }
+            Err(e) if matches!(e.error, Error::ShuttingDown) && self.account.is_closed() => {
+                Err(CandlePageError {
+                    error: ClientError::Closed,
+                    resume_from: None,
+                })
             }
             Err(e) => Err(CandlePageError {
                 error: ClientError::Broker(e.error),

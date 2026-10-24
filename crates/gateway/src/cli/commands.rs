@@ -805,7 +805,7 @@ fn status_text(g: &pb::GatewayInfo) -> String {
                 g.pid,
                 duration(g.uptime_ns),
                 g.cpu_percent,
-                fmt::bytes(g.memory_bytes),
+                fmt::memory(g.memory_bytes),
                 if g.adopted {
                     ", taken over from an earlier service"
                 } else {

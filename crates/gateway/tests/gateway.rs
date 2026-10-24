@@ -129,6 +129,7 @@ async fn a_slow_bot_is_cut_off_and_does_not_slow_the_others() {
         "slow",
         ConnectOptions {
             http2_window: Some(2048),
+            ..ConnectOptions::default()
         },
     )
     .await
@@ -387,6 +388,12 @@ async fn a_restart_with_an_open_order_compares_the_journal_before_taking_command
     assert_eq!(health.state, pb::GatewayState::Starting as i32);
     assert_eq!(health.open_orders, 1, "the journal of run 1 is there");
     assert_ne!(health.epoch, epoch_before);
+    // A bot that waits for the gateway gives up after its time, and says what the gateway is doing.
+    let early = beta.wait_ready(Duration::from_millis(30)).await;
+    assert!(
+        matches!(&early, Err(Error::Transport(m)) if m.to_string().contains("still starting") && m.to_string().contains("rate limited")),
+        "{early:?}"
+    );
     // A command is refused, and nothing reached the broker.
     let refused = beta.place(common::bcs_order("1.0")).await;
     assert!(
@@ -409,6 +416,9 @@ async fn a_restart_with_an_open_order_compares_the_journal_before_taking_command
         .await
         .expect("the gateway becomes ready");
     assert_eq!(second.state(), GatewayState::Ready);
+    // A bot that waits for it is let through at once.
+    let ready = beta.wait_ready(Duration::from_secs(5)).await.unwrap();
+    assert_eq!(ready.state, pb::GatewayState::Ready as i32);
     // The order of run 1 is still active at the broker: it is confirmed, and the journal keeps it.
     assert_eq!(second.health().open_orders, 1);
     assert_eq!(second.health().detail, "");
@@ -619,6 +629,107 @@ async fn a_second_gateway_on_the_same_socket_is_refused() {
     // The first one is untouched.
     assert!(rig.bot.health().await.is_ok());
     rig.stop().await;
+}
+
+/// A state directory deeper than a Unix socket path can be (108 bytes on Linux, 104 on macOS): `~/Library/Application Support/...`
+/// with a long name of a gateway gets there, and so does a long path after `-c`.
+#[cfg(unix)]
+fn long_state_dir(root: &std::path::Path) -> std::path::PathBuf {
+    let dir = root
+        .join("a-state-directory-with-a-long-name-".repeat(2))
+        .join("and-a-long-gateway-name");
+    assert!(dir.join("gateway.sock").as_os_str().len() > 108);
+    dir
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_state_directory_too_long_for_a_socket_gets_a_socket_in_a_short_private_directory() {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+    let root = tempfile::tempdir().unwrap();
+    let state = long_state_dir(root.path());
+    let mock = Mock::start(Broker::Bcs).await;
+    let gateway = Gateway::start(
+        GatewayConfig::new("long", &state),
+        mock.config(Broker::Bcs),
+        Some(roomy_limits(Broker::Bcs)),
+    )
+    .await
+    .expect("the gateway starts although the natural path of its socket is too long");
+    gateway.ready().await;
+
+    let Address::Unix(socket) = gateway.address().clone() else {
+        panic!("a Unix socket on this system");
+    };
+    assert!(socket.as_os_str().len() < 104, "{}", socket.display());
+    assert!(!socket.starts_with(&state));
+    // The socket is the user's and nobody else's, and so is the directory it stands in.
+    let meta = std::fs::symlink_metadata(&socket).unwrap();
+    assert!(meta.file_type().is_socket());
+    assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+    let dir_meta = std::fs::metadata(socket.parent().unwrap()).unwrap();
+    assert_eq!(dir_meta.permissions().mode() & 0o777, 0o700);
+    assert_eq!(dir_meta.uid(), meta.uid());
+
+    // The commands and the bots read the real address from the state directory.
+    let written = std::fs::read_to_string(state.join("gateway.addr")).unwrap();
+    assert_eq!(written, gateway.address().to_string());
+    let bot = RemoteClient::connect_dir(&state, "reader")
+        .await
+        .expect("a bot finds the socket by the address file");
+    assert!(bot.health().await.is_ok());
+    drop(bot);
+
+    gateway
+        .shutdown(brokapi::core::ShutdownMode::Immediate)
+        .await;
+    assert!(
+        !socket.exists(),
+        "the socket is removed when the gateway stops"
+    );
+    assert!(!state.join("gateway.addr").exists());
+
+    // The same state directory starts again on the same place.
+    let again = Gateway::start(
+        GatewayConfig::new("long", &state),
+        mock.config(Broker::Bcs),
+        Some(roomy_limits(Broker::Bcs)),
+    )
+    .await
+    .expect("the gateway starts again");
+    assert_eq!(again.address(), &Address::Unix(socket));
+    again.shutdown(brokapi::core::ShutdownMode::Immediate).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_socket_path_the_user_chose_and_the_system_cannot_take_is_refused_in_words() {
+    let root = tempfile::tempdir().unwrap();
+    let state = long_state_dir(root.path());
+    let mock = Mock::start(Broker::Bcs).await;
+    let mut config = GatewayConfig::new("long", root.path().join("state"));
+    config.listen = Listen::Unix(state.join("gateway.sock"));
+    let started = Gateway::start(config, mock.config(Broker::Bcs), None).await;
+    let text = started.err().expect("refused").to_string();
+    assert!(
+        text.contains("Unix socket path may have") && text.contains("leave `listen` out"),
+        "{text}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_file_in_the_place_of_the_socket_is_left_alone() {
+    let root = tempfile::tempdir().unwrap();
+    let place = root.path().join("not-a-socket");
+    std::fs::write(&place, "my notes").unwrap();
+    let mock = Mock::start(Broker::Bcs).await;
+    let mut config = GatewayConfig::new("file", root.path().join("state"));
+    config.listen = Listen::Unix(place.clone());
+    let started = Gateway::start(config, mock.config(Broker::Bcs), None).await;
+    let text = started.err().expect("refused").to_string();
+    assert!(text.contains("not a socket"), "{text}");
+    assert_eq!(std::fs::read_to_string(&place).unwrap(), "my notes");
 }
 
 #[tokio::test]

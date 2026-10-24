@@ -7,7 +7,9 @@
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-use brokapi::core::{CidCodec, ClientOrderId, Price, Qty};
+use brokapi::core::{CidCodec, ClientOrderId, Price, Qty, ShutdownMode};
+use brokapi_client::{Broker, BrokerConfig, Settings};
+use brokapi_gateway::{Gateway, GatewayConfig};
 use brokapi_mocks::{alor, bcs, bybit, finam, tbank};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -234,6 +236,31 @@ impl NativeMock {
         Ok(())
     }
 
+    /// Starts a gateway on this imitation: an awaitable of a [`NativeMockGateway`]. It is ready when this returns.
+    fn start_gateway<'py>(&self, py: Python<'py>, name: String) -> PyResult<Bound<'py, PyAny>> {
+        let settings = self.settings()?;
+        let broker = self.broker;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let settings =
+                Settings::parse(&settings).map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let kind: Broker = broker
+                .parse()
+                .map_err(|e: brokapi::core::Error| PyValueError::new_err(e.to_string()))?;
+            let config = BrokerConfig::from_settings(kind, &settings)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let dir = tempfile::tempdir().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            let gateway = start_gateway(&name, dir.path(), &config).await?;
+            Ok(NativeMockGateway {
+                inner: Arc::new(MockGateway {
+                    name,
+                    config,
+                    dir,
+                    gateway: tokio::sync::Mutex::new(Some(gateway)),
+                }),
+            })
+        })
+    }
+
     /// Stops the server. A client still connected to it sees the connection drop.
     fn close(&self) {
         self.server.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -281,4 +308,68 @@ fn fill_finam(
     s.state.push_order(account, order);
     s.state.push_trade(account, trade);
     Ok(())
+}
+
+async fn start_gateway(
+    name: &str,
+    dir: &std::path::Path,
+    config: &BrokerConfig,
+) -> PyResult<Gateway> {
+    let gateway = Gateway::start(GatewayConfig::new(name, dir), config.clone(), None)
+        .await
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    gateway.ready().await;
+    Ok(gateway)
+}
+
+/// A gateway that runs in this process on an imitation of a broker, in a directory of its own.
+#[pyclass(module = "brokapi._native", frozen)]
+pub struct NativeMockGateway {
+    inner: Arc<MockGateway>,
+}
+
+struct MockGateway {
+    name: String,
+    config: BrokerConfig,
+    dir: tempfile::TempDir,
+    gateway: tokio::sync::Mutex<Option<Gateway>>,
+}
+
+#[pymethods]
+impl NativeMockGateway {
+    /// The directory of the gateway: the address and the access key a bot needs.
+    #[getter]
+    fn directory(&self) -> String {
+        self.inner.dir.path().to_string_lossy().into_owned()
+    }
+
+    #[getter]
+    fn name(&self) -> String {
+        self.inner.name.clone()
+    }
+
+    /// Ends the gateway the way a crash would and starts a new one in the same directory: the bots see a new process
+    /// (a new epoch), and the orders it knew are in its journal.
+    fn restart<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let mut guard = inner.gateway.lock().await;
+            if let Some(old) = guard.take() {
+                old.kill().await;
+            }
+            *guard = Some(start_gateway(&inner.name, inner.dir.path(), &inner.config).await?);
+            Ok(())
+        })
+    }
+
+    /// Stops the gateway. The orders at the imitation are not touched.
+    fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            if let Some(gateway) = inner.gateway.lock().await.take() {
+                gateway.shutdown(ShutdownMode::Immediate).await;
+            }
+            Ok(())
+        })
+    }
 }

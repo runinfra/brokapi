@@ -33,6 +33,7 @@ python -c "import brokapi; print(brokapi.__version__)"
 | Вызвать метод брокера, которого нет в общем интерфейсе | [Любой метод брокера, Python](raw.md) |
 | Записать поток событий в файл и проиграть его из файла | [Запись событий и проигрыш, Python](record.md) |
 | Проверить свой код без сети и денег | [Тесты против имитаций, Python](testing.md) |
+| Подключить бота к гейтвею вместо брокера | [Подключить бота: Python](../gateway/bots.md#бот-на-python) |
 | Понять, как Python связан с ядром, и чем отличается от Rust | [Как это устроено](design.md) |
 | Найти класс, метод или поле до последней подробности | [Справочник API: Python](../api-python.md) |
 
@@ -41,6 +42,7 @@ python -c "import brokapi; print(brokapi.__version__)"
 | Возможность | Как в Python |
 |---|---|
 | Подключиться к БКС, Т-Банку, Финаму, АЛОРу | `await brokapi.connect("bcs")`, настройки из переменных окружения или аргументами |
+| Подключиться через [гейтвей](../gateway/index.md) | `await brokapi.connect_gateway("bcs-main", bot="my-bot")`: тот же `Client`, остальной код бота не меняется |
 | Стакан, сделки рынка, котировки, свечи | `order_book`, `last_trades`, `candles`, подписки `subscribe_*`, история по окнам `candle_pages` |
 | Свои заявки и исполнения | `subscribe_order_state`, `subscribe_executions`, `executions` |
 | Заявки | `reconcile`, `place`, `cancel`, `replace` (где брокер умеет), `order_state`, `active_orders` |

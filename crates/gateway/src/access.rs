@@ -28,7 +28,10 @@ pub const ADDRESS_FILE: &str = "gateway.addr";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Listen {
     /// The default of the platform: the socket `gateway.sock` in the state directory on Linux and macOS, a free port
-    /// of `127.0.0.1` on Windows.
+    /// of `127.0.0.1` on Windows. When the path to the socket in the state directory is longer than the system allows
+    /// (107 bytes on Linux, 103 on macOS), the socket is made in a short private directory of the user instead
+    /// (`$XDG_RUNTIME_DIR/brokapi-<uid>` or `/tmp/brokapi-<uid>`, mode 700). [`Gateway::address`](crate::Gateway::address)
+    /// and the file `gateway.addr` say where it is.
     Auto,
     /// A Unix socket at this path (Linux and macOS).
     Unix(PathBuf),

@@ -61,6 +61,12 @@ pub fn bytes(n: u64) -> String {
     }
 }
 
+/// The memory of a process. `0` is not a reading of a process (it has some): the service has not read it yet, as in the
+/// first moments after the start, so it is `-` and not `0 B`.
+pub fn memory(n: u64) -> String {
+    if n == 0 { "-".into() } else { bytes(n) }
+}
+
 /// Bots that are people's programs, not the tools of brokapi.
 pub fn is_tool(name: &str) -> bool {
     name.starts_with("brokapi-")
@@ -133,7 +139,7 @@ pub fn gateways_table(list: &[pb::GatewayInfo], wide: bool) -> String {
             row.push(if g.pid == 0 {
                 "-".into()
             } else {
-                bytes(g.memory_bytes)
+                memory(g.memory_bytes)
             });
         }
         row.push(g.last_error.clone());
@@ -165,5 +171,7 @@ mod tests {
         assert_eq!(duration(100_800_000_000_000), "1d04h");
         assert_eq!(bytes(512), "512 B");
         assert_eq!(bytes(5 * 1024 * 1024 + 300_000), "5.3 MB");
+        assert_eq!(memory(0), "-");
+        assert_eq!(memory(512), "512 B");
     }
 }

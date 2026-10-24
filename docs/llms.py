@@ -35,14 +35,16 @@ TITLE = "brokapi"
 SUMMARY_LINE = (
     "brokapi - единый интерфейс к торговым API: один и тот же код бота работает с любым брокером. Начинаем с API брокеров "
     "российского рынка (БКС, Т-Банк, Финам, АЛОР), дальше другие брокеры и биржевые протоколы. Писать можно на Rust (ядро) или на "
-    "Python (пакет brokapi, тонкая обертка над ядром): рыночные данные, заявки, сверка со счетом, лимиты запросов. Gateway и "
-    "CLI еще не вышли, их разделы - заглушки. Стадия: открытая альфа, на настоящих счетах не запускалось: для боевого счета сначала прочитайте before-live.md и agents/unverified.md. Документация: %s/" % BASE_URL
+    "Python (пакет brokapi, тонкая обертка над ядром): рыночные данные, заявки, сверка со счетом, лимиты запросов. Третий "
+    "путь - Gateway, программа brokapi: служба держит связь со счетами за все боты (gRPC для любого языка, один счетчик лимитов), "
+    "команды ею управляют и читают счет (вывод --json). Стадия: открытая альфа, на настоящих счетах не запускалось: для боевого счета сначала прочитайте before-live.md и agents/unverified.md. Документация: %s/" % BASE_URL
 )
 INTRO = """Как пользоваться этим набором. Книга написана по задачам и состоит из общей части (как устроено, брокеры, \
-ошибки, события, контракт для агентов) и разделов продуктов: Rust, Python, Gateway, CLI. Писать код можно на Rust или на \
-Python, оба работают сейчас (альфа). Если пользователь пишет на Python, берите отдельный индекс для Python: \
-%s/python/llms.txt, в нем только то, что нужно для Python, и справочник пакета одним файлом. Страницы с пометкой "еще нет" \
-(Gateway, CLI) - заглушки: кода и пакетов там нет, не пытайтесь обращаться к службе Gateway. Если код пойдет на боевой счет, \
+ошибки, события, контракт для агентов) и разделов продуктов: Rust, Python, Gateway (программа brokapi: служба и команды). Писать код можно на Rust или на \
+Python, оба работают сейчас (альфа); Gateway - программа brokapi, раздел gateway/. Если пользователь пишет на Python, берите отдельный индекс для Python: \
+%s/python/llms.txt, в нем только то, что нужно для Python, и справочник пакета одним файлом. Если боты на нескольких языках или несколько ботов на одном счете, берите Gateway: он запускается \
+командами brokapi (gateway/quickstart.md), бот подключается к нему по gRPC (gateway/bots.md): для Rust есть клиент RemoteClient, \
+для Python бот берет тот же brokapi.Client через brokapi.connect_gateway (gateway/bots.md), для Go готового клиента пока нет, контракт - файлы .proto (api-gateway.md). Если код пойдет на боевой счет, \
 сначала before-live.md и agents/unverified.md (допущения по документации брокеров, как их обойти). Если нужно написать код: \
 прочитайте "Контракт для агентов" (все обязательные правила на одной странице, они одни для любого языка), затем инструкцию \
 из раздела нужного языка, ближайшую к задаче (торговый бот, несколько брокеров и счетов, история или исследовательский \
@@ -53,15 +55,12 @@ llms-full.txt. У каждой страницы есть markdown-исходни
 https://brokapi.ru/docs/, справочник API Rust - на https://brokapi.ru/docs/api/, справочник Python - на \
 https://brokapi.ru/docs/api/python/.""" % BASE_URL
 
-# part titles of SUMMARY.md that are not ready, with the note added to the section title in llms.txt
-SECTION_NOTES = {
-    "Gateway": "еще нет, заглушка",
-    "CLI": "еще нет, заглушка",
-}
+# part titles of SUMMARY.md that are not ready, with the note added to the section title in llms.txt (none now: every part exists)
+SECTION_NOTES = {}
 
 # path of the page in src/ -> one line for llms.txt
 DESCRIPTIONS = {
-    "README.md": "Что такое brokapi, выбор пути (Rust, Python, Gateway, CLI) и статус каждого, три главных правила",
+    "README.md": "Что такое brokapi, выбор пути (Rust, Python, Gateway) и статус каждого, три главных правила",
     "install.md": "Установка: cargo add brokapi и pip install brokapi, самая свежая версия из репозитория, проверка и частые ошибки",
     "before-live.md": "Перед боевым счетом: с чего начать на настоящем счете, песочницы, первая заявка",
     "architecture.md": "Карта: коннекторы MD и UD, счетчик лимитов, канал событий и три круга механики со схемами",
@@ -96,16 +95,22 @@ DESCRIPTIONS = {
     "python/raw.md": "Python: любой метод API брокера через client.raw(имя, словарь): Т-Банк и Финам по имени из .proto, БКС по таблице или пути, квота, command=True, чего raw не делает",
     "python/record.md": "Python: запись потока событий в файл и проигрыш (brokapi.record: EnvelopeWriter, EnvelopeReader, replay, LogError), формат файла как у Rust",
     "python/design.md": "Объяснение: как пакет Python связан с ядром, мост tokio и asyncio, Decimal, ошибки, отличия от Rust",
-    "gateway/index.md": "ЕЩЕ НЕТ, заглушка: Gateway, служба с gRPC для любого языка и командная строка brokapi, стадия к бете",
-    "cli/index.md": "ЕЩЕ НЕТ, заглушка: CLI, командная строка для людей и ИИ-агентов (status, book, portfolio, вывод --json), через Gateway или напрямую",
+    "gateway/index.md": "Gateway, программа brokapi (служба и команды, один продукт): когда нужен, схема служба - гейтвеи - боты - брокеры, что гарантирует, чего пока нет",
+    "gateway/quickstart.md": "Gateway: быстрый старт на песочнице Т-Банка: brokapi init, check, up -d, ps, quote, down, без заявок",
+    "gateway/bots.md": "Gateway: подключить бота: доступ (gateway.addr, access.key, заголовки authorization и x-brokapi-bot), Rust через RemoteClient, любой язык по .proto, ошибки",
+    "gateway/operations.md": "Gateway: запуск и обслуживание: юнит systemd, несколько служб, сбои и перезапуск, остановка и снятие заявок, файлы состояния, что значат сообщения",
+    "gateway/events.md": "Gateway: поток событий Events (epoch, seq, Ready, Gap, Lagged), кольцо, что бот делает после обрыва и перезапуска гейтвея, сверка",
+    "gateway/differences.md": "Gateway: чем гейтвей отличается от прямого подключения (потерянный ответ, события, подписки, лимиты, остановка) и чего он пока не делает",
+    "gateway/config.md": "Справочник конфига brokapi.toml: state_dir, [service], [service.restart], [[gateway]], токены, кольцо событий, ведра лимитов",
+    "gateway/commands.md": "Справочник команд brokapi (init, check, up, down, ps, top, status, start, stop, restart, add, remove, reload, logs, portfolio, orders, book, quote, direct, cancel-all, gateway run), коды выхода, --help каждой",
     "agent-contract.md": "Контракт для агентов: обязательные правила с причинами, последствиями и кодом, частые ошибки",
     "errors.md": "Ошибки и состояния: что значат, почему бывают, что делать (Unknown, Rejected, RateLimited, Degraded...)",
     "events.md": "Конверт Envelope, события Event, возможности коннекторов caps()",
     "coverage.md": "Какие методы API каждого брокера закрыты общим интерфейсом, а какие только через raw()",
     "api.md": "Справочник API Rust (rustdoc): список крейтов и ссылки на страницы справочника",
     "api-python.md": "Справочник API Python (pdoc, из docstring): модули brokapi, models, errors, numbers, record, testing и ссылки на страницы справочника",
-    "api-gateway.md": "ЕЩЕ НЕТ, заглушка: справочник gRPC-интерфейса Gateway (из .proto), появится вместе со службой",
-    "changelog.md": "Журнал изменений по выпускам, в том числе когда появятся Gateway и CLI",
+    "api-gateway.md": "Справочник gRPC-интерфейса Gateway (из .proto): сервисы Gateway и Service, все вызовы, сообщения, перечисления",
+    "changelog.md": "Журнал изменений по выпускам, в том числе программа brokapi (Gateway)",
 }
 
 # pages for agents that are not in SUMMARY.md: no HTML, no search, only the markdown next to the book, llms.txt, llms-full.txt and

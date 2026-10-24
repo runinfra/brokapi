@@ -10,8 +10,10 @@
 //! caller stops waiting.
 
 use std::future::Future;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock, RwLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use brokapi::core::{
@@ -23,7 +25,7 @@ use brokapi::core::{
     StopOrderSnapshot, SubscribeOpts, SubscriptionId, TimeRange, Timeframe, TradingParams,
     TradingStatus, TransportError, UserDataCaps,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tonic::metadata::{Ascii, MetadataValue};
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Response, Status, Streaming};
@@ -46,6 +48,13 @@ fn config(text: impl Into<String>) -> Error {
     Error::Config(ConfigError::Message(text.into()))
 }
 
+/// The `authorization` value of a key.
+fn bearer(key: &str) -> Result<MetadataValue<Ascii>, Error> {
+    format!("Bearer {key}")
+        .parse()
+        .map_err(|_| config("the access key is not valid text"))
+}
+
 /// A reply that does not follow the `.proto`: a gateway of another version.
 fn bad_reply(e: Invalid) -> Error {
     transport(format!("the gateway sent a reply that cannot be read: {e}"))
@@ -58,6 +67,13 @@ pub struct ConnectOptions {
     /// to a bot that does not read: a small window keeps the memory of a stalled stream small. Without it the default of
     /// the transport.
     pub http2_window: Option<u32>,
+    /// Keep the rule that the connectors of the library keep: a command (`place`, `cancel`, `replace`, `place_stop`,
+    /// `cancel_stop`) is refused on the bot's side, before it is sent, with [`Error::NotReconciled`] until a `reconcile`
+    /// has succeeded and with [`Error::Degraded`] after the event stream reported a [`pb::Gap`] until the next
+    /// `reconcile` has succeeded. Off by default: the gateway takes commands from a bot that did not reconcile, and a bot
+    /// of Rust that handles the gap itself does not need the guard. The Python module turns it on, so that a bot written
+    /// for a broker gets the same refusals from a gateway.
+    pub trading_gate: bool,
 }
 
 /// A bot's connection to a gateway. A clone is the same connection.
@@ -68,9 +84,43 @@ pub struct RemoteClient {
 
 struct Inner {
     channel: Channel,
-    auth: MetadataValue<Ascii>,
+    auth: RwLock<MetadataValue<Ascii>>,
+    /// The state directory of the gateway, when the client was connected by it ([`RemoteClient::connect_dir`]). The
+    /// address is read from there each time the road is made again, so a gateway that was started anew is found where it
+    /// listens now (on Windows that is another port every time), and the key is read again when the gateway refuses the
+    /// old one.
+    dir: Option<PathBuf>,
     bot: MetadataValue<Ascii>,
     name: String,
+    closed: watch::Sender<bool>,
+    gate: Gate,
+    /// The longest span of one `candles` request per timeframe, learned by [`RemoteClient::caps`].
+    spans: OnceLock<Vec<(Timeframe, Duration)>>,
+}
+
+/// The guard of commands of [`ConnectOptions::trading_gate`].
+#[derive(Default)]
+struct Gate {
+    on: bool,
+    reconciled: AtomicBool,
+    /// How many gaps the event streams of this client reported, and how many of them a `reconcile` has covered.
+    gaps: AtomicU64,
+    covered: AtomicU64,
+}
+
+impl Gate {
+    fn check(&self) -> Result<(), Error> {
+        if !self.on {
+            return Ok(());
+        }
+        if self.gaps.load(Ordering::SeqCst) > self.covered.load(Ordering::SeqCst) {
+            return Err(Error::Degraded);
+        }
+        if !self.reconciled.load(Ordering::SeqCst) {
+            return Err(Error::NotReconciled);
+        }
+        Ok(())
+    }
 }
 
 /// Opens the channel to a gateway (or a service) at an address.
@@ -115,6 +165,67 @@ pub(crate) async fn open_channel(
     .map_err(|e| transport(format!("cannot connect to {address}: {e}")))
 }
 
+/// What the road to a gateway is made of: a Unix socket or a TCP connection, whichever the address says.
+trait Io: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin> Io for T {}
+
+async fn connect_to(address: &Address) -> std::io::Result<Box<dyn Io>> {
+    match address {
+        #[cfg(unix)]
+        Address::Unix(path) => Ok(Box::new(tokio::net::UnixStream::connect(path).await?)),
+        #[cfg(not(unix))]
+        Address::Unix(_) => Err(std::io::Error::other(
+            "Unix sockets are not available on this platform",
+        )),
+        Address::Tcp(addr) => {
+            let stream = tokio::net::TcpStream::connect(addr).await?;
+            stream.set_nodelay(true)?;
+            Ok(Box::new(stream))
+        }
+    }
+}
+
+/// The address a gateway wrote in its state directory.
+fn read_address(dir: &Path) -> Result<Address, Error> {
+    std::fs::read_to_string(dir.join(ADDRESS_FILE))
+        .map_err(|e| config(format!("no gateway address in {}: {e}", dir.display())))?
+        .trim()
+        .parse()
+        .map_err(|e: String| config(e))
+}
+
+/// Opens the channel to the gateway whose state directory is `dir`. Unlike [`open_channel`], the address is not fixed:
+/// it is read from `gateway.addr` each time the channel connects, the first time and after every break. A gateway
+/// started anew listens at the same place on Unix, but on Windows at another port, and the file is where it says so.
+async fn open_channel_dir(dir: &Path, options: ConnectOptions) -> Result<Channel, Error> {
+    let tune = |endpoint: Endpoint| match options.http2_window {
+        Some(window) => endpoint
+            .initial_stream_window_size(window)
+            .initial_connection_window_size(window),
+        None => endpoint,
+    };
+    let dir = dir.to_owned();
+    let shown = dir.clone();
+    tune(Endpoint::from_static("http://gateway.local"))
+        .connect_with_connector(tower::service_fn(move |_: tonic::codegen::http::Uri| {
+            let dir = dir.clone();
+            async move {
+                let address = read_address(&dir).map_err(std::io::Error::other)?;
+                let stream = connect_to(&address).await.map_err(|e| {
+                    std::io::Error::new(e.kind(), format!("cannot connect to {address}: {e}"))
+                })?;
+                Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(stream))
+            }
+        }))
+        .await
+        .map_err(|e| {
+            transport(format!(
+                "cannot connect to the gateway in {}: {e}",
+                shown.display()
+            ))
+        })
+}
+
 impl RemoteClient {
     /// Connects to the gateway at `address` as the bot `bot`, with the access `key`.
     pub async fn connect(address: &Address, key: &str, bot: &str) -> Result<Self, Error> {
@@ -134,23 +245,40 @@ impl RemoteClient {
             )));
         }
         let channel = open_channel(address, options).await?;
-        let auth = format!("Bearer {key}")
-            .parse()
-            .map_err(|_| config("the access key is not valid text"))?;
+        Self::with_channel(channel, key, bot, None, options)
+    }
+
+    fn with_channel(
+        channel: Channel,
+        key: &str,
+        bot: &str,
+        dir: Option<PathBuf>,
+        options: ConnectOptions,
+    ) -> Result<Self, Error> {
+        let auth = bearer(key)?;
         let bot_value = bot
             .parse()
             .map_err(|_| config("the bot name is not valid text"))?;
         Ok(Self {
             inner: Arc::new(Inner {
                 channel,
-                auth,
+                auth: RwLock::new(auth),
+                dir,
                 bot: bot_value,
                 name: bot.to_owned(),
+                closed: watch::channel(false).0,
+                gate: Gate {
+                    on: options.trading_gate,
+                    ..Gate::default()
+                },
+                spans: OnceLock::new(),
             }),
         })
     }
 
-    /// Connects to the gateway whose state directory is `dir`: the address and the key are read from there.
+    /// Connects to the gateway whose state directory is `dir`: the address and the key are read from there. The address is
+    /// read again whenever the client has to connect again, so a gateway that was stopped and started anew is found even
+    /// where it listens at another place than before (on Windows, at another port).
     pub async fn connect_dir(dir: &Path, bot: &str) -> Result<Self, Error> {
         Self::connect_dir_with(dir, bot, ConnectOptions::default()).await
     }
@@ -161,23 +289,51 @@ impl RemoteClient {
         bot: &str,
         options: ConnectOptions,
     ) -> Result<Self, Error> {
-        let address: Address = std::fs::read_to_string(dir.join(ADDRESS_FILE))
-            .map_err(|e| config(format!("no gateway address in {}: {e}", dir.display())))?
-            .trim()
-            .parse()
-            .map_err(|e: String| config(e))?;
+        if !valid_bot_name(bot) {
+            return Err(config(format!(
+                "the bot name {bot:?} is not valid: 1 to 64 letters, digits, '.', '_' or '-'"
+            )));
+        }
+        // The address is read here too, so that a directory without a gateway is named as such.
+        read_address(dir)?;
         let key = read_key(dir).map_err(|e| {
             config(format!(
                 "cannot read the access key in {}: {e}",
                 dir.display()
             ))
         })?;
-        Self::connect_with(&address, &key, bot, options).await
+        let channel = open_channel_dir(dir, options).await?;
+        Self::with_channel(channel, &key, bot, Some(dir.to_owned()), options)
     }
 
     /// The name this bot gave.
     pub fn bot(&self) -> &str {
         &self.inner.name
+    }
+
+    /// Ends this connection on the bot's side: later calls fail with [`Error::ShuttingDown`], and the feeds of the
+    /// client end. The gateway and the orders at the exchange are not touched, and what this bot subscribed to is
+    /// let go by the gateway after `bot_grace`. A clone of the client is closed with it.
+    pub fn close(&self) {
+        self.inner.closed.send_replace(true);
+    }
+
+    /// Whether [`RemoteClient::close`] has been called.
+    pub fn is_closed(&self) -> bool {
+        *self.inner.closed.borrow()
+    }
+
+    /// Resolves when [`RemoteClient::close`] is called (at once if it was).
+    pub(crate) async fn closed(&self) {
+        let _ = self.inner.closed.subscribe().wait_for(|c| *c).await;
+    }
+
+    /// The refusal of a command by the guard of [`ConnectOptions::trading_gate`], if it is on.
+    fn check_command(&self) -> Result<(), Error> {
+        if self.is_closed() {
+            return Err(Error::ShuttingDown);
+        }
+        self.inner.gate.check()
     }
 
     fn grpc(&self) -> GrpcClient {
@@ -188,11 +344,34 @@ impl RemoteClient {
 
     fn request<T>(&self, message: T) -> Request<T> {
         let mut req = Request::new(message);
-        req.metadata_mut()
-            .insert(KEY_HEADER, self.inner.auth.clone());
+        let auth = self
+            .inner
+            .auth
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        req.metadata_mut().insert(KEY_HEADER, auth);
         req.metadata_mut()
             .insert(BOT_HEADER, self.inner.bot.clone());
         req
+    }
+
+    /// The gateway refused the key: when the client knows the state directory, the key is read from there again, since a
+    /// gateway whose directory was made anew has a new one. The next call carries it.
+    fn note_status(&self, status: &Status) {
+        if status.code() != tonic::Code::Unauthenticated {
+            return;
+        }
+        let Some(dir) = &self.inner.dir else { return };
+        if let Ok(key) = read_key(dir)
+            && let Ok(auth) = bearer(&key)
+        {
+            *self
+                .inner
+                .auth
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = auth;
+        }
     }
 
     /// One call. A command runs to its end even if the caller stops waiting.
@@ -208,12 +387,19 @@ impl RemoteClient {
         F: FnOnce(GrpcClient, Request<Req>) -> Fut + Send + 'static,
         Fut: Future<Output = Result<Response<Resp>, Status>> + Send + 'static,
     {
+        if self.is_closed() {
+            return Err(Error::ShuttingDown);
+        }
         let (client, request) = (self.grpc(), self.request(message));
+        let me = self.clone();
         let work = async move {
             f(client, request)
                 .await
                 .map(Response::into_inner)
-                .map_err(|status| error_of(&status, command))
+                .map_err(|status| {
+                    me.note_status(&status);
+                    error_of(&status, command)
+                })
         };
         if command {
             brokapi::runtime::run_detached(work)
@@ -234,6 +420,30 @@ impl RemoteClient {
         .await
     }
 
+    /// Waits until the gateway takes commands, at most `timeout`, and returns what `Health` said then. A gateway starts by
+    /// comparing its journal with the broker, which takes a moment and can take longer when the broker is slow or the
+    /// rate limit is spent: until then every call but `health` and `caps` is refused. The error is [`Error::Transport`]
+    /// with the last thing the gateway said about its start, or [`Error::ShuttingDown`] for a gateway that is stopping.
+    pub async fn wait_ready(&self, timeout: Duration) -> Result<pb::HealthResponse, Error> {
+        let started = tokio::time::Instant::now();
+        loop {
+            let health = self.health().await?;
+            match pb::GatewayState::try_from(health.state) {
+                Ok(pb::GatewayState::Ready) => return Ok(health),
+                Ok(pb::GatewayState::Stopping) => return Err(Error::ShuttingDown),
+                _ => {}
+            }
+            let left = timeout.saturating_sub(started.elapsed());
+            if left.is_zero() {
+                return Err(transport(format!(
+                    "the gateway {} is still starting after {timeout:?}: {}",
+                    health.name, health.detail
+                )));
+            }
+            tokio::time::sleep(left.min(Duration::from_millis(200))).await;
+        }
+    }
+
     /// The capabilities of the two connectors.
     pub async fn caps(&self) -> Result<(MarketDataCaps, UserDataCaps), Error> {
         let r = self
@@ -241,6 +451,8 @@ impl RemoteClient {
                 c.caps(r).await
             })
             .await?;
+        // Once per connection: a limit does not change while the gateway runs.
+        let _ = self.inner.spans.set(cv::candle_spans_from(&r.candle_spans));
         Ok((
             cv::md_caps_from(&r.md).map_err(bad_reply)?,
             cv::ud_caps_from(&r.ud).map_err(bad_reply)?,
@@ -304,7 +516,10 @@ impl RemoteClient {
         let mut stream = client
             .events(self.request(msg))
             .await
-            .map_err(|s| error_of(&s, false))?
+            .map_err(|s| {
+                self.note_status(&s);
+                error_of(&s, false)
+            })?
             .into_inner();
         let first = stream
             .message()
@@ -322,6 +537,7 @@ impl RemoteClient {
         };
         Ok(EventStream {
             stream,
+            client: self.clone(),
             epoch: ready.epoch,
             next_seq: ready.next_seq,
             last_seq,
@@ -386,6 +602,7 @@ pub enum RemoteEvent {
 /// The event stream of a bot, from [`RemoteClient::events`].
 pub struct EventStream {
     stream: Streaming<pb::EventFrame>,
+    client: RemoteClient,
     epoch: u64,
     next_seq: u64,
     last_seq: u64,
@@ -432,6 +649,7 @@ impl EventStream {
                 Frame::Gap(gap) => {
                     // The stream goes on from now: this is the new point to resume from.
                     self.last_seq = self.next_seq.saturating_sub(1);
+                    self.client.inner.gate.gaps.fetch_add(1, Ordering::SeqCst);
                     Ok(RemoteEvent::Gap(gap))
                 }
                 Frame::Lagged(l) => Ok(RemoteEvent::Lagged {
@@ -559,6 +777,17 @@ impl MarketDataSource for RemoteClient {
             .map_err(bad_reply)
     }
 
+    /// The limit the gateway reported in `Caps`, so a long history is read in windows that the broker accepts. `None`
+    /// until [`RemoteClient::caps`] has been called once: call it first when you read history.
+    fn candles_max_span(&self, tf: Timeframe) -> Option<Duration> {
+        self.inner
+            .spans
+            .get()?
+            .iter()
+            .find(|(t, _)| *t == tf)
+            .map(|(_, span)| *span)
+    }
+
     async fn subscribe_candles(
         &self,
         id: &InstrumentId,
@@ -651,6 +880,7 @@ impl InstrumentSource for RemoteClient {
 #[async_trait]
 impl OrderExecutor for RemoteClient {
     async fn place(&self, req: PlaceOrderRequest) -> Result<OrderAck, Error> {
+        self.check_command()?;
         let r = self
             .call(true, cv::place_to(&req), |mut c, r| async move {
                 c.place(r).await
@@ -660,6 +890,7 @@ impl OrderExecutor for RemoteClient {
     }
 
     async fn cancel(&self, cid: ClientOrderId) -> Result<(), Error> {
+        self.check_command()?;
         let msg = pb::CancelRequest {
             cid: cv::cid_to(&cid),
         };
@@ -669,6 +900,7 @@ impl OrderExecutor for RemoteClient {
     }
 
     async fn replace(&self, req: ReplaceOrderRequest) -> Result<OrderAck, Error> {
+        self.check_command()?;
         let r = self
             .call(true, cv::replace_to(&req), |mut c, r| async move {
                 c.replace(r).await
@@ -712,14 +944,22 @@ impl OrderExecutor for RemoteClient {
     /// Asks the gateway to compare `ledger` with the broker. The orders of the other bots of the gateway are not in
     /// your ledger, so they come back as `foreign`.
     async fn reconcile(&self, ledger: &[ClientOrderId]) -> Result<ReconcileReport, Error> {
+        if self.is_closed() {
+            return Err(Error::ShuttingDown);
+        }
         let msg = pb::ReconcileRequest {
             ledger: cv::cids_to(ledger),
             include_journal: false,
         };
+        // The gaps counted before the call are the ones this reconcile covers: one that arrives while it runs is not.
+        let gaps = self.inner.gate.gaps.load(Ordering::SeqCst);
         let r = self
             .call(true, msg, |mut c, r| async move { c.reconcile(r).await })
             .await?;
-        cv::report_from(&r).map_err(bad_reply)
+        let report = cv::report_from(&r).map_err(bad_reply)?;
+        self.inner.gate.reconciled.store(true, Ordering::SeqCst);
+        self.inner.gate.covered.fetch_max(gaps, Ordering::SeqCst);
+        Ok(report)
     }
 }
 
@@ -793,6 +1033,7 @@ impl PortfolioSource for RemoteClient {
 #[async_trait]
 impl StopOrderExecutor for RemoteClient {
     async fn place_stop(&self, req: PlaceStopOrderRequest) -> Result<OrderAck, Error> {
+        self.check_command()?;
         let r = self
             .call(true, cv::place_stop_to(&req), |mut c, r| async move {
                 c.place_stop(r).await
@@ -802,6 +1043,7 @@ impl StopOrderExecutor for RemoteClient {
     }
 
     async fn cancel_stop(&self, stop: StopOrderRef) -> Result<(), Error> {
+        self.check_command()?;
         let msg = pb::CancelStopRequest {
             stop: Some(cv::stop_ref_to(&stop)),
         };
@@ -830,5 +1072,36 @@ impl StopOrderExecutor for RemoteClient {
         })
         .await
         .map(sub)
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------- the account
+
+#[async_trait]
+impl brokapi_client::Account for RemoteClient {
+    fn is_closed(&self) -> bool {
+        RemoteClient::is_closed(self)
+    }
+
+    async fn account_caps(&self) -> Result<brokapi_client::Caps, brokapi_client::ClientError> {
+        let (md, ud) = self.caps().await?;
+        Ok(brokapi_client::Caps { md, ud })
+    }
+
+    async fn account_instrument(
+        &self,
+        ticker: &str,
+        board: Option<&str>,
+    ) -> Result<InstrumentId, brokapi_client::ClientError> {
+        Ok(self.resolve_instrument(ticker, board).await?)
+    }
+
+    async fn account_raw(
+        &self,
+        method: &str,
+        args: &serde_json::Value,
+        command: bool,
+    ) -> Result<serde_json::Value, brokapi_client::ClientError> {
+        Ok(self.raw(method, args, command).await?)
     }
 }

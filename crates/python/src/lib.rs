@@ -6,6 +6,9 @@
 //! passes through a `float`. The asyncio side is built by `pyo3-async-runtimes`: every `async fn` of the connectors
 //! becomes an awaitable of the running event loop, and the tokio runtime that drives them lives in this module.
 //!
+//! A gateway client is the same object: `connect_gateway` makes a `NativeClient` whose calls and events go through a
+//! `RemoteClient` of `brokapi-gateway` instead of a connector, so the Python package does not know the difference.
+//!
 //! The module is `brokapi._native` and is private: users import `brokapi`.
 
 use pyo3::prelude::*;
@@ -34,6 +37,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<client::NativePager>()?;
     m.add_class::<client::NativeLimiter>()?;
     m.add_function(wrap_pyfunction!(client::connect, m)?)?;
+    m.add_function(wrap_pyfunction!(client::connect_gateway, m)?)?;
     m.add_class::<record::NativeLogWriter>()?;
     m.add_class::<record::NativeLogReader>()?;
     m.add_class::<record::NativeReplay>()?;
@@ -44,6 +48,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "testing")]
     {
         m.add_class::<mocks::NativeMock>()?;
+        m.add_class::<mocks::NativeMockGateway>()?;
         m.add_function(wrap_pyfunction!(mocks::start_mock, m)?)?;
     }
     Ok(())

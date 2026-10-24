@@ -28,6 +28,8 @@ OLD=docs/book.old
 rm -rf "$NEW"
 
 echo "==> book"
+# The reference of the gRPC API (src/api-gateway.md) is made from crates/gateway/proto/: it must not be behind the files.
+python3 docs/protodoc.py --check
 mdbook build docs --dest-dir "$(pwd)/$NEW"
 # The version in the strip of every page (theme/index.hbs) is put in here, from Cargo.toml (docs/brokapi_version.py).
 python3 docs/brokapi_version.py stamp "$NEW"

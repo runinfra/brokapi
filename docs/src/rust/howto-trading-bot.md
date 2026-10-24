@@ -46,7 +46,7 @@ brokapi = { version = "{{brokapi_version}}", features = ["bcs"] }   # или "tb
 tokio   = { version = "1", features = ["full"] }
 ```
 
-Крейт не опубликован, пока его подключают по пути: `brokapi = { path = "../brokapi", features = ["bcs"] }`.
+Из клона репозитория его подключают по пути: `brokapi = { path = "../brokapi", features = ["bcs"] }`.
 
 ```rust,ignore
 {{#include ../../../examples/trading_bot.rs:imports}}

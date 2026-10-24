@@ -9,9 +9,10 @@
 //!
 //! | You want | Use |
 //! |---|---|
-//! | Run gateways for your bots, keep them alive, look after them | the program `brokapi` (`cargo install brokapi-gateway`), see below |
+//! | Run gateways for your bots, keep them alive, look after them | the program `brokapi` (a ready-made file from the GitHub releases or `cargo install brokapi-gateway`, see below) |
 //! | Run a gateway in your program | [`Gateway`], [`GatewayConfig`] |
-//! | A bot in Rust | [`RemoteClient`], which speaks the traits of `brokapi-core` |
+//! | A bot in Rust | [`RemoteClient`], which speaks the traits of `brokapi-core`, and [`Feed`] for its events |
+//! | A bot in Python | `brokapi.connect_gateway`, which hands out the same `brokapi.Client` as `brokapi.connect` (it uses [`RemoteClient`] and [`Feed`] inside) |
 //! | A bot in another language | the generated client of the `.proto` files; [`pb`] is the Rust one |
 //! | Run the service from your own program | [`service::Service`] (feature `cli`) |
 //!
@@ -101,6 +102,7 @@ mod access;
 pub mod cli;
 pub mod convert;
 mod error;
+mod feed;
 mod hub;
 mod journal;
 mod metrics;
@@ -108,6 +110,8 @@ mod remote;
 mod server;
 #[cfg(feature = "cli")]
 pub mod service;
+#[cfg(unix)]
+mod socket;
 mod subs;
 
 /// The messages and the service of the `.proto` files, generated.
@@ -125,6 +129,7 @@ pub use access::{
     read_key, valid_bot_name,
 };
 pub use error::{DETAIL_KEY, detail_of, error_of, gateway_status, status_of};
+pub use feed::{Feed, FeedItem};
 pub use hub::{Hub, RingConfig};
 pub use journal::Journal;
 pub use remote::{ConnectOptions, EventStream, RemoteClient, RemoteEvent, Resume};

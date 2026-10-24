@@ -360,7 +360,10 @@ pub(crate) async fn bind(
     let _ = (state_dir, socket_name); // only a Unix socket lives in the state directory
     let listen = match listen {
         #[cfg(unix)]
-        Listen::Auto => Listen::Unix(state_dir.join(socket_name)),
+        Listen::Auto => Listen::Unix(
+            crate::socket::auto_path(state_dir, socket_name)
+                .map_err(io("choosing the place of the socket"))?,
+        ),
         #[cfg(not(unix))]
         Listen::Auto => Listen::Tcp("127.0.0.1:0".parse().expect("a literal address")),
         other => other.clone(),
@@ -368,7 +371,20 @@ pub(crate) async fn bind(
     match listen {
         #[cfg(unix)]
         Listen::Unix(path) => {
-            if path.exists() {
+            if !crate::socket::fits(&path) {
+                return Err(GatewayError::Io {
+                    what: format!("listening on {}", path.display()),
+                    source: std::io::Error::other(format!(
+                        "the path has {} bytes and a Unix socket path may have {} at most on this system. \
+                         Give a shorter path, or leave `listen` out: the program then chooses the place itself",
+                        path.as_os_str().len(),
+                        crate::socket::MAX_SOCKET_PATH
+                    )),
+                });
+            }
+            if crate::socket::inspect(&path)
+                .map_err(io(format!("listening on {}", path.display())))?
+            {
                 // A socket file is left behind by a gateway that died. One that answers is a gateway that lives.
                 if tokio::net::UnixStream::connect(&path).await.is_ok() {
                     return Err(GatewayError::AlreadyRunning(path.display().to_string()));
@@ -1254,6 +1270,7 @@ impl pb::gateway_server::Gateway for GatewayService {
             Some(caps) => Ok(Response::new(pb::CapsResponse {
                 md: Some(cv::md_caps_to(&caps.md)),
                 ud: Some(cv::ud_caps_to(&caps.ud)),
+                candle_spans: cv::candle_spans_to(&self.shared.client),
             })),
             None => Err(status_of(&Error::ShuttingDown)),
         }

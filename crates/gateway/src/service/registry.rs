@@ -76,7 +76,7 @@ fn read(path: &Path) -> Option<Entry> {
 pub fn find(state_dir: &Path) -> Option<Entry> {
     let path = dir().join(file_for(state_dir));
     let entry = read(&path)?;
-    if super::proc::is_brokapi(entry.pid) {
+    if super::proc::is_brokapi_since(entry.pid, entry.started_unix) {
         Some(entry)
     } else {
         let _ = std::fs::remove_file(path);
@@ -96,7 +96,7 @@ pub fn list() -> Vec<Entry> {
             continue;
         }
         match read(&path) {
-            Some(e) if super::proc::is_brokapi(e.pid) => out.push(e),
+            Some(e) if super::proc::is_brokapi_since(e.pid, e.started_unix) => out.push(e),
             _ => {
                 let _ = std::fs::remove_file(&path);
             }

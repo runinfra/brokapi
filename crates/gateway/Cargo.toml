@@ -30,7 +30,7 @@ required-features = ["cli"]
 doc = false
 
 [dependencies]
-brokapi = { path = "../..", version = "0.1.0-alpha.3" }
+brokapi.workspace = true
 brokapi-client.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
@@ -65,4 +65,8 @@ tokio = { workspace = true, features = ["full", "test-util"] }
 
 [[test]]
 name = "cli"
+required-features = ["cli"]
+
+[[test]]
+name = "docs"
 required-features = ["cli"]
