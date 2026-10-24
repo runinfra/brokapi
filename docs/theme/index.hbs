@@ -155,10 +155,16 @@
                         <button id="brokapi-search-toggle" class="icon-button search-toggle" type="button" title="Поиск (/)" aria-label="Поиск по книге" aria-haspopup="dialog" aria-keyshortcuts="/ s">
                             {{fa "solid" "magnifying-glass"}}<span class="search-toggle-text">Поиск</span>
                         </button>
+                        {{#if print_enable}}
+                        <a class="icon-button print-link" href="{{ path_to_root }}print.html" title="Печать книги" aria-label="Печать книги">
+                            {{fa "solid" "print" "print-button"}}
+                        </a>
+                        {{/if}}
                     </div>
 
                     <div class="menu-title">{{ book_title }}</div>
-                    <!-- Mark and name of brokapi lead to the site brokapi.ru (same mark as on the site). -->
+                    <!-- Mark and name of brokapi lead to the site brokapi.ru (same mark as on the site). The book itself has no
+                         separate link in the bar: the sidebar is its table of contents. -->
                     <div class="brand">
                         <a class="brand-home" href="https://brokapi.ru/" aria-label="brokapi, brokapi.ru">
                             <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
@@ -167,7 +173,6 @@
                             </svg>
                             <span class="brand-word">brokapi</span>
                         </a>
-                        <a class="brand-docs" href="{{ path_to_root }}index.html" aria-label="Документация: первая страница книги">Документация</a>
                     </div>
 
                     <div class="right-buttons">
@@ -176,12 +181,6 @@
                         <div class="lang-switch" role="group" aria-label="Язык примеров">
                             <button type="button" data-lang="rust" aria-pressed="false">Rust</button><button type="button" data-lang="python" aria-pressed="false">Python</button>
                         </div>
-                        <a class="site-link" href="https://brokapi.ru/">brokapi.ru</a>
-                        {{#if print_enable}}
-                        <a href="{{ path_to_root }}print.html" title="Печать книги" aria-label="Печать книги">
-                            {{fa "solid" "print" "print-button"}}
-                        </a>
-                        {{/if}}
                         {{#if git_repository_url}}
                         <a href="{{git_repository_url}}" title="Репозиторий" aria-label="Репозиторий">
                             {{fa git_repository_icon_class git_repository_icon}}
