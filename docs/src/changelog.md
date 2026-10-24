@@ -2,7 +2,7 @@
 
 Что появилось в библиотеке и что поменять в своем коде. Новое сверху.
 
-## Следующая версия (еще не выпущена): Bybit
+## 0.1.0-alpha.5: Bybit
 
 - **Bybit: пятый коннектор.** Крейты `brokapi-bybit` и `brokapi-bybit-protocol`, флаг `bybit` в главном крейте, `brokapi.connect("bybit")` и `mock_bybit()` в Python,
   `broker = "bybit"` в конфиге гейтвея. Поддержана категория `linear` API V5 (контракты с расчетом в USDT), спота пока нет. Общего `replace` нет
