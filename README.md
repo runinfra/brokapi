@@ -33,9 +33,9 @@ pip install brokapi
 |---|---|
 | `brokapi` | главный крейт, реэкспортирует остальные |
 | `brokapi-core`, `brokapi-runtime`, `brokapi-sansio` | типы и трейты, лимиты и сверка, ядро без сети |
-| `brokapi-bcs`, `brokapi-tbank`, `brokapi-finam`, `brokapi-alor` | коннекторы брокеров |
-| `brokapi-bcs-protocol`, `brokapi-tbank-protocol`, `brokapi-finam-protocol`, `brokapi-alor-protocol` | клиенты протоколов брокеров |
-| `brokapi-client` | один счет у любого из четырех брокеров за одним типом: события, лимиты, вызовы по имени (на нем стоит Python) |
+| `brokapi-bcs`, `brokapi-tbank`, `brokapi-finam`, `brokapi-alor`, `brokapi-bybit` | коннекторы |
+| `brokapi-bcs-protocol`, `brokapi-tbank-protocol`, `brokapi-finam-protocol`, `brokapi-alor-protocol`, `brokapi-bybit-protocol` | клиенты протоколов |
+| `brokapi-client` | один счет у любого из пяти брокеров за одним типом: события, лимиты, вызовы по имени (на нем стоит Python) |
 | `brokapi-gateway` | гейтвей: один процесс держит подключение к брокеру и обслуживает много ботов по gRPC (контракт - `crates/gateway/proto/`), клиент для ботов на Rust и Python (`brokapi.connect_gateway`) и программа `brokapi` (служба и команды, [Gateway](https://brokapi.ru/docs/gateway/index.html)) |
 | `brokapi-mocks`, `brokapi-conformance` | имитации и общие сценарии для тестов, не публикуются |
 

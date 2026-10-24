@@ -21,6 +21,7 @@ reply = await client.raw(method, args=None, *, command=False)   # reply: dict (�
 | Финам | то же: `"LastQuote"`, `"Clock"` | то же |
 | БКС | имя из файла лимитов: `"GetQuotes"`, `"GetPortfolio"`, `"GetOperationHistory"`, или `"GET /путь"`, `"POST /путь"` для любого другого метода | `query` (параметры URL), `body` (JSON для `POST`), для `GetOrderStatus` еще `path` (`{"id": ...}`) |
 | АЛОР | глагол и путь из описания API: `"GET /md/v2/time"`, `"GET /md/v2/Clients/MOEX/D12345/summary"`, `"POST /commandapi/..."`. Глаголы `GET`, `POST`, `PUT`, `DELETE`. Каждый вызов тратит квоту по умолчанию | `query` (параметры URL), `body` (JSON), `request_id` (`X-REQID` команды: если не дать, коннектор сделает новый) |
+| Bybit | глагол и путь из описания API V5: `"GET /v5/market/time"`, `"GET /v5/account/wallet-balance"`, `"POST /v5/position/set-leverage"`. Глаголы `GET` и `POST`. Пути `/v5/market/...` читаются без подписи, остальные подписываются ключом | `query` (параметры GET), `body` (JSON для `POST`) |
 
 Т-Банк и Финам говорят по gRPC. Описание всех сервисов и сообщений вшито в библиотеку, метод ищется в нем по имени, словарь становится
 сообщением запроса, а ответ снова словарем. Поэтому годится **любой** метод API, в том числе тот, которого нет в общем интерфейсе. Формат

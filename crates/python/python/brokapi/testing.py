@@ -30,7 +30,7 @@ from typing import Any, Optional
 from . import _codec, _native
 from .client import Client, connect, connect_gateway
 
-__all__ = ["MockBroker", "MockGateway", "mock_alor", "mock_bcs", "mock_finam", "mock_tbank"]
+__all__ = ["MockBroker", "MockGateway", "mock_alor", "mock_bcs", "mock_bybit", "mock_finam", "mock_tbank"]
 
 
 class MockGateway:
@@ -90,7 +90,7 @@ class MockBroker:
 
     @property
     def broker(self) -> str:
-        """``bcs``, ``tbank``, ``finam`` or ``alor``."""
+        """``bcs``, ``tbank``, ``finam``, ``alor`` or ``bybit``."""
         return self._native.broker
 
     @property
@@ -128,7 +128,7 @@ class MockBroker:
     ) -> None:
         """Executes the order ``cid``: it becomes filled, and the fill event goes to the account.
 
-        BCS, Finam and ALOR need ``qty`` and ``price`` (``qty`` less than the order makes a partial fill on BCS). T-Bank
+        BCS, Finam, ALOR and Bybit need ``qty`` and ``price`` (``qty`` less than the order makes a partial fill on BCS). T-Bank
         fills the whole order at its price and ignores both. ``account`` picks the account of T-Bank
         (``acc-a`` or ``acc-b``) or Finam (``ACC1`` or ``ACC2``).
         """
@@ -199,5 +199,10 @@ async def mock_alor(*, synthetic_candles: bool = False) -> MockBroker:
 
 
 async def mock_bybit(*, synthetic_candles: bool = False) -> MockBroker:
-    """An imitation of Bybit (HTTP and WebSocket), category ``linear``. The test instrument is ``MOCKUSDT``."""
+    """An imitation of Bybit (HTTP and WebSocket), category ``linear``. The test instrument is ``MOCKUSDT`` (a perpetual,
+    the quantity step and the smallest order 10, the price step 0.01); ``BTCUSDT`` has the figures of the real contract.
+
+    ``synthetic_candles`` has no effect on Bybit: it always answers a series for the period asked, one bar per step
+    of the timeframe.
+    """
     return await _start("bybit", synthetic_candles)

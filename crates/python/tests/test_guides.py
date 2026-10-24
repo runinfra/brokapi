@@ -16,6 +16,7 @@ from brokapi import testing
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 sys.path.insert(0, str(EXAMPLES))
 
+import bybit_first_day  # noqa: E402
 import emergency_stop  # noqa: E402
 import finam_first_day  # noqa: E402
 import from_tinkoff  # noqa: E402
@@ -52,6 +53,32 @@ async def test_the_sandbox_run_connects_to_the_sandbox_by_the_environment(monkey
         monkeypatch.setattr(quickstart_tbank.brokapi, "connect", connect)
         await quickstart_tbank.on_the_sandbox()
         assert seen == {"sandbox": True}
+
+
+async def test_the_first_day_on_bybit_reads_places_watches_cancels_and_stops(capsys: pytest.CaptureFixture[str]) -> None:
+    await bybit_first_day.on_the_imitation()
+    out = capsys.readouterr().out
+    assert "MOCKUSDT@linear: bid 100.00, ask 100.01, smallest order 10, quantity step 10" in out
+    assert "reconcile: 0 foreign order(s)" in out
+    assert "placed: order " in out and " at 50.00" in out
+    assert "in the stream: Acked" in out
+    assert "after cancel: Cancelled, orders alive: 0" in out
+    assert "stop orders waiting: 1, ordinary orders: 0" in out
+    assert "stop orders after cancel: 0" in out
+
+
+async def test_the_demo_run_on_bybit_asks_for_the_demo_account_by_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with await testing.mock_bybit() as mock:
+        real_connect = brokapi.connect
+        seen: dict[str, object] = {}
+
+        async def connect(broker: str, **kw: object) -> brokapi.Client:
+            seen.update(kw)
+            return await real_connect(broker, **{**mock.settings, **kw})  # type: ignore[arg-type]
+
+        monkeypatch.setattr(bybit_first_day.brokapi, "connect", connect)
+        await bybit_first_day.on_the_demo_account()
+        assert seen == {"env": "demo"}
 
 
 MOCKS = [testing.mock_bcs, testing.mock_tbank, testing.mock_finam, testing.mock_alor]

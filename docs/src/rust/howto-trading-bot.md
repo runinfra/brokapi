@@ -42,7 +42,7 @@ name = "my-bot"
 edition = "2024"   # нужен Rust 1.88 или новее: в коде книги цепочки let
 
 [dependencies]
-brokapi = { version = "{{brokapi_version}}", features = ["bcs"] }   # или "tbank", "finam", "alor"
+brokapi = { version = "{{brokapi_version}}", features = ["bcs"] }   # или "tbank", "finam", "alor", "bybit"
 tokio   = { version = "1", features = ["full"] }
 ```
 

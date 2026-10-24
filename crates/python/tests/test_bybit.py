@@ -132,9 +132,9 @@ async def test_the_key_pair_is_asked_for_by_name(monkeypatch: pytest.MonkeyPatch
         monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir("/")
     with pytest.raises(brokapi.Config) as caught:
-        await brokapi.connect("bybit")  # type: ignore[call-overload]
+        await brokapi.connect("bybit")
     assert "BYBIT_API_KEY" in str(caught.value)
     # The demo account has a pair of its own: the main one is not asked for.
     with pytest.raises(brokapi.Config) as caught:
-        await brokapi.connect("bybit", env="demo")  # type: ignore[call-overload]
+        await brokapi.connect("bybit", env="demo")
     assert "BYBIT_DEMO_API_KEY" in str(caught.value)

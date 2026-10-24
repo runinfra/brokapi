@@ -202,7 +202,7 @@ pub(crate) struct Inner {
 ///
 /// A `Client` is a cheap handle (a clone is the same connection). It implements the traits of `brokapi-core`
 /// ([`OrderExecutor`](brokapi::core::OrderExecutor), [`PortfolioSource`](brokapi::core::PortfolioSource), [`OrderBookSource`](brokapi::core::OrderBookSource) and the rest), so code written against them runs on
-/// any of the four brokers, and it can be called by method name with JSON ([`Client::call`]), which is how the Python
+/// any of the five brokers, and it can be called by method name with JSON ([`Client::call`]), which is how the Python
 /// module and the gateway reach it.
 ///
 /// After [`Client::close`] every typed call fails with [`Error::ShuttingDown`] and a call by name with

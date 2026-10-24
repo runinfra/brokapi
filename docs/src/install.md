@@ -14,7 +14,7 @@
 | Инструменты | `cargo` (идет вместе с Rust, ставится через [rustup](https://rustup.rs)) | `pip`, лучше виртуальное окружение |
 | Для установки из репозитория | `git` | `git` и Rust 1.88 или новее: расширение собирается на месте, сборщик `maturin` подтянется сам. Из PyPI Rust не нужен на Linux (x86_64, aarch64), macOS и Windows: там готовые пакеты |
 
-Брокеры включаются флагами, как у `tokio`: `bcs`, `tbank`, `finam`, `alor`, можно несколько. В Python все брокеры уже в пакете.
+Брокеры включаются флагами, как у `tokio`: `bcs`, `tbank`, `finam`, `alor`, `bybit`, можно несколько. В Python все брокеры уже в пакете.
 
 ## Rust
 
@@ -46,7 +46,7 @@ brokapi = { path = "../brokapi", features = ["bcs"] }
 
 Проверка: `cargo build` собирает проект без ошибок (первая сборка занимает несколько минут: компилируются зависимости).
 В коде все лежит под `brokapi::`: общее в `brokapi::core` и `brokapi::runtime`, брокеры в `brokapi::bcs`,
-`brokapi::tbank`, `brokapi::finam`, `brokapi::alor`. Дальше: [быстрый старт на Rust](rust/quickstart.md).
+`brokapi::tbank`, `brokapi::finam`, `brokapi::alor`, `brokapi::bybit`. Дальше: [быстрый старт на Rust](rust/quickstart.md).
 
 ## Python
 

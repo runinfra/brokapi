@@ -645,7 +645,7 @@ Commands:
   quote      Best bid, best ask, last trade
 
 Arguments:
-  <BROKER>  The broker: bcs, tbank, finam or alor
+  <BROKER>  The broker: bcs, tbank, finam, alor or bybit
 
 Options:
   -c, --config <FILE>   The config file (default: $BROKAPI_CONFIG, ./brokapi.toml, then the config
