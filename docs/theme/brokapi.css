@@ -22,7 +22,11 @@
   --content-max-width: 760px;
   --code-font-size: 0.86em;
   --page-padding: 16px;
+  /* One left axis, as on the site: the text of a cell stands on the axis of the page text, the zebra and the rules of the rows
+     reach out into the margin by --inset, so a shaded row never touches its first letter. */
+  --inset: 16px;
 }
+@media (max-width: 640px) { :root { --inset: 12px; } }
 
 .light {
   --bg: #ffffff;
@@ -144,6 +148,8 @@ h2 { font-size: 27px; letter-spacing: -0.01em; margin-top: 2.1em; margin-bottom:
 h3 { font-size: 21px; margin-top: 1.9em; }
 h4 { font-size: 17.5px; }
 h1 code, h2 code, h3 code, h4 code { font-size: 0.88em; font-weight: 500; }
+/* A heading is not a place for a chip: code in it is just set in the mono face. */
+:is(h1, h2, h3, h4) > code, :is(h1, h2, h3, h4) > a > code { background: transparent !important; padding: 0 !important; }
 .content a:link, .content a:visited { color: var(--bk-link); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
 .content a:hover { color: var(--bk-link-hover); }
 .header-link, a.header, .content a.header, .content a.header:link, .content a.header:visited { color: inherit !important; text-decoration: none !important; }
@@ -188,6 +194,7 @@ main:focus, body:focus { outline: none; }
 .lang-switch button:hover { background: var(--bk-soft); }
 .lang-switch button.is-on { background: var(--bk-heading); color: var(--bg); }
 .lang-switch button:focus-visible { outline-offset: -2px; }
+@media (pointer: coarse) { .lang-switch button { min-height: 44px; } }
 
 /* Revision line under the menu bar (text in theme/index.hbs, the only place with it) */
 .stage-wrap { display: block; }
@@ -198,7 +205,8 @@ main:focus, body:focus { outline: none; }
 }
 .stage-strip:hover { color: var(--bk-heading); }
 .stage-strip span { padding: 10px 18px 10px 0; }
-.stage-strip .rev-ver { padding-left: var(--page-padding); margin-right: 18px; border-right: 1px solid var(--bk-line); }
+/* The version starts on the axis of the text (docs/ui.js measures it into --strip-axis; the fallback is the margin of the page). */
+.stage-strip .rev-ver { padding-left: var(--strip-axis, calc(var(--page-padding) + 5px)); margin-right: 18px; border-right: 1px solid var(--bk-line); }
 .stage-strip .rev-stage { color: var(--bk-heading); }
 .stage-strip .rev-stage i { display: inline-block; width: 8px; height: 8px; background: var(--bk-signal); margin-right: 8px; }
 
@@ -217,7 +225,7 @@ main:focus, body:focus { outline: none; }
 .chapter > li > .chapter-link-wrapper > a { color: var(--bk-heading); font-weight: 400; }
 .chapter li a.active { color: var(--sidebar-active); font-weight: 600; }
 .chapter > li > .chapter-link-wrapper > a.active { color: var(--sidebar-active); }
-.chapter strong[aria-hidden] { font: 400 13px var(--mono-font); color: var(--bk-muted); margin-right: 6px; }
+.chapter strong[aria-hidden] { font: 400 13px var(--mono-font); color: var(--bk-muted); margin-right: 6px; display: inline-block; min-width: 3ch; }
 .chapter a.active strong[aria-hidden] { color: inherit; }
 .section { list-style: none; padding-inline-start: 0; margin: 2px 0 8px 4px; border-left: 1px solid var(--bk-line); line-height: 1.4; }
 .section > li > .chapter-link-wrapper > a:not(.chapter-fold-toggle) { padding: 5px 0 5px 12px; }
@@ -259,7 +267,7 @@ main:focus, body:focus { outline: none; }
 
 /* Code: dark block in both themes, the inline code on a panel */
 code, pre, .hljs, pre > .buttons { font-family: var(--mono-font); }
-:not(pre) > code { background: var(--bk-soft); border-radius: 2px; padding: 0.05em 0.28em; color: var(--inline-code-color); font-size: 0.88em; }
+:not(pre) > code { background: var(--bk-soft); border-radius: 2px; padding: 0.05em 0.2em; color: var(--inline-code-color); font-size: 0.88em; }
 pre { border: 0; border-radius: 2px; background: var(--bk-code-bg); margin: 1.2em 0; }
 .coal pre { box-shadow: 0 0 0 1px var(--bk-line); }
 pre > code, pre > .hljs { background: transparent; padding: 18px 20px; font-size: 14px; line-height: 1.65; }
@@ -282,6 +290,14 @@ pre:hover > .buttons, pre:focus-within > .buttons, pre > .buttons:focus-within {
 pre > .buttons button.clip-button { min-width: 44px; min-height: 34px; }
 .tooltiptext { font-family: var(--bk-sans); font-size: 12px; white-space: nowrap; }
 pre[tabindex]:focus-visible { outline-offset: 2px; }
+/* A line that runs on to the right fades at the edge until the reader has scrolled to its end (docs/ui.js sets data-scrolls and data-end). */
+pre > code[data-scrolls]:not([data-end]) { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+/* On a phone the copy button goes under the code, 44 by 44, as on the site: it does not lie on the first line any more. */
+@media (max-width: 640px) {
+  pre > code, pre > .hljs { padding-bottom: 52px; }
+  pre > .buttons { top: auto; bottom: 0; right: 0; padding: 4px 0; }
+  pre > .buttons button.clip-button { min-width: 44px; min-height: 44px; }
+}
 /* A long block: limited height, scrolls inside, the first line stays in view. */
 details.code-fold { margin: 1.2em 0; }
 details.code-fold > summary { cursor: pointer; padding: 8px 14px; font-family: var(--mono-font); font-size: 13px; color: var(--bk-muted); background: var(--bk-soft); border: 1px solid var(--bk-line); list-style-position: inside; }
@@ -320,15 +336,18 @@ pre.lang-solo::before { content: attr(data-lang-label); display: block; padding:
 /* Tables: ruled rows, the head under a black rule, a zebra. A wide table that does not fit scrolls inside its box (docs/ui.js
    marks it .is-scrollable): the first column stays in place and a hint under the table says so. On a phone a table of three
    columns or more becomes rows of blocks: one row, the name of the column in front of every cell (data-label is put by docs/ui.js). */
-.table-wrapper { overflow-x: auto; margin: 1.4em 0; }
-.content table { margin: 0; border-collapse: collapse; font-size: 15.5px; line-height: 1.5; width: 100%; }
+.table-wrapper { overflow-x: auto; margin: 1.4em calc(-1 * var(--inset)); }
+.content table { margin: 0; border-collapse: collapse; font-size: 16px; line-height: 1.5; width: 100%; }
 .content table th {
   background: transparent; color: var(--bk-muted); font-weight: 600; font-size: 14px; text-align: left; white-space: normal;
   border: 0; border-bottom: 1px solid var(--bk-heading); padding: 10px 16px 10px 0;
 }
 .content table td { border: 0; border-bottom: 1px solid var(--bk-line); vertical-align: top; min-width: 9em; padding: 14px 16px 14px 0; }
 .content table td:first-child { min-width: 7em; }
-.content table th:first-child, .content table td:first-child { padding-left: 0; }
+.content table th:first-child, .content table td:first-child { padding-left: var(--inset); }
+.content table th:last-child, .content table td:last-child { padding-right: var(--inset); }
+/* Four columns or more (docs/ui.js puts .cols-many): the columns share the width of the text instead of each asking for 9em. */
+.table-wrapper.cols-many td, .table-wrapper.cols-many td:first-child { min-width: 0; overflow-wrap: break-word; }
 .content table tbody tr:nth-child(2n) td { background: var(--table-alternate-bg); }
 .table-wrapper.is-scrollable { position: relative; }
 .table-wrapper.is-scrollable th:first-child, .table-wrapper.is-scrollable td:first-child { position: sticky; left: 0; z-index: 1; background: var(--bg); box-shadow: 1px 0 0 var(--bk-line); padding-right: 12px; }
@@ -342,10 +361,13 @@ pre.lang-solo::before { content: attr(data-lang-label); display: block; padding:
   .table-wrapper.table-cards table, .table-wrapper.table-cards tbody,
   .table-wrapper.table-cards tr, .table-wrapper.table-cards td { display: block; width: 100%; }
   .table-wrapper.table-cards thead { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-  .table-wrapper.table-cards tbody tr, .table-wrapper.table-cards tbody tr:nth-child(2n) { margin: 0; padding: 14px 0; border-bottom: 1px solid var(--bk-line); background: none; }
+  .table-wrapper.table-cards tbody tr, .table-wrapper.table-cards tbody tr:nth-child(2n) { margin: 0; padding: 14px var(--inset); border-bottom: 1px solid var(--bk-line); background: none; }
   .table-wrapper.table-cards tbody tr:first-child { border-top: 1px solid var(--bk-heading); }
   .table-wrapper.table-cards td, .table-wrapper.table-cards tbody tr:nth-child(2n) td { box-sizing: border-box; min-width: 0; border: 0; padding: 3px 0; overflow-wrap: anywhere; background: none; box-shadow: none; }
   .table-wrapper.table-cards td:first-child { min-width: 0; font-weight: 600; color: var(--bk-heading); }
+  .table-wrapper.table-cards tr { box-sizing: border-box; }
+  .content .table-wrapper.table-cards.is-scrollable td:first-child, .content .table-wrapper.table-cards.is-scrollable tbody tr:nth-child(2n) td:first-child { position: static; background: none; box-shadow: none; }
+  .content .table-wrapper.table-cards td, .content .table-wrapper.table-cards td:first-child, .content .table-wrapper.table-cards td:last-child { padding: 3px 0; }
   .table-wrapper.table-cards td:empty { display: none; }
   .table-wrapper.table-cards td[data-label]:not(:first-child)::before { content: attr(data-label); display: block; font-size: 13px; font-weight: 400; color: var(--bk-muted); margin-top: 6px; }
   .table-wrapper.table-cards td:first-child[data-label]::before { content: none; }
@@ -381,9 +403,11 @@ pre.mermaid, .mermaid { background: var(--bk-box); border: 1px solid var(--bk-li
 /* Footer of a page */
 .book-foot { margin: 40px 0 0; padding: 0 0 24px; font-size: 14px; color: var(--bk-muted); }
 .book-foot a, .book-foot a:link, .book-foot a:visited { color: var(--bk-heading); }
-.book-foot-line { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; padding-top: 18px; border-top: 1px solid var(--bk-heading); }
-.book-foot .book-foot-line > span a { font-weight: 600; }
-.book-foot button.report-error { appearance: none; background: none; border: 0; padding: 0.4em 0; font: inherit; cursor: pointer; color: var(--bk-link); text-decoration: underline; text-underline-offset: 3px; }
+/* As the footer of the site: "brokapi by RunInfra" on its own line in the middle, "Сообщить об ошибке" on the next one. */
+.book-foot-line { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 0; padding-top: 14px; border-top: 1px solid var(--bk-heading); }
+.book-foot .book-foot-line > span a { display: inline-block; padding: 7px 2px; font-weight: 400; }
+.book-foot .book-foot-line > span { line-height: 32px; }
+.book-foot button.report-error { appearance: none; background: none; border: 0; padding: 0 2px; min-height: 32px; font: inherit; cursor: pointer; color: var(--bk-link); text-decoration: underline; text-underline-offset: 3px; }
 .book-foot button.report-error[hidden] { display: none; }
 .book-foot button.report-error:hover { color: var(--bk-link-hover); }
 
@@ -509,9 +533,10 @@ html.search-open .content { pointer-events: none; }
   .right-buttons { margin: 0 8px 0 0; }
   .right-buttons .icon-button { display: none; }
   .lang-switch button { padding: 0 10px; min-height: 30px; }
-  .stage-strip span { padding: 8px 14px 8px 0; }
-  .stage-strip .rev-ver { border-right: 0; margin-right: 0; padding-bottom: 0; }
-  .stage-strip .rev-stage { padding-top: 2px; padding-left: var(--page-padding); }
+  /* Both parts on one height, the first on the axis of the text (as on the site: 6px 20px). */
+  .stage-strip { flex-wrap: nowrap; }
+  .stage-strip span { padding: 6px 14px 6px 0; }
+  .stage-strip .rev-ver { border-right: 0; margin-right: 0; }
   .pager { grid-template-columns: 1fr; }
   .pager .nx, .pager .pv { grid-column: 1; }
   .pager .nx { order: -1; text-align: left; }

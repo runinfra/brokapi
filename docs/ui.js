@@ -26,13 +26,14 @@
       if (!table) return;
       var head = table.querySelectorAll('thead th');
       var labels = Array.prototype.map.call(head, function (th) { return th.textContent.trim(); });
+      // Every search below is inside this table: a search over the whole document gave every table the labels of the last one.
       each('thead th', function (th) {
         if (th.textContent.trim()) return;
         var hidden = document.createElement('span');
         hidden.className = 'sr-only';
         hidden.textContent = 'Параметр';
         th.appendChild(hidden);
-      });
+      }, table);
       table.setAttribute('role', 'table');
       each('thead, tbody', function (g) { g.setAttribute('role', 'rowgroup'); }, table);
       each('tr', function (tr) { tr.setAttribute('role', 'row'); }, table);
@@ -42,9 +43,10 @@
           td.setAttribute('role', 'cell');
           if (labels[i]) td.setAttribute('data-label', labels[i]);
         });
-      });
+      }, table);
       // Two columns read fine as a table on a phone: only the wider ones turn into cards.
       if (labels.length >= 3) box.classList.add('table-cards');
+      if (labels.length >= 4) box.classList.add('cols-many');
       var hint = document.createElement('div');
       hint.className = 'table-hint';
       hint.textContent = 'Таблица шире экрана: листайте вбок';
@@ -79,16 +81,22 @@
     if (el.classList.contains('table-wrapper')) el.classList.toggle('is-scrollable', over);
   }
 
+  // A line of code that runs on to the right fades out at the edge until the reader has scrolled to its end.
+  function codeEnd(code) {
+    code.toggleAttribute('data-end', code.scrollLeft + code.clientWidth >= code.scrollWidth - 1);
+  }
+
   function watchScroll() {
     var SELECTOR = 'main .table-wrapper, main pre, main pre > code, main .mermaid';
     var seen = [];
-    var check = function () { seen.forEach(checkScroll); };
+    var check = function () { seen.forEach(function (el) { checkScroll(el); if (el.matches('pre > code')) codeEnd(el); }); };
     var ro = window.ResizeObserver ? new ResizeObserver(function () { window.requestAnimationFrame(check); }) : null;
     var collect = function () {
       each(SELECTOR, function (el) {
         if (seen.indexOf(el) >= 0) return;
         seen.push(el);
         if (ro) ro.observe(el);
+        if (el.matches('pre > code')) el.addEventListener('scroll', function () { codeEnd(el); }, { passive: true });
       });
       check();
     };
@@ -336,6 +344,24 @@
     });
   }
 
+  // ---- the revision line on the axis of the text ---------------------------------------------------------------------
+  // The strip under the menu bar is as wide as the page, the text is a column in the middle of it: the version in the strip
+  // starts where the text of the page starts (the CSS has the fallback --strip-axis: the page margin).
+  function stripAxis() {
+    var strip = document.querySelector('.stage-strip');
+    var main = document.getElementById('main-content');
+    if (!strip || !main) return;
+    function set() {
+      var d = main.getBoundingClientRect().left - strip.getBoundingClientRect().left;
+      if (d > 0) strip.style.setProperty('--strip-axis', Math.round(d) + 'px');
+    }
+    set();
+    window.addEventListener('resize', set);
+    window.addEventListener('load', set);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(set);
+    if (window.ResizeObserver) new ResizeObserver(set).observe(main);
+  }
+
   // ---- the first Tab ---------------------------------------------------------------------------------------------------
   // toc.js scrolls the menu to the current chapter, and the browser takes that link as the point where Tab starts: the first
   // Tab then skips the link "К содержимому" and the buttons of the menu bar. Put the starting point back to the top.
@@ -352,7 +378,7 @@
   }
 
   function init() {
-    var steps = [tables, fold, copyButtons, menuButton, report, watchScroll, pageToc, pagerParts, tabStart];
+    var steps = [tables, fold, copyButtons, menuButton, report, watchScroll, pageToc, stripAxis, pagerParts, tabStart];
     steps.forEach(function (step) {
       try { step(); } catch (e) { /* one part failing must not stop the others */ }
     });
