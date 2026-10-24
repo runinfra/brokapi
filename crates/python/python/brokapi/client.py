@@ -293,7 +293,14 @@ class Client:
         return _codec.decode(TradingStatus, await self._call("trading_status", instrument=instrument))
 
     async def schedule(self, exchange: str, start: datetime, end: datetime) -> Schedule:
-        """Trading sessions of an exchange in a period."""
+        """Trading sessions of an exchange in a period.
+
+        What ``exchange`` is depends on the broker. T-Bank: the name of an exchange (``"MOEX"``). BCS: the instrument,
+        ``"TICKER@CLASSCODE"`` (``"SBER@TQBR"``). Finam: the symbol, ``"SBER@MISX"``. ALOR has no schedule
+        (:class:`~brokapi.Unsupported`). A string the broker cannot use is :class:`~brokapi.Config`, nothing is sent.
+
+        ``start`` and ``end`` are timezone-aware ``datetime`` objects (``datetime(..., tzinfo=timezone.utc)``): a naive
+        one raises ``ValueError``."""
         return _codec.decode(Schedule, await self._call("schedule", exchange=exchange, start=start, end=end))
 
     # ------------------------------------------------------------------------------------------ market data
@@ -311,7 +318,11 @@ class Client:
         self, instrument: InstrumentId, timeframe: Timeframe, start: datetime, end: datetime
     ) -> list[Candle]:
         """Bars of a period in one request. A broker accepts only a limited span per request: for a long history use
-        :meth:`candle_pages` or :meth:`load_candles`, which cut the period into windows."""
+        :meth:`candle_pages` or :meth:`load_candles`, which cut the period into windows.
+
+        ``start`` and ``end`` must be timezone-aware ``datetime`` objects, for example
+        ``datetime(2026, 1, 1, tzinfo=timezone.utc)``: a naive ``datetime`` raises ``ValueError`` (which zone would it
+        be?). A period longer than the broker allows is :class:`~brokapi.Rejected`."""
         args = {"instrument": instrument, "timeframe": timeframe, "start": start, "end": end}
         return _codec.decode(list[Candle], await self._call("candles", **args))
 

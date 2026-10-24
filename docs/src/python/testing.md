@@ -3,6 +3,8 @@
 Инструкция. Цель: проверить своего бота без брокера, сети и денег. В пакете есть модуль `brokapi.testing` с имитациями
 брокеров. Каждый пример этой книги идет именно на них.
 
+Имитацию можно запустить и обычным скриптом через `asyncio.run`, не только тестом: так начинается [Быстрый старт](quickstart.md#шаг-2-первая-программа-без-токена-и-без-денег).
+
 ## Что такое имитация
 
 Это настоящий сервер на `127.0.0.1` со случайным портом, который говорит на протоколе брокера: HTTP и WebSocket у БКС, gRPC у
@@ -92,10 +94,12 @@ async def test_the_bot_behind_a_gateway():
 
 В `crates/python/tests/`: чтение и заявки на каждом брокере (`test_brokers.py`), общие правила (`test_bcs.py`), общие счетчики лимитов,
 слияние потоков и история (`test_infrastructure.py`), точные числа и ошибки (`test_codec.py`, `test_errors.py`, `test_numbers.py`),
-примеры книги (`test_examples.py`, `test_rules.py`). Запуск:
+примеры книги (`test_examples.py`, `test_rules.py`, `test_guides.py`). Тесты лежат в клоне репозитория (`git clone https://github.com/runinfra/brokapi`), в пакет `pip install brokapi` они не входят. Запуск:
 
 ```bash
 cd crates/python
-maturin develop        # собрать расширение в текущее окружение
+maturin develop        # собрать расширение в текущее окружение (нужен Rust)
 pytest tests
 ```
+
+Rust не нужен, если поставить из PyPI пакет той же версии, что у клона: `pip install brokapi pytest pytest-asyncio`, и сразу `pytest tests`.
