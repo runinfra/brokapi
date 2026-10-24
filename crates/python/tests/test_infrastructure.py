@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -89,7 +90,10 @@ async def test_merge_ends_when_the_clients_are_closed() -> None:
     async with await testing.mock_bcs() as mock:
         client = await mock.connect()
         await client.close()
-        assert [e async for e in brokapi.merge(client)] == []
+        closed_at = time.time_ns()
+        # The stream ends. An event received before the close (the first portfolio, if it was quick) may still come out of it.
+        events = [e async for e in brokapi.merge(client)]
+        assert all(e.ts.rx_ns <= closed_at for e in events)
 
 
 async def test_a_long_history_is_read_in_windows_without_gaps_or_doubles() -> None:
