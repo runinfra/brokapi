@@ -1,6 +1,6 @@
 [package]
 name = "brokapi-client"
-description = "One account at any broker behind one type: the four connectors, the event channel, the rate limiter and the call by method name (the layer under the Python module and the gateway)."
+description = "One account at any broker behind one type: the five connectors, the event channel, the rate limiter and the call by method name (the layer under the Python module and the gateway)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,8 +14,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-# The library with all four brokers: the client is the place where one type stands for any of them.
-brokapi = { workspace = true, features = ["bcs", "tbank", "finam", "alor"] }
+# The library with all five brokers: the client is the place where one type stands for any of them.
+brokapi = { workspace = true, features = ["bcs", "tbank", "finam", "alor", "bybit"] }
 async-trait.workspace = true
 dotenvy.workspace = true
 serde.workspace = true
@@ -31,3 +31,8 @@ uuid.workspace = true
 [dev-dependencies]
 brokapi-mocks.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
+
+# The live run on a real sub-account: its logic is tested in the file itself, against a fake exchange and the imitation.
+[[example]]
+name = "bybit_live_run"
+test = true

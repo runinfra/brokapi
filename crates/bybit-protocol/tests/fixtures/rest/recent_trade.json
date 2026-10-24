@@ -1,0 +1,44 @@
+{
+ "retCode": 0,
+ "retMsg": "OK",
+ "result": {
+  "category": "linear",
+  "list": [
+   {
+    "execId": "e0751c65-c466-59c3-ab3a-f343638a1d11",
+    "symbol": "BTCUSDT",
+    "price": "81695.30",
+    "size": "0.003",
+    "side": "Buy",
+    "time": "1792760138911",
+    "isBlockTrade": false,
+    "isRPITrade": false,
+    "seq": "831240636793"
+   },
+   {
+    "execId": "e416e9fd-0f2c-53ba-9372-515847acc38a",
+    "symbol": "BTCUSDT",
+    "price": "81695.20",
+    "size": "0.002",
+    "side": "Sell",
+    "time": "1792760137001",
+    "isBlockTrade": false,
+    "isRPITrade": false,
+    "seq": "831240630564"
+   },
+   {
+    "execId": "da7fe3b2-402b-56ee-b514-5c5fa441b59a",
+    "symbol": "BTCUSDT",
+    "price": "81695.20",
+    "size": "0.002",
+    "side": "Sell",
+    "time": "1792760136862",
+    "isBlockTrade": false,
+    "isRPITrade": false,
+    "seq": "831240629923"
+   }
+  ]
+ },
+ "retExtInfo": {},
+ "time": 1792760140173
+}

@@ -13,7 +13,7 @@
 
 | Крейт | Что в нем | Справочник |
 |---|---|---|
-| `brokapi` | главный крейт: все остальное под одним именем, брокеры включаются флагами `bcs`, `tbank`, `finam`, `alor` | [brokapi](api/brokapi/index.html) |
+| `brokapi` | главный крейт: все остальное под одним именем, брокеры включаются флагами `bcs`, `tbank`, `finam`, `alor`, `bybit` | [brokapi](api/brokapi/index.html) |
 | `brokapi-core` | типы, трейты возможностей, ошибки, `Envelope`. С него начинать | [brokapi_core](api/brokapi_core/index.html) |
 | `brokapi-runtime` | лимиты запросов, буферы подписок, сверка, остановка | [brokapi_runtime](api/brokapi_runtime/index.html) |
 | `brokapi-sansio` | ядро коннектора без сети, стенд для записанных кадров | [brokapi_sansio](api/brokapi_sansio/index.html) |
@@ -21,10 +21,12 @@
 | `brokapi-tbank` | коннекторы Т-Банка | [brokapi_tbank](api/brokapi_tbank/index.html) |
 | `brokapi-finam` | коннекторы Финама | [brokapi_finam](api/brokapi_finam/index.html) |
 | `brokapi-alor` | коннекторы АЛОРа | [brokapi_alor](api/brokapi_alor/index.html) |
+| `brokapi-bybit` | коннекторы Bybit | [brokapi_bybit](api/brokapi_bybit/index.html) |
 | `brokapi-bcs-protocol` | нижний слой БКС: REST и WebSocket | [brokapi_bcs_protocol](api/brokapi_bcs_protocol/index.html) |
 | `brokapi-tbank-protocol` | нижний слой Т-Банка: gRPC из официальных `.proto` | [brokapi_tbank_protocol](api/brokapi_tbank_protocol/index.html) |
 | `brokapi-finam-protocol` | нижний слой Финама: gRPC из официальных `.proto`, JWT | [brokapi_finam_protocol](api/brokapi_finam_protocol/index.html) |
 | `brokapi-alor-protocol` | нижний слой АЛОРа: HTTP и WebSocket, все методы описания API | [brokapi_alor_protocol](api/brokapi_alor_protocol/index.html) |
+| `brokapi-bybit-protocol` | нижний слой Bybit: HTTP и WebSocket API V5, подпись запросов | [brokapi_bybit_protocol](api/brokapi_bybit_protocol/index.html) |
 | `brokapi-conformance` | общие сценарии, которые проходит каждый коннектор | [brokapi_conformance](api/brokapi_conformance/index.html) |
 
 Имитации брокеров (`brokapi-mocks`) нужны только тестам и примерам. Они не часть библиотеки, в справочнике их нет.

@@ -18,6 +18,7 @@ use std::sync::OnceLock;
 
 use brokapi::alor::AlorRaw;
 use brokapi::bcs::BcsRaw;
+use brokapi::bybit::BybitRaw;
 use brokapi::core::Error;
 use brokapi::finam::FinamRaw;
 use brokapi::tbank::TbankRaw;
@@ -550,6 +551,69 @@ pub(crate) async fn alor(
                 .await
         })
         .await?
+    };
+    Ok(reply)
+}
+
+// ------------------------------------------------------------------------------------------------- Bybit
+
+/// Bybit: any method of the API by its verb and path, `"GET /v5/market/time"`, `"POST /v5/order/cancel-all"`. The
+/// path is the one of the API description, `args["query"]` is the query of a GET, `args["body"]` the JSON of a POST.
+/// The market data paths (`/v5/market/...`) are read without a signature, every other path is signed with the key.
+pub(crate) async fn bybit(
+    raw: BybitRaw,
+    method: &str,
+    args: &Value,
+    command: bool,
+) -> Result<Value, ClientError> {
+    use brokapi::bybit::protocol::http::client::BybitHttpClient;
+    let args = if args.is_null() { &json!({}) } else { args };
+    let Some((verb, path)) = method.split_once(' ') else {
+        return Err(ClientError::Broker(config(format!(
+            "Bybit has no operation named {method:?}: give the verb and the path, \"GET /v5/market/time\"; nothing was sent"
+        ))));
+    };
+    if !matches!(verb, "GET" | "POST") {
+        return Err(ClientError::Broker(config(format!(
+            "the verb {verb:?} is not supported, use GET or POST"
+        ))));
+    }
+    if !path.starts_with('/') || path.contains(['?', '#']) {
+        return Err(ClientError::Broker(config(
+            "after the verb comes a path that starts with / and has no query (the query goes to args[\"query\"])",
+        )));
+    }
+    let path = path.to_string();
+    let pairs = alor_query(args)?;
+    let body = args
+        .get("body")
+        .cloned()
+        .filter(|b| !b.is_null())
+        .unwrap_or_else(|| json!({}));
+    let public = path.starts_with("/v5/market/");
+    let get = verb == "GET";
+    async fn run(
+        http: BybitHttpClient,
+        get: bool,
+        public: bool,
+        path: String,
+        pairs: Vec<(String, String)>,
+        body: Value,
+    ) -> Result<Value, brokapi::bybit::protocol::error::BybitApiError> {
+        let query: Vec<(&str, String)> =
+            pairs.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+        match (get, public) {
+            (true, true) => http.get_public::<Value>(&path, &query).await,
+            (true, false) => http.get_private::<Value>(&path, &query).await,
+            (false, _) => http.post_command::<Value, Value>(&path, &body).await,
+        }
+    }
+    let reply: Value = if get && !command {
+        raw.call(method, |http| run(http, get, public, path, pairs, body))
+            .await?
+    } else {
+        raw.call_command(method, |http| run(http, get, public, path, pairs, body))
+            .await?
     };
     Ok(reply)
 }

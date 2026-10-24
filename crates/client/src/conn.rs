@@ -42,6 +42,10 @@ pub(crate) enum Conn {
         md: brokapi::alor::MarketDataConnector,
         ud: brokapi::alor::UserDataConnector,
     },
+    Bybit {
+        md: brokapi::bybit::MarketDataConnector,
+        ud: brokapi::bybit::UserDataConnector,
+    },
 }
 
 impl Conn {
@@ -51,6 +55,7 @@ impl Conn {
             Conn::Tbank { md, .. } => md,
             Conn::Finam { md, .. } => md,
             Conn::Alor { md, .. } => md,
+            Conn::Bybit { md, .. } => md,
         }
     }
 
@@ -60,6 +65,7 @@ impl Conn {
             Conn::Tbank { ud, .. } => ud,
             Conn::Finam { ud, .. } => ud,
             Conn::Alor { ud, .. } => ud,
+            Conn::Bybit { ud, .. } => ud,
         }
     }
 
@@ -71,6 +77,7 @@ impl Conn {
             Conn::Tbank { ud, .. } => ud.price_grid().learn(params),
             Conn::Finam { ud, .. } => ud.price_grid().learn(params),
             Conn::Alor { ud, .. } => ud.price_grid().learn(params),
+            Conn::Bybit { ud, .. } => ud.price_grid().learn(params),
         }
     }
 
@@ -86,6 +93,7 @@ impl Conn {
             Conn::Tbank { ud, .. } => crate::raw::tbank(ud.raw(), method, args, command).await,
             Conn::Finam { ud, .. } => crate::raw::finam(ud.raw(), method, args, command).await,
             Conn::Alor { ud, .. } => crate::raw::alor(ud.raw(), method, args, command).await,
+            Conn::Bybit { ud, .. } => crate::raw::bybit(ud.raw(), method, args, command).await,
         }
     }
 
@@ -104,6 +112,10 @@ impl Conn {
                 ud: ud.caps(),
             },
             Conn::Alor { md, ud } => Caps {
+                md: md.caps(),
+                ud: ud.caps(),
+            },
+            Conn::Bybit { md, ud } => Caps {
                 md: md.caps(),
                 ud: ud.caps(),
             },
@@ -126,6 +138,10 @@ impl Conn {
                 (md.shutdown(mode).await, u)
             }
             Conn::Alor { md, ud } => {
+                let u = ud.shutdown(mode).await;
+                (md.shutdown(mode).await, u)
+            }
+            Conn::Bybit { md, ud } => {
                 let u = ud.shutdown(mode).await;
                 (md.shutdown(mode).await, u)
             }
@@ -184,6 +200,20 @@ pub(crate) async fn start(
             let ud =
                 UserDataConnector::start(UserDataConfig::new(cfg, ud_source), limiter, tx).await?;
             Ok(Conn::Alor { md, ud })
+        }
+        BrokerConfig::Bybit(cfg) => {
+            use brokapi::bybit::{
+                MarketDataConfig, MarketDataConnector, UserDataConfig, UserDataConnector,
+            };
+            let md = MarketDataConnector::start(
+                MarketDataConfig::new(cfg.clone(), md_source),
+                limiter.clone(),
+                tx.clone(),
+            )
+            .await?;
+            let ud =
+                UserDataConnector::start(UserDataConfig::new(cfg, ud_source), limiter, tx).await?;
+            Ok(Conn::Bybit { md, ud })
         }
         BrokerConfig::Finam { api, account } => {
             use brokapi::finam::{

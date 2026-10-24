@@ -119,8 +119,12 @@ pub enum InstrumentKind {
     Bond,
     /// An option.
     Option,
-    /// A futures contract.
+    /// A futures contract with an expiry.
     Future,
+    /// A perpetual futures contract: it has no expiry, and its price is held to the spot price by a funding payment
+    /// (Bybit `LinearPerpetual`). Added for the crypto exchange connector: a dated future and a perpetual are
+    /// different instruments for a bot (a perpetual is never rolled, and it pays or earns funding).
+    Perpetual,
     /// An exchange traded fund.
     Etf,
     /// A mutual fund.

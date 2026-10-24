@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# The live run on a real Bybit sub-account that holds about 20 USDT. THIS SPENDS REAL MONEY (a few cents of commission).
+# See crates/client/examples/bybit_live_run.rs for the rules and the steps.
+#
+#   tools/bybit-live-run      needs BYBIT_API_KEY and BYBIT_API_SECRET in the environment or in .env
+#
+# The key must belong to a separate sub-account and must not be allowed to withdraw or transfer. Without the key pair
+# nothing is started: the program names the missing variables and exits with code 2.
+# Exit codes: 0 done, 1 a step failed (the account is cleaned if it can be), 2 the setup is wrong, 3 a rule stopped the
+# run before any order (the balance is not from 15 to 25 USDT, the account is not clean, no contract fits).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export PATH="$HOME/.local/bin:$PATH"
+export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
+
+cargo build --quiet -p brokapi-client --example bybit_live_run
+exec cargo run --quiet -p brokapi-client --example bybit_live_run -- "$@"

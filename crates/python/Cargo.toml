@@ -34,7 +34,7 @@ testing = ["dep:brokapi-mocks", "dep:tempfile"]
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-brokapi = { path = "../..", features = ["bcs", "tbank", "finam", "alor"] }
+brokapi = { path = "../..", features = ["bcs", "tbank", "finam", "alor", "bybit"] }
 brokapi-client = { path = "../client" }
 # Only the library of the gateway, the client of a bot: no clap, no toml, no program `brokapi` (feature `cli`).
 brokapi-gateway = { path = "../gateway", default-features = false }

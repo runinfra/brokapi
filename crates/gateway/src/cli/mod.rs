@@ -234,7 +234,7 @@ pub enum Command {
     },
     /// Read straight from a broker, without a service or a gateway: to try a token, or for a one-off question.
     Direct {
-        /// The broker: bcs, tbank, finam or alor.
+        /// The broker: bcs, tbank, finam, alor or bybit.
         broker: String,
         /// Take the settings and the token of this gateway of the config (its broker must be the same). Without it
         /// the settings come from the environment variables of the library (BCS_REFRESH_TOKEN, TBANK_TOKEN, ...) and

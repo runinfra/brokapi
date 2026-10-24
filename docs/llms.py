@@ -34,10 +34,10 @@ BASE_URL = os.environ.get("BROKAPI_DOCS_URL", "https://brokapi.ru/docs").rstrip(
 TITLE = "brokapi"
 SUMMARY_LINE = (
     "brokapi - единый интерфейс к торговым API: один и тот же код бота работает с любым брокером. Начинаем с API брокеров "
-    "российского рынка (БКС, Т-Банк, Финам, АЛОР), дальше другие брокеры и биржевые протоколы. Писать можно на Rust (ядро) или на "
+    "российского рынка (БКС, Т-Банк, Финам, АЛОР) и технический коннектор к API Bybit, дальше другие брокеры и биржевые протоколы. Писать можно на Rust (ядро) или на "
     "Python (пакет brokapi, тонкая обертка над ядром): рыночные данные, заявки, сверка со счетом, лимиты запросов. Третий "
     "путь - Gateway, программа brokapi: служба держит связь со счетами за все боты (gRPC для любого языка, один счетчик лимитов), "
-    "команды ею управляют и читают счет (вывод --json). Стадия: открытая альфа, на настоящих счетах не запускалось: для боевого счета сначала прочитайте before-live.md и agents/unverified.md. Документация: %s/" % BASE_URL
+    "команды ею управляют и читают счет (вывод --json). Стадия: открытая альфа. Bybit проверен вживую, БКС, Т-Банк, Финам и АЛОР проверены только на имитациях, на настоящих счетах не запускались: для боевого счета сначала прочитайте before-live.md и agents/unverified.md. Правило 0: боевой токен выдает человек, первую боевую заявку ставят только с его слова (agent-contract.md). Документация: %s/" % BASE_URL
 )
 INTRO = """Как пользоваться этим набором. Книга написана по задачам и состоит из общей части (как устроено, брокеры, \
 ошибки, события, контракт для агентов) и разделов продуктов: Rust, Python, Gateway (программа brokapi: служба и команды). Писать код можно на Rust или на \
@@ -62,7 +62,8 @@ SECTION_NOTES = {}
 DESCRIPTIONS = {
     "README.md": "Что такое brokapi, выбор пути (Rust, Python, Gateway) и статус каждого, три главных правила",
     "install.md": "Установка: cargo add brokapi и pip install brokapi, самая свежая версия из репозитория, проверка и частые ошибки",
-    "before-live.md": "Перед боевым счетом: с чего начать на настоящем счете, песочницы, первая заявка",
+    "before-live.md": "Перед боевым счетом: правило 0 (токен и первая боевая заявка только от человека), с чего начать на настоящем счете, песочницы, первая заявка",
+    "emergency-stop.md": "Аварийная остановка бота: что делает close(), что делает brokapi cancel-all (снимает и защитные стопы), как снять только заявки бота и оставить позицию защищенной",
     "architecture.md": "Карта: коннекторы MD и UD, счетчик лимитов, канал событий и три круга механики со схемами",
     "streams.md": "Круг событий: подписки, режимы буфера (Conflate, DropNewest, Lossless), Overflow, Resync, обрывы",
     "orders.md": "Круг команд: cid, порядок проверок place, исходы команды, почему нет автоповтора, машина состояний заявки",
@@ -72,10 +73,11 @@ DESCRIPTIONS = {
     "brokers/README.md": "Сравнение брокеров: идентификаторы инструментов, единицы, особенности",
     "brokers/bcs.md": "БКС: токены, идентификаторы, единицы количества, ограничения",
     "brokers/tbank.md": "Т-Банк: песочница, счета, лоты, uid инструмента, ограничения",
-    "brokers/finam.md": "Финам: секрет и JWT, символ SBER@MISX, количество в штуках, нет replace",
+    "brokers/finam.md": "Финам: секрет и JWT, где взять секрет и счет, первый день без песочницы, символ SBER@MISX, количество в штуках, нет replace",
     "brokers/alor.md": "АЛОР: refresh-токен, портфель и биржа, тикер и режим торгов, лоты и штуки, X-REQID и cid, нет расписания",
+    "brokers/bybit.md": "Bybit: подключение к API: ключ и секрет, демо-счет, категория linear (спота нет), BTCUSDT@linear, количество в базовой монете, нет replace, стоп-заявки, что проверено вживую и что нет",
     "rust/index.md": "Раздел Rust (работает сейчас, альфа): как подключить крейт и таблица инструкций по задачам",
-    "rust/quickstart.md": "Rust: от нуля до первой заявки на БКС, Т-Банке, Финаме и АЛОРе: подключение, сверка, подписки, заявка, отмена",
+    "rust/quickstart.md": "Rust: от нуля до первой заявки на БКС, Т-Банке, Финаме, АЛОРе и Bybit: подключение, сверка, подписки, заявка, отмена",
     "rust/howto-trading-bot.md": "Rust: как написать торгового бота на событиях: стакан, сигнал, заявка, статусы, выход из Unknown, остановка",
     "rust/howto-infrastructure.md": "Rust: как собрать один процесс на несколько брокеров и счетов: журнал заявок в файле, рестарт со сверкой",
     "rust/howto-research.md": "Rust: как собрать исследовательский движок: выгрузка длинной истории свечей по лимитам, запись и воспроизведение событий",
@@ -86,12 +88,13 @@ DESCRIPTIONS = {
     "rust/raw.md": "Rust: любой метод брокера через raw(): те же токен, адрес и счетчик лимитов",
     "rust/mocks.md": "Rust: как тестировать код против имитаций брокеров brokapi-mocks: запуск, настройка, подтверждение исхода",
     "python/index.md": "Раздел Python (работает, альфа): как поставить пакет, таблица инструкций, что умеет первая версия, чего нет",
-    "python/quickstart.md": "Python: от нуля до первой заявки на БКС: connect, чтение, reconcile, place, cancel, close. Т-Банк и Финам тем же кодом",
+    "python/quickstart.md": "Python: от нуля до первой заявки: имитация без токена и денег (mock_tbank), песочница Т-Банка, потом боевой счет (БКС, Т-Банк, Финам, АЛОР, Bybit): connect, чтение, reconcile, place, cancel, close",
+    "python/from-tinkoff-investments.md": "Python: переезд с tinkoff-investments: таблица соответствий (лоты и штуки, uid, cid, один поток событий, обязательный reconcile, Quotation и Decimal, стоп-заявки), абзац про QUIK",
     "python/howto-trading-bot.md": "Python: как написать торгового бота на событиях: журнал, сверка, исходы place, Unknown, Overflow, остановка",
     "python/howto-infrastructure.md": "Python: несколько брокеров и счетов в одном процессе: общий limiter, merge событий, журнал в файле, рестарт со сверкой",
     "python/howto-history.md": "Python: выгрузка длинной истории свечей в файлы по лимитам брокера с продолжением после сбоя (candle_pages)",
     "python/testing.md": "Python: тесты против имитаций brokapi.testing (mock_bcs, mock_tbank, mock_finam, mock_alor), fill, ожидание событий без sleep",
-    "python/stop-orders.md": "Python: стоп-заявки (place_stop, cancel_stop, active_stop_orders), потерянный ответ Unknown, различия брокеров",
+    "python/stop-orders.md": "Python: стоп-заявки (place_stop, cancel_stop, active_stop_orders), потерянный ответ Unknown, рецепт «бот со стопом: старт и рестарт», различия брокеров",
     "python/raw.md": "Python: любой метод API брокера через client.raw(имя, словарь): Т-Банк и Финам по имени из .proto, БКС по таблице или пути, квота, command=True, чего raw не делает",
     "python/record.md": "Python: запись потока событий в файл и проигрыш (brokapi.record: EnvelopeWriter, EnvelopeReader, replay, LogError), формат файла как у Rust",
     "python/design.md": "Объяснение: как пакет Python связан с ядром, мост tokio и asyncio, Decimal, ошибки, отличия от Rust",
@@ -121,13 +124,14 @@ AGENT_PAGES = {
 
 # the reference (rustdoc) pages for the "Справочник API" section of llms.txt
 API_CRATES = [
-    ("brokapi", "Главный крейт: все под одним именем, брокеры включаются флагами bcs, tbank, finam, alor"),
+    ("brokapi", "Главный крейт: все под одним именем, брокеры включаются флагами bcs, tbank, finam, alor, bybit"),
     ("brokapi_core", "Типы, трейты возможностей (OrderExecutor, OrderBookSource...), события, ошибки. С него начинать"),
     ("brokapi_runtime", "Лимиты (BrokerLimiter), PriceGrid, history (CandlePages), record (запись и воспроизведение событий)"),
     ("brokapi_bcs", "Коннекторы БКС и их настройка"),
     ("brokapi_tbank", "Коннекторы Т-Банка и их настройка"),
     ("brokapi_finam", "Коннекторы Финама и их настройка"),
     ("brokapi_alor", "Коннекторы АЛОРа и их настройка"),
+    ("brokapi_bybit", "Коннекторы Bybit и их настройка"),
 ]
 
 INCLUDE = re.compile(r"\{\{#include\s+([^\s}:]+)(?::([^\s}]+))?\s*\}\}")
@@ -217,8 +221,8 @@ def read_redirects(docs):
 
 # pages of the common part that hold for Python as they do for Rust (the code on them is in tabs or does not depend on the language)
 PYTHON_COMMON = [
-    "install.md", "agent-contract.md", "architecture.md", "streams.md", "orders.md", "reconcile.md", "limits.md", "numbers.md",
-    "errors.md", "events.md", "brokers/README.md", "brokers/bcs.md", "brokers/tbank.md", "brokers/finam.md", "brokers/alor.md",
+    "install.md", "agent-contract.md", "emergency-stop.md", "architecture.md", "streams.md", "orders.md", "reconcile.md", "limits.md", "numbers.md",
+    "errors.md", "events.md", "brokers/README.md", "brokers/bcs.md", "brokers/tbank.md", "brokers/finam.md", "brokers/alor.md", "brokers/bybit.md",
     "coverage.md", "before-live.md", "changelog.md",
 ]
 
@@ -234,8 +238,8 @@ def python_index(sections, book):
         "# brokapi для Python",
         "",
         "> Пакет brokapi для Python (pip install brokapi, Python 3.10+) - тонкая обертка над ядром brokapi на Rust: БКС, Т-Банк, "
-        "Финам, АЛОР. События через async for, деньги и цены через decimal.Decimal, ошибки с теми же именами и текстом, что у ядра "
-        "(Unknown, Rejected, RateLimited, NotReconciled, Degraded). Стадия: открытая альфа, на настоящих счетах не запускалось: для боевого счета сначала прочитайте before-live.md и agents/unverified.md. "
+        "Финам, АЛОР, Bybit. События через async for, деньги и цены через decimal.Decimal, ошибки с теми же именами и текстом, что у ядра "
+        "(Unknown, Rejected, RateLimited, NotReconciled, Degraded). Стадия: открытая альфа. Bybit проверен вживую, БКС, Т-Банк, Финам и АЛОР только на имитациях: для боевого счета сначала прочитайте before-live.md и agents/unverified.md. "
         "Ставится с PyPI: pip install brokapi. Самая свежая версия - из репозитория (pip install \"git+https://github.com/runinfra/brokapi#subdirectory=crates/python\", нужен Rust). Документация: %s/" % BASE_URL,
         "",
         "Как писать код. 1) Прочитайте \"Контракт для агентов\": обязательные правила одни для любого языка (торговля только после "

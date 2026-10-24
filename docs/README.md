@@ -79,7 +79,7 @@ tools/check            # проверка перед пушем: fmt, clippy, т
   `BROKAPI_LIVE=1` (настройка берется из `.env`).
 - **`tools/check`** (bash) гоняет семь шагов по порядку: `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --doc --workspace`,
-  `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam,brokapi/alor`, `cargo build --examples`, `mdbook build docs`.
+  `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam,brokapi/alor,brokapi/bybit`, `cargo build --examples`, `mdbook build docs`.
   Останавливается на первом упавшем. Запускайте перед пушем. CI пока нет, этот скрипт и есть проверка.
 - **`docs/build.sh`** собирает книгу в `docs/book.new`, rustdoc (`cargo doc --no-deps` без `brokapi-mocks` и служебных
   крейтов) кладет в `docs/book.new/api/`, и только после успеха подменяет `docs/book`. Сломанная сборка оставляет прежнюю
@@ -92,7 +92,7 @@ tools/check            # проверка перед пушем: fmt, clippy, т
 Что важно знать:
 
 - **Покрытие API** - страница книги `coverage.md`. Она собирается скриптом по коду и руками не правится.
-- **Предупреждение «на настоящих счетах не запускали»** стоит в трех местах: страница `before-live.md`, врезка в быстрых
+- **Предупреждение «на настоящих счетах не запускали»** (про БКС, Т-Банк, Финам и АЛОР: Bybit проверен вживую) стоит в трех местах: страница `before-live.md`, врезка в быстрых
   стартах и раздел «Что учесть» на странице брокера там, где это меняет код бота. В остальных местах - «по документации
   брокера» или ничего.
 - **Схемы Mermaid** рисуются в браузере из локальных файлов `docs/mermaid.min.js` и `docs/mermaid-init.js`, сеть

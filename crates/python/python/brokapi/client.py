@@ -49,6 +49,7 @@ _BROKERS = {
     "tbank": {"token", "sandbox", "account_id", "endpoint", "app_name"},
     "finam": {"secret", "account_id", "endpoint"},
     "alor": {"refresh_token", "portfolio", "exchange", "test", "endpoint"},
+    "bybit": {"api_key", "api_secret", "env", "category", "settle_coin", "recv_window_ms", "endpoint"},
 }
 
 
@@ -265,9 +266,10 @@ class Client:
     async def instrument(self, ticker: str, board: Optional[str] = None) -> InstrumentId:
         """The instrument for a ticker, in the form the broker wants.
 
-        ``board`` is the class code of BCS, T-Bank and ALOR (default ``TQBR``) or the MIC of Finam (default ``MISX``).
-        ``"SBER@TQBR"`` works as the ticker too. BCS, Finam and ALOR build the id from the text. T-Bank looks it up in
-        its directory (one request) and raises :class:`~brokapi.Rejected` with code ``not_found`` if there is none.
+        ``board`` is the class code of BCS, T-Bank and ALOR (default ``TQBR``), the MIC of Finam (default ``MISX``) or the
+        category of Bybit (``linear``, the only one). ``"SBER@TQBR"`` works as the ticker too, and so does
+        ``"BTCUSDT@linear"``. BCS, Finam, ALOR and Bybit build the id from the text. T-Bank looks it up in its directory
+        (one request) and raises :class:`~brokapi.Rejected` with code ``not_found`` if there is none.
         """
         return _codec.decode(InstrumentId, await self._call("instrument", ticker=ticker, board=board))
 
@@ -292,7 +294,14 @@ class Client:
         return _codec.decode(TradingStatus, await self._call("trading_status", instrument=instrument))
 
     async def schedule(self, exchange: str, start: datetime, end: datetime) -> Schedule:
-        """Trading sessions of an exchange in a period."""
+        """Trading sessions of an exchange in a period.
+
+        What ``exchange`` is depends on the broker. T-Bank: the name of an exchange (``"MOEX"``). BCS: the instrument,
+        ``"TICKER@CLASSCODE"`` (``"SBER@TQBR"``). Finam: the symbol, ``"SBER@MISX"``. ALOR and Bybit have no schedule
+        (:class:`~brokapi.Unsupported`). A string the broker cannot use is :class:`~brokapi.Config`, nothing is sent.
+
+        ``start`` and ``end`` are timezone-aware ``datetime`` objects (``datetime(..., tzinfo=timezone.utc)``): a naive
+        one raises ``ValueError``."""
         return _codec.decode(Schedule, await self._call("schedule", exchange=exchange, start=start, end=end))
 
     # ------------------------------------------------------------------------------------------ market data
@@ -310,7 +319,11 @@ class Client:
         self, instrument: InstrumentId, timeframe: Timeframe, start: datetime, end: datetime
     ) -> list[Candle]:
         """Bars of a period in one request. A broker accepts only a limited span per request: for a long history use
-        :meth:`candle_pages` or :meth:`load_candles`, which cut the period into windows."""
+        :meth:`candle_pages` or :meth:`load_candles`, which cut the period into windows.
+
+        ``start`` and ``end`` must be timezone-aware ``datetime`` objects, for example
+        ``datetime(2026, 1, 1, tzinfo=timezone.utc)``: a naive ``datetime`` raises ``ValueError`` (which zone would it
+        be?). A period longer than the broker allows is :class:`~brokapi.Rejected`."""
         args = {"instrument": instrument, "timeframe": timeframe, "start": start, "end": end}
         return _codec.decode(list[Candle], await self._call("candles", **args))
 
@@ -636,6 +649,21 @@ async def connect(
 ) -> Client: ...
 @overload
 async def connect(
+    broker: Literal["bybit"],
+    *,
+    api_key: Optional[str] = None,
+    api_secret: Optional[str] = None,
+    env: Optional[str] = None,
+    category: Optional[str] = None,
+    settle_coin: Optional[str] = None,
+    recv_window_ms: Optional[int] = None,
+    endpoint: Optional[str] = None,
+    name: Optional[str] = None,
+    limiter: Optional[Limiter] = None,
+    event_buffer: int = 8192,
+) -> Client: ...
+@overload
+async def connect(
     broker: Literal["tbank"],
     *,
     token: Optional[str] = None,
@@ -681,6 +709,11 @@ async def connect(
     - ``alor``: ``refresh_token`` (``ALOR_REFRESH_TOKEN``, required), ``portfolio`` (``ALOR_PORTFOLIO``, required when
       the account has several portfolios), ``exchange`` (``ALOR_EXCHANGE``, ``MOEX`` or ``SPBX``, default ``MOEX``),
       ``test`` (``ALOR_TEST``, ``true``: the test contour of the broker, with a test account).
+    - ``bybit``: ``api_key`` (``BYBIT_API_KEY``, required) and ``api_secret`` (``BYBIT_API_SECRET``, required), ``env``
+      (``BYBIT_ENV``: ``"mainnet"`` is the default, ``"demo"`` is the demo account with virtual money, ``"testnet"``). The
+      demo account has a key pair of its own, read from ``BYBIT_DEMO_API_KEY`` and ``BYBIT_DEMO_API_SECRET``. Also
+      ``category`` (``BYBIT_CATEGORY``, only ``"linear"``: USDT perpetuals and futures), ``settle_coin``
+      (``BYBIT_SETTLE_COIN``, ``"USDT"``), ``recv_window_ms`` and ``endpoint``.
 
     ``name`` labels the events (``<name>-md``, ``<name>-ud``) and defaults to the broker. Give each client of a
     process its own name. ``limiter`` puts this client on the rate limit counter of another one (see
@@ -688,10 +721,10 @@ async def connect(
     rule of each subscription.
 
     Raises :class:`~brokapi.Config` for a missing or wrong setting, :class:`~brokapi.Transport` when the broker cannot
-    be reached or refuses the token. BCS has no sandbox: the account is real. ALOR has a test contour (``test=True``).
+    be reached or refuses the token. BCS has no sandbox: the account is real. ALOR has a test contour (``test=True``), Bybit a demo account (``env="demo"``).
     """
     if broker not in _BROKERS:
-        raise ValueError(f"unknown broker {broker!r}: use 'bcs', 'tbank', 'finam' or 'alor'")
+        raise ValueError(f"unknown broker {broker!r}: use 'bcs', 'tbank', 'finam', 'alor' or 'bybit'")
     unknown = set(settings) - _BROKERS[broker]
     if unknown:
         raise TypeError(

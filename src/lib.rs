@@ -5,7 +5,7 @@
 //!
 //! ```toml
 //! [dependencies]
-#![doc = concat!(" brokapi = { version = \"", env!("CARGO_PKG_VERSION"), "\", features = [\"bcs\"] }   # or \"tbank\", \"finam\", \"alor\"")]
+#![doc = concat!(" brokapi = { version = \"", env!("CARGO_PKG_VERSION"), "\", features = [\"bcs\"] }   # or \"tbank\", \"finam\", \"alor\", \"bybit\"")]
 //! ```
 //!
 //! | Path | What is there | Feature |
@@ -17,6 +17,7 @@
 //! | `tbank` | T-Bank connectors; `tbank::protocol` is the gRPC client | `tbank` |
 //! | `finam` | Finam connectors; `finam::protocol` is the gRPC client | `finam` |
 //! | `alor` | ALOR connectors; `alor::protocol` is the HTTP and WebSocket client | `alor` |
+//! | `bybit` | Bybit connectors; `bybit::protocol` is the HTTP and WebSocket client | `bybit` |
 //!
 //! The guide and the rules for orders are in the book:
 //! <https://brokapi.ru/docs/>. The stage is open alpha: the interface can change before the beta. Before you trade with real
@@ -68,4 +69,12 @@ pub mod alor {
     pub use brokapi_alor::*;
     /// The ALOR HTTP and WebSocket client (lower layer).
     pub use brokapi_alor_protocol as protocol;
+}
+
+/// Bybit connectors and the Bybit wire client.
+#[cfg(feature = "bybit")]
+pub mod bybit {
+    pub use brokapi_bybit::*;
+    /// The Bybit HTTP and WebSocket client (lower layer).
+    pub use brokapi_bybit_protocol as protocol;
 }

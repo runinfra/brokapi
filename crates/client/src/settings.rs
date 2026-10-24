@@ -3,6 +3,7 @@
 
 use brokapi::alor::protocol::config::{AlorConfig, AlorEnv};
 use brokapi::bcs::protocol::config::BcsConfig;
+use brokapi::bybit::protocol::config::{BybitConfig, BybitEnv, Category};
 use brokapi::core::Error;
 use brokapi::finam::FinamApiConfig;
 use brokapi::tbank::protocol::TbankConfig;
@@ -107,6 +108,52 @@ impl Settings {
         }
         if let Some(exchange) = self.text("exchange", "ALOR_EXCHANGE") {
             cfg = cfg.with_exchange(exchange);
+        }
+        Ok(cfg)
+    }
+
+    /// The Bybit connector configuration: `api_key`, `api_secret`, `env` (`mainnet`, `demo` or `testnet`, the main
+    /// exchange by default), `category`, `settle_coin`, `recv_window_ms`, `endpoint`.
+    ///
+    /// The variables are `BYBIT_API_KEY` and `BYBIT_API_SECRET`, and for the demo contour `BYBIT_DEMO_API_KEY` and
+    /// `BYBIT_DEMO_API_SECRET` (a demo key is not valid on the main host). `BYBIT_ENV` is the variable of `env`.
+    pub fn bybit(&self) -> Result<BybitConfig, Error> {
+        let env = match self.text("env", "BYBIT_ENV") {
+            None => BybitEnv::Mainnet,
+            Some(name) => BybitEnv::parse(&name).ok_or_else(|| {
+                config(format!(
+                    "env {name:?} is not known: use mainnet, demo or testnet"
+                ))
+            })?,
+        };
+        let (key_var, secret_var) = if env == BybitEnv::Demo {
+            ("BYBIT_DEMO_API_KEY", "BYBIT_DEMO_API_SECRET")
+        } else {
+            ("BYBIT_API_KEY", "BYBIT_API_SECRET")
+        };
+        let key = self.text("api_key", key_var).ok_or_else(|| {
+            config(format!(
+                "{key_var} is not set (pass api_key=... or set the variable)"
+            ))
+        })?;
+        let secret = self.text("api_secret", secret_var).ok_or_else(|| {
+            config(format!(
+                "{secret_var} is not set (pass api_secret=... or set the variable)"
+            ))
+        })?;
+        let mut cfg = match self.endpoint(None) {
+            Some(url) => BybitConfig::for_mock(key, secret, url),
+            None => BybitConfig::new(key, secret).with_env(env),
+        };
+        if let Some(name) = self.text("category", "BYBIT_CATEGORY") {
+            cfg.category = Category::parse(&name)
+                .ok_or_else(|| config(format!("category {name:?} is not served: use linear")))?;
+        }
+        if let Some(coin) = self.text("settle_coin", "BYBIT_SETTLE_COIN") {
+            cfg.settle_coin = coin;
+        }
+        if let Some(ms) = self.0.get("recv_window_ms").and_then(Value::as_u64) {
+            cfg = cfg.with_recv_window_ms(ms);
         }
         Ok(cfg)
     }

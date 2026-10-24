@@ -528,6 +528,11 @@ impl MarketDataConnector {
             | InstrumentKind::MutualFund => "FOND",
             InstrumentKind::Future | InstrumentKind::Option => "FORTS",
             InstrumentKind::Currency => "CURR",
+            InstrumentKind::Perpetual => {
+                return Err(Error::Unsupported {
+                    capability: "find_perpetuals_by_kind".into(),
+                });
+            }
             InstrumentKind::Other => {
                 return Err(Error::Unsupported {
                     capability: "find_other_by_kind".into(),

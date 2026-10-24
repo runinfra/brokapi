@@ -1,6 +1,6 @@
 //! One account at any broker of the library, behind one type.
 //!
-//! The four connectors (BCS, T-Bank, Finam, ALOR) each have their own types. [`Client`] is the layer above them: it
+//! The connectors of the brokers each have their own types. [`Client`] is the layer above them: it
 //! starts the market data and the account connector of the broker you name, owns the event channel and the rate
 //! limiter, and offers the same calls whichever broker it is.
 //!

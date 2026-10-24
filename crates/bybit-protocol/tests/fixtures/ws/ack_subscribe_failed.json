@@ -1,0 +1,7 @@
+{
+ "success": false,
+ "ret_msg": "error:handler not found,topic:orderbook.50.NOSUCHUSDT",
+ "conn_id": "db292vlk7i88rq0er1og-5im3f",
+ "req_id": "bad",
+ "op": "subscribe"
+}

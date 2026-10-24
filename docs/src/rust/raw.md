@@ -11,6 +11,7 @@
 | БКС | `BcsRaw` | `BcsHttpClient` (REST), плюс `connect_ws` для WebSocket-каналов |
 | Финам | `FinamRaw` | `FinamApi` с клиентами всех сервисов |
 | АЛОР | `AlorRaw` | `AlorHttpClient` (REST, по методу на операцию описания API), плюс `connect_ws` и `connect_cws` для каналов WebSocket |
+| Bybit | `BybitRaw` | `BybitHttpClient` (REST API V5 с подписью: методы заявок, чтений, `amend_order` и другие), плюс `connect_ws` для каналов WebSocket |
 
 Сколько методов брокера есть и какие из них доступны только так: [Покрытие API](../coverage.md). Это не недоделка,
 а способ дать все остальное, не раздувая общий интерфейс.

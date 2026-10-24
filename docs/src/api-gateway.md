@@ -1118,6 +1118,7 @@ One event of the broker connection. `seq` counts the events of this gateway from
 | `INSTRUMENT_KIND_MUTUAL_FUND` | 6 |  |
 | `INSTRUMENT_KIND_CURRENCY` | 7 |  |
 | `INSTRUMENT_KIND_OTHER` | 8 |  |
+| `INSTRUMENT_KIND_PERPETUAL` | 9 |  |
 
 <a id="brokapi-gateway-v1-tradingavailability"></a>
 

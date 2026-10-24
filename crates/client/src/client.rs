@@ -31,19 +31,29 @@ pub enum Broker {
     Finam,
     /// ALOR.
     Alor,
+    /// Bybit (USDT perpetuals and futures, API V5).
+    Bybit,
 }
 
 impl Broker {
-    /// All four, in the order of the documentation.
-    pub const ALL: [Broker; 4] = [Broker::Bcs, Broker::Tbank, Broker::Finam, Broker::Alor];
+    /// All of them, in the order of the documentation.
+    pub const ALL: [Broker; 5] = [
+        Broker::Bcs,
+        Broker::Tbank,
+        Broker::Finam,
+        Broker::Alor,
+        Broker::Bybit,
+    ];
 
-    /// The lower case name used in settings, in logs and on the wire: `"bcs"`, `"tbank"`, `"finam"`, `"alor"`.
+    /// The lower case name used in settings, in logs and on the wire: `"bcs"`, `"tbank"`, `"finam"`, `"alor"`,
+    /// `"bybit"`.
     pub const fn as_str(self) -> &'static str {
         match self {
             Broker::Bcs => "bcs",
             Broker::Tbank => "tbank",
             Broker::Finam => "finam",
             Broker::Alor => "alor",
+            Broker::Bybit => "bybit",
         }
     }
 }
@@ -63,6 +73,7 @@ impl FromStr for Broker {
             "tbank" => Ok(Broker::Tbank),
             "finam" => Ok(Broker::Finam),
             "alor" => Ok(Broker::Alor),
+            "bybit" => Ok(Broker::Bybit),
             other => Err(Error::Config(ConfigError::Message(format!(
                 "unknown broker {other:?}: use \"bcs\", \"tbank\", \"finam\" or \"alor\""
             )))),
@@ -86,6 +97,8 @@ pub enum BrokerConfig {
     },
     /// ALOR.
     Alor(brokapi::alor::protocol::config::AlorConfig),
+    /// Bybit.
+    Bybit(brokapi::bybit::protocol::config::BybitConfig),
 }
 
 impl BrokerConfig {
@@ -96,6 +109,7 @@ impl BrokerConfig {
             BrokerConfig::Tbank(_) => Broker::Tbank,
             BrokerConfig::Finam { .. } => Broker::Finam,
             BrokerConfig::Alor(_) => Broker::Alor,
+            BrokerConfig::Bybit(_) => Broker::Bybit,
         }
     }
 
@@ -106,6 +120,7 @@ impl BrokerConfig {
             Broker::Bcs => BrokerConfig::Bcs(settings.bcs()?),
             Broker::Tbank => BrokerConfig::Tbank(settings.tbank()?),
             Broker::Alor => BrokerConfig::Alor(settings.alor()?),
+            Broker::Bybit => BrokerConfig::Bybit(settings.bybit()?),
             Broker::Finam => {
                 let (api, account) = settings.finam()?;
                 BrokerConfig::Finam { api, account }
@@ -129,6 +144,7 @@ impl Limiter {
             Broker::Bcs => BrokerLimiter::new(&brokapi::bcs::limits::default_limits()),
             Broker::Tbank => BrokerLimiter::new(&brokapi::tbank::limits::default_limits()),
             Broker::Alor => BrokerLimiter::new(&brokapi::alor::limits::default_limits()),
+            Broker::Bybit => BrokerLimiter::new(&brokapi::bybit::limits::default_limits()),
             Broker::Finam => BrokerLimiter::new(&brokapi::finam::limits::default_limits()),
         };
         Self { broker, limiter }
@@ -186,7 +202,7 @@ pub(crate) struct Inner {
 ///
 /// A `Client` is a cheap handle (a clone is the same connection). It implements the traits of `brokapi-core`
 /// ([`OrderExecutor`](brokapi::core::OrderExecutor), [`PortfolioSource`](brokapi::core::PortfolioSource), [`OrderBookSource`](brokapi::core::OrderBookSource) and the rest), so code written against them runs on
-/// any of the four brokers, and it can be called by method name with JSON ([`Client::call`]), which is how the Python
+/// any of the five brokers, and it can be called by method name with JSON ([`Client::call`]), which is how the Python
 /// module and the gateway reach it.
 ///
 /// After [`Client::close`] every typed call fails with [`Error::ShuttingDown`] and a call by name with
@@ -360,8 +376,8 @@ impl Client {
         conn.raw(method, args, command).await
     }
 
-    /// The instrument of a ticker. BCS, Finam and ALOR build it from the text, T-Bank looks it up in its directory.
-    /// `board` is the trading board (`TQBR` by default, `MISX` for Finam); `"SBER@TQBR"` names both in one text.
+    /// The instrument of a ticker. BCS, Finam, ALOR and Bybit build it from the text, T-Bank looks it up in its directory.
+    /// `board` is the trading board (`TQBR` by default, `MISX` for Finam, the category `linear` for Bybit); `"SBER@TQBR"` names both in one text.
     pub async fn instrument(
         &self,
         ticker: &str,
@@ -388,6 +404,10 @@ impl Client {
             Broker::Alor => Ok(brokapi::alor::util::instrument_id(
                 ticker,
                 board.unwrap_or("TQBR"),
+            )),
+            Broker::Bybit => Ok(brokapi::bybit::util::instrument_id(
+                ticker,
+                board.unwrap_or("linear"),
             )),
             Broker::Finam => Ok(brokapi::finam::util::instrument_from_symbol(&format!(
                 "{ticker}@{}",

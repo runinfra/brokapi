@@ -805,6 +805,9 @@ fn instrument_type(kind: brokapi_core::InstrumentKind) -> Result<&'static str, E
         K::Etf => Ok("ETF"),
         K::MutualFund => Ok("MUTUAL_FUNDS"),
         K::Currency => Ok("CURRENCY"),
+        K::Perpetual => Err(Error::Unsupported {
+            capability: "find_perpetuals_by_kind".into(),
+        }),
         K::Option => Err(Error::Unsupported {
             capability: "find_options_by_kind".into(),
         }),

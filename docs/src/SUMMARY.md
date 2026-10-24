@@ -6,6 +6,7 @@
 
 - [Установка](install.md)
 - [Перед боевым счетом](before-live.md)
+- [Аварийная остановка бота](emergency-stop.md)
 
 # Как устроено
 
@@ -23,6 +24,7 @@
   - [Т-Банк](brokers/tbank.md)
   - [Финам](brokers/finam.md)
   - [АЛОР](brokers/alor.md)
+  - [Bybit](brokers/bybit.md)
 
 # Rust
 
@@ -42,6 +44,7 @@
 
 - [brokapi для Python](python/index.md)
   - [Быстрый старт на Python](python/quickstart.md)
+  - [Если вы пришли с tinkoff-investments](python/from-tinkoff-investments.md)
   - [Торговый бот на событиях, Python](python/howto-trading-bot.md)
   - [Несколько брокеров и счетов, Python](python/howto-infrastructure.md)
   - [История свечей](python/howto-history.md)

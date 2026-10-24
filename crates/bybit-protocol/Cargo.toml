@@ -1,0 +1,47 @@
+[package]
+name = "brokapi-bybit-protocol"
+description = "Low-level Bybit API V5 wire protocol: HTTP + WebSocket client, serde models, request signing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+documentation.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+dotenvy.workspace = true
+futures-util.workspace = true
+kanal.workspace = true
+reqwest.workspace = true
+# HMAC-SHA256 of the request signature. The TLS stack of reqwest already uses ring, so no new crate is pulled in.
+ring = "0.17"
+rust_decimal = { workspace = true, features = ["serde-with-arbitrary-precision"] }
+serde.workspace = true
+# arbitrary_precision: numbers of the broker's JSON are read as text, so 81695.30 is never an f64.
+serde_json = { workspace = true, features = ["arbitrary_precision"] }
+serde_urlencoded.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros", "net"] }
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+rust_decimal_macros.workspace = true
+proptest.workspace = true
+# Doctests run against the in-process Bybit imitation (a dev-dependency cycle is fine for doctests).
+brokapi-mocks.workspace = true
+
+[features]
+default = []
+# Level-3 integration tests against the live Bybit API (never run in CI).
+integration-live = []
+
+[lib]
+name = "brokapi_bybit_protocol"
+path = "src/lib.rs"

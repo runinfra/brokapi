@@ -63,7 +63,7 @@ rm -rf "$TARGET/doc"
 # brokapi-mocks is for tests and examples: not on the site. The root crate brokapi needs its broker features.
 # The reference opens in the light theme in the brokapi colors (docs/rustdoc-brokapi.css), takes the theme of the book from
 # localStorage (docs/reference/head.html) and has the thin bar of the book on top (docs/reference/bar.html).
-RUSTDOCFLAGS="${RUSTDOCFLAGS:--D warnings --default-theme=light --extend-css $(pwd)/docs/rustdoc-brokapi.css --html-in-header $(pwd)/docs/reference/head.html --html-before-content $(pwd)/docs/reference/bar.html}" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam,brokapi/alor \
+RUSTDOCFLAGS="${RUSTDOCFLAGS:--D warnings --default-theme=light --extend-css $(pwd)/docs/rustdoc-brokapi.css --html-in-header $(pwd)/docs/reference/head.html --html-before-content $(pwd)/docs/reference/bar.html}" cargo doc --no-deps --workspace --features brokapi/bcs,brokapi/tbank,brokapi/finam,brokapi/alor,brokapi/bybit \
     --exclude brokapi-mocks
 rm -rf "$NEW/api"
 mkdir -p "$NEW/api"

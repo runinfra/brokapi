@@ -65,8 +65,8 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-  CONN[brokapi-bcs, brokapi-tbank, brokapi-finam, brokapi-alor<br>коннекторы: склеивают слои]
-  PROTO[brokapi-bcs-protocol, brokapi-tbank-protocol, brokapi-finam-protocol, brokapi-alor-protocol<br>клиент брокера: сеть]
+  CONN[brokapi-bcs, brokapi-tbank, brokapi-finam,<br>brokapi-alor, brokapi-bybit<br>коннекторы: склеивают слои]
+  PROTO[brokapi-bcs-protocol, brokapi-tbank-protocol,<br>brokapi-finam-protocol, brokapi-alor-protocol,<br>brokapi-bybit-protocol<br>клиент брокера: сеть]
   RT[brokapi-runtime<br>лимиты, буферы, шлюз,<br>очередь по бумаге, сверка]
   SANS[brokapi-sansio<br>ядро без сети: разбор,<br>машина состояний заявки]
   CORE[brokapi-core<br>общие типы и трейты:<br>то, что видит бот]
