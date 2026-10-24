@@ -105,10 +105,14 @@ def read_proto(path):
             continue
         top = stack[-1]
         if top["kind"] == "service":
-            m = re.match(r"^rpc\s+(\w+)\((\w[\w.]*)\)\s+returns\s+\((stream\s+)?(\w[\w.]*)\);", line)
+            m = re.match(r"^rpc\s+(\w+)\((\.?\w[\w.]*)\)\s+returns\s+\((stream\s+)?(\.?\w[\w.]*)\);", line)
             if m:
+                # A type written with the full name (`.brokapi.gateway.v1.Portfolio`, where a call of the same name hides the
+                # type) is shown by its short name, as the other calls are.
+                own = "." + package + "."
+                short_name = lambda t: t[len(own):] if t.startswith(own) else t.lstrip(".")
                 top["calls"].append(
-                    {"name": m.group(1), "request": m.group(2), "reply": m.group(4), "stream": bool(m.group(3)), "doc": doc(), "group": group}
+                    {"name": m.group(1), "request": short_name(m.group(2)), "reply": short_name(m.group(4)), "stream": bool(m.group(3)), "doc": doc(), "group": group}
                 )
             continue
         if top["kind"] == "enum":

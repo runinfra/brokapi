@@ -18,6 +18,8 @@ package brokapi.gateway.v1;
 
 import "brokapi/gateway/v1/types.proto";
 
+// A call named like the type it returns (Portfolio, OrderBook, TradingParams, TradingStatus, Schedule) names the type
+// with its full name: inside the service the short name is the call, and protoc and buf refuse it. tools/proto-check.
 service Gateway {
   // ---- orders: a command is never repeated by the gateway, and it runs to its end if you stop waiting
 
@@ -38,7 +40,7 @@ service Gateway {
 
   // ---- account
 
-  rpc Portfolio(AccountRequest) returns (Portfolio);
+  rpc Portfolio(AccountRequest) returns (.brokapi.gateway.v1.Portfolio);
   rpc Positions(AccountRequest) returns (PositionsResponse);
   rpc Balances(AccountRequest) returns (BalancesResponse);
   rpc Executions(ExecutionsRequest) returns (ExecutionsResponse);
@@ -47,7 +49,7 @@ service Gateway {
 
   // ---- market data
 
-  rpc OrderBook(OrderBookRequest) returns (OrderBook);
+  rpc OrderBook(OrderBookRequest) returns (.brokapi.gateway.v1.OrderBook);
   rpc LastTrades(LastTradesRequest) returns (LastTradesResponse);
   rpc Candles(CandlesRequest) returns (CandlesResponse);
   rpc SubscribeOrderBook(SubscribeInstrumentRequest) returns (SubscribeResponse);
@@ -66,9 +68,9 @@ service Gateway {
   rpc ResolveInstrument(ResolveInstrumentRequest) returns (InstrumentId);
   rpc Find(FindRequest) returns (FindResponse);
   rpc GetInstrument(InstrumentRequest) returns (Instrument);
-  rpc TradingParams(InstrumentRequest) returns (TradingParams);
-  rpc TradingStatus(InstrumentRequest) returns (TradingStatus);
-  rpc Schedule(ScheduleRequest) returns (Schedule);
+  rpc TradingParams(InstrumentRequest) returns (.brokapi.gateway.v1.TradingParams);
+  rpc TradingStatus(InstrumentRequest) returns (.brokapi.gateway.v1.TradingStatus);
+  rpc Schedule(ScheduleRequest) returns (.brokapi.gateway.v1.Schedule);
 
   // ---- the rest
 

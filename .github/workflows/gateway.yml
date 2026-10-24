@@ -17,6 +17,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/gateway.yml"
+      - "tools/proto-check"
 
 permissions:
   contents: read
@@ -44,3 +45,22 @@ jobs:
       # Every test binary runs even when one fails, so that one run shows all that is broken on a system.
       - name: Test the gateway, the service and the commands
         run: cargo test --locked -p brokapi-gateway --no-fail-fast
+
+  # The .proto files with the tools of other languages: protoc and a Go client made by the command of the book.
+  proto:
+    name: proto with protoc and Go
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: Install protoc and the Go plugins
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq protobuf-compiler
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Compile the .proto files and build a Go client
+        run: tools/proto-check

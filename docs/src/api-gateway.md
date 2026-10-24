@@ -43,6 +43,8 @@ is in `kind`.
 
 <a id="brokapi-gateway-v1-gateway"></a>
 
+A call named like the type it returns (Portfolio, OrderBook, TradingParams, TradingStatus, Schedule) names the type with its full name: inside the service the short name is the call, and protoc and buf refuse it. tools/proto-check.
+
 **Orders: a command is never repeated by the gateway, and it runs to its end if you stop waiting**
 
 | Вызов | Запрос | Ответ | Описание |

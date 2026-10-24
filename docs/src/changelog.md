@@ -2,6 +2,13 @@
 
 Что появилось в библиотеке и что поменять в своем коде. Новое сверху.
 
+## Следующая версия
+
+- **Файлы `.proto` гейтвея собираются `protoc` и `buf`.** В 0.1.0-alpha.5 и раньше `protoc` отказывался от `gateway.proto`: вызовы `Portfolio`, `OrderBook`, `TradingParams`,
+  `TradingStatus` и `Schedule` закрывали одноименные типы ответа (`"Portfolio" is not a message type`). Сборка на Rust этого не замечала. Теперь тип ответа у них записан полным именем,
+  сообщения и номера полей не менялись, клиенты на Rust и Python пересобирать не нужно. Клиент на другом языке берите из `main` или из следующего выпуска.
+  Проверка `tools/proto-check` собирает файлы `protoc` и клиент на Go на каждой правке. В [Бот на другом языке](gateway/bots.md#бот-на-другом-языке) - команда генерации для Go.
+
 ## 0.1.0-alpha.5: Bybit
 
 - **Bybit: пятый коннектор.** Крейты `brokapi-bybit` и `brokapi-bybit-protocol`, флаг `bybit` в главном крейте, `brokapi.connect("bybit")` и `mock_bybit()` в Python,
