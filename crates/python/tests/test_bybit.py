@@ -12,8 +12,14 @@ from conftest import next_event
 Pair = tuple["brokapi.testing.MockBroker", brokapi.Client]
 
 
-async def test_reading_gives_decimals_and_a_perpetual(bybit: Pair) -> None:
-    _, client = bybit
+@pytest.fixture(params=["bybit", "gw_bybit"])
+def pair(request: pytest.FixtureRequest) -> Pair:
+    """The connection in this process, and the same imitation through a gateway."""
+    return request.getfixturevalue(request.param)
+
+
+async def test_reading_gives_decimals_and_a_perpetual(pair: Pair) -> None:
+    _, client = pair
     perp = await client.instrument("MOCKUSDT")
     assert str(perp) == "MOCKUSDT@linear"
     book = await client.order_book(perp, depth=5)
@@ -32,8 +38,8 @@ async def test_reading_gives_decimals_and_a_perpetual(bybit: Pair) -> None:
     assert portfolio.positions[0].qty == Decimal("0.500")
 
 
-async def test_place_events_cancel(bybit: Pair) -> None:
-    _, client = bybit
+async def test_place_events_cancel(pair: Pair) -> None:
+    _, client = pair
     perp = await client.instrument("MOCKUSDT")
     params = await client.trading_params(perp)
     await client.subscribe_order_state()
@@ -53,8 +59,8 @@ async def test_place_events_cancel(bybit: Pair) -> None:
     assert await client.active_orders() == []
 
 
-async def test_the_replace_of_the_shared_interface_is_not_offered(bybit: Pair) -> None:
-    _, client = bybit
+async def test_the_replace_of_the_shared_interface_is_not_offered(pair: Pair) -> None:
+    _, client = pair
     perp = await client.instrument("MOCKUSDT")
     params = await client.trading_params(perp)
     await client.reconcile([])
@@ -65,8 +71,8 @@ async def test_the_replace_of_the_shared_interface_is_not_offered(bybit: Pair) -
         await client.replace(cid=brokapi.new_cid(), original_cid=cid, price=Decimal("51.00"))
 
 
-async def test_a_quantity_off_the_step_is_refused_before_anything_is_sent(bybit: Pair) -> None:
-    _, client = bybit
+async def test_a_quantity_off_the_step_is_refused_before_anything_is_sent(pair: Pair) -> None:
+    _, client = pair
     perp = await client.instrument("MOCKUSDT")
     await client.reconcile([])
     with pytest.raises(brokapi.Rejected) as caught:
@@ -74,8 +80,8 @@ async def test_a_quantity_off_the_step_is_refused_before_anything_is_sent(bybit:
     assert caught.value.code == "invalid_qty"
 
 
-async def test_fill_comes_as_execution_and_order_state(bybit: Pair) -> None:
-    mock, client = bybit
+async def test_fill_comes_as_execution_and_order_state(pair: Pair) -> None:
+    mock, client = pair
     perp = await client.instrument("MOCKUSDT")
     params = await client.trading_params(perp)
     await client.subscribe_order_state()
@@ -95,8 +101,8 @@ async def test_fill_comes_as_execution_and_order_state(bybit: Pair) -> None:
     assert (await client.order_state(cid)).state.kind is brokapi.OrderStateKind.FILLED
 
 
-async def test_a_stop_order_is_a_conditional_order_listed_apart(bybit: Pair) -> None:
-    _, client = bybit
+async def test_a_stop_order_is_a_conditional_order_listed_apart(pair: Pair) -> None:
+    _, client = pair
     perp = await client.instrument("MOCKUSDT")
     params = await client.trading_params(perp)
     await client.reconcile([])
@@ -115,8 +121,8 @@ async def test_a_stop_order_is_a_conditional_order_listed_apart(bybit: Pair) -> 
     assert await client.active_stop_orders() == []
 
 
-async def test_the_raw_call_reaches_any_method_of_the_exchange(bybit: Pair) -> None:
-    _, client = bybit
+async def test_the_raw_call_reaches_any_method_of_the_exchange(pair: Pair) -> None:
+    _, client = pair
     time = await client.raw("GET /v5/market/time")
     assert int(time["timeSecond"]) > 1_700_000_000
 

@@ -1,6 +1,6 @@
 """Fixtures: a connected client for each broker, against the in-process imitations. No network, no money.
 
-`bcs`, `tbank`, `finam`, `alor` connect to the broker directly. `gw_bcs`, ... give the same pair through a gateway that runs in
+`bcs`, `tbank`, `finam`, `alor`, `bybit` connect to the broker directly. `gw_bcs`, ... give the same pair through a gateway that runs in
 the test process on the same imitation: a scenario that takes `pair` runs on both roads.
 """
 
@@ -64,6 +64,12 @@ async def gw_bcs() -> AsyncIterator[tuple[testing.MockBroker, brokapi.Client]]:
 @pytest_asyncio.fixture
 async def gw_alor() -> AsyncIterator[tuple[testing.MockBroker, brokapi.Client]]:
     async for pair in _through_a_gateway(testing.mock_alor):
+        yield pair
+
+
+@pytest_asyncio.fixture
+async def gw_bybit() -> AsyncIterator[tuple[testing.MockBroker, brokapi.Client]]:
+    async for pair in _through_a_gateway(testing.mock_bybit):
         yield pair
 
 
