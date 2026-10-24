@@ -107,7 +107,11 @@ flowchart TB
 
 ## Как проверить
 
+Для этой команды нужен клон репозитория: тесты и примеры в пакет `pip install brokapi` не входят. Версия пакета должна быть той же, что у клона.
+
 ```bash
+git clone https://github.com/runinfra/brokapi && cd brokapi
+pip install brokapi pytest pytest-asyncio
 cd crates/python
 pytest tests/test_examples.py -k trading_bot
 ```

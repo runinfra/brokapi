@@ -53,9 +53,16 @@ class Placement:
 
 
 async def protect_once(
-    client: brokapi.Client, instrument: brokapi.InstrumentId, stop_price: Decimal, wait: float = 5.0
+    client: brokapi.Client,
+    instrument: brokapi.InstrumentId,
+    stop_price: Decimal,
+    wait: float = 5.0,
+    *,
+    qty: Decimal | None = None,
 ) -> Placement:
-    """Puts the stop; when the answer is lost, looks for it at the broker instead of putting it again."""
+    """Puts the stop; when the answer is lost, looks for it at the broker instead of putting it again.
+
+    `qty` is in units of the instrument; without it the stop covers one lot."""
     cid = brokapi.new_cid()
     side = brokapi.Side.SELL
     try:
@@ -64,7 +71,7 @@ async def protect_once(
             instrument=instrument,
             side=side,
             kind=brokapi.StopOrderKind.STOP_LOSS,
-            qty=(await client.trading_params(instrument)).lot_size,
+            qty=qty if qty is not None else (await client.trading_params(instrument)).lot_size,
             stop_price=stop_price,
         )
     except brokapi.Rejected:

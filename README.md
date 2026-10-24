@@ -16,7 +16,7 @@ Rust: один крейт, брокеры включаются флагами, �
 cargo add brokapi --features bcs   # или tbank, finam, alor, можно несколько
 ```
 
-Python 3.10 или новее (готовые пакеты для Linux x86_64, macOS и Windows):
+Python 3.10 или новее (готовые пакеты для Linux x86_64 и aarch64, macOS и Windows):
 
 ```bash
 pip install brokapi
