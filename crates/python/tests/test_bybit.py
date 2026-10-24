@@ -50,7 +50,7 @@ async def test_place_events_cancel(pair: Pair) -> None:
     ack = await client.place(cid=cid, instrument=perp, side=brokapi.Side.BUY, qty=params.min_qty, price=price)
     assert ack.cid == cid and ack.broker_id
     seen = await next_event(client, brokapi.OrderSnapshot, cid=cid)
-    assert seen.source == "bybit-ud"
+    assert seen.source.endswith("-ud")  # "bybit-ud" direct, the name of the gateway through one
     assert (await client.order_state(cid)).price == price
     assert [o.cid for o in await client.active_orders()] == [cid]
 
