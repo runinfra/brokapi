@@ -614,6 +614,21 @@ fn book_levels(symbol: &str, depth: usize) -> (Vec<Value>, Vec<Value>) {
     (bids, asks)
 }
 
+/// The ticker row of the exchange for one symbol, around the mid price of the mock.
+fn ticker_json(symbol: &str) -> Value {
+    let m = mid(symbol);
+    json!({
+        "symbol": symbol, "lastPrice": m.to_string(), "indexPrice": m.to_string(), "markPrice": m.to_string(),
+        "prevPrice24h": m.to_string(), "price24hPcnt": "0.000057", "highPrice24h": (m + Decimal::ONE).to_string(),
+        "lowPrice24h": (m - Decimal::ONE).to_string(), "prevPrice1h": m.to_string(), "openInterest": "62852.792",
+        "openInterestValue": "5134856892.80", "singleOpenInterest": "31426.396", "singleOpenInterestValue": "2567428446.40",
+        "turnover24h": "3610728051.8099", "volume24h": "44298.2080", "fundingRate": "0.00005253",
+        "nextFundingTime": "1792771200000", "predictedDeliveryPrice": "", "basisRate": "", "deliveryFeeRate": "",
+        "deliveryTime": "0", "ask1Size": "6.499", "bid1Price": (m - Decimal::new(1, 2)).to_string(),
+        "ask1Price": (m + Decimal::new(1, 2)).to_string(), "bid1Size": "1.945", "basis": "", "preOpenPrice": "",
+        "preQty": "", "curPreListingPhase": "", "fundingIntervalHour": "8", "basisRateYear": "", "fundingCap": "0.00333"})
+}
+
 fn positions_json() -> Vec<Value> {
     vec![json!({
         "positionIdx": 0, "symbol": "BTCUSDT", "side": "Buy", "size": "0.500", "avgPrice": "81000.50",
@@ -794,21 +809,15 @@ async fn handle_http(
                 );
             }
             "/v5/market/tickers" => {
-                let symbol = param(&q, "symbol").unwrap_or("");
-                if instrument_row(symbol).is_none() {
-                    return refuse(10001, "params error: symbol invalid");
-                }
-                let m = mid(symbol);
-                return ok(json!({"category": "linear", "list": [{
-                    "symbol": symbol, "lastPrice": m.to_string(), "indexPrice": m.to_string(), "markPrice": m.to_string(),
-                    "prevPrice24h": m.to_string(), "price24hPcnt": "0.000057", "highPrice24h": (m + Decimal::ONE).to_string(),
-                    "lowPrice24h": (m - Decimal::ONE).to_string(), "prevPrice1h": m.to_string(), "openInterest": "62852.792",
-                    "openInterestValue": "5134856892.80", "singleOpenInterest": "31426.396", "singleOpenInterestValue": "2567428446.40",
-                    "turnover24h": "3610728051.8099", "volume24h": "44298.2080", "fundingRate": "0.00005253",
-                    "nextFundingTime": "1792771200000", "predictedDeliveryPrice": "", "basisRate": "", "deliveryFeeRate": "",
-                    "deliveryTime": "0", "ask1Size": "6.499", "bid1Price": (m - Decimal::new(1, 2)).to_string(),
-                    "ask1Price": (m + Decimal::new(1, 2)).to_string(), "bid1Size": "1.945", "basis": "", "preOpenPrice": "",
-                    "preQty": "", "curPreListingPhase": "", "fundingIntervalHour": "8", "basisRateYear": "", "fundingCap": "0.00333"}]}));
+                // Without a symbol the exchange answers every instrument of the category.
+                let rows: Vec<Value> = match param(&q, "symbol") {
+                    Some(symbol) if instrument_row(symbol).is_none() => {
+                        return refuse(10001, "params error: symbol invalid");
+                    }
+                    Some(symbol) => vec![ticker_json(symbol)],
+                    None => INSTRUMENTS.iter().map(|i| ticker_json(i.0)).collect(),
+                };
+                return ok(json!({"category": "linear", "list": rows}));
             }
             "/v5/market/recent-trade" => {
                 let symbol = param(&q, "symbol").unwrap_or("");
