@@ -427,6 +427,12 @@ async fn a_bybit_gateway_gets_its_key_and_its_secret_from_two_files() {
     assert_eq!(checked["ok"], true);
     env.up().await;
     env.wait_all_running(&["by"]).await;
+    #[cfg(unix)]
+    for dir in [env.state.clone(), env.gateway_dir("by")] {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "{}", dir.display());
+    }
     let status = env.json(&["status", "by"]).await;
     assert_eq!(status["health"]["state"], "ready");
     // The key and the secret reached the connector: the gateway started, which needs a signed read of the wallet.
@@ -1250,6 +1256,19 @@ async fn logs_top_and_init() {
     let out = env.run_with(&[], &["init", path.to_str().unwrap()]).await;
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert!(path.exists() && fresh.path().join("sub").join("new.state").is_dir());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(fresh.path().join("sub").join("new.state"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o777,
+            0o700,
+            "the state directory holds keys: only its user opens it"
+        );
+    }
     let again = env.run_with(&[], &["init", path.to_str().unwrap()]).await;
     assert_eq!(again.code, 1, "does not replace a file");
     assert_eq!(

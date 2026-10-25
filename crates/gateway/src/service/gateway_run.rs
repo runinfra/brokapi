@@ -99,7 +99,7 @@ async fn run(config: &Config, name: &str) -> Result<(), GatewayRunError> {
 
     let layout = config.layout();
     let dir = layout.gateway_dir(name);
-    std::fs::create_dir_all(&dir).map_err(|source| GatewayRunError::Io {
+    super::config::make_private_dir(&dir).map_err(|source| GatewayRunError::Io {
         what: format!("making {}", dir.display()),
         source,
     })?;

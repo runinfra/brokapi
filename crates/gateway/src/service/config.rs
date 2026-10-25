@@ -455,6 +455,16 @@ pub struct Config {
     pub gateways: Vec<GatewaySpec>,
 }
 
+/// Makes a directory of the state (and the missing ones above it) that only the user can open: it holds the access keys
+/// of the service and of the gateways. A directory that is already there keeps its rights.
+pub fn make_private_dir(path: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(path)
+}
+
 /// The places a config is looked for when `-c` and `BROKAPI_CONFIG` say nothing.
 pub fn default_config_paths() -> Vec<PathBuf> {
     let mut paths = vec![PathBuf::from("brokapi.toml")];

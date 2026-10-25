@@ -12,7 +12,9 @@ use super::fmt::{self, duration, gateways_table, is_tool, table};
 use super::read::{self, Read};
 use super::{Cli, Command, DirectCommand, Fail, GatewayCommand, Res};
 use crate::RemoteClient;
-use crate::service::config::{Config, ConfigError, GatewaySpec, find_config, sample};
+use crate::service::config::{
+    Config, ConfigError, GatewaySpec, find_config, make_private_dir, sample,
+};
 use crate::service::{
     CallError, Service, ServiceClient, ServiceError, ServiceOptions, admin, logs, pb, proc,
     registry, run_gateway,
@@ -218,7 +220,7 @@ fn init(ctx: &Ctx, path: Option<PathBuf>, force: bool) -> Res {
         .map_err(|e| failed(&format!("writing {}", path.display()), e))?;
     let abs = std::path::absolute(&path).unwrap_or(path.clone());
     let state_dir = abs.parent().unwrap_or(Path::new(".")).join(&state_name);
-    std::fs::create_dir_all(&state_dir)
+    make_private_dir(&state_dir)
         .map_err(|e| failed(&format!("making {}", state_dir.display()), e))?;
     ctx.emit(
         &json!({"config": abs, "state_dir": state_dir}),
@@ -245,7 +247,7 @@ async fn check(ctx: &Ctx, offline: bool, names: &[String]) -> Res {
     }
     let mut rows = Vec::new();
     let mut problems = 0;
-    let state_ok = std::fs::create_dir_all(&config.state_dir).is_ok() && {
+    let state_ok = make_private_dir(&config.state_dir).is_ok() && {
         let probe = config.state_dir.join(".write-test");
         let ok = std::fs::write(&probe, b"").is_ok();
         let _ = std::fs::remove_file(probe);
@@ -415,7 +417,8 @@ async fn up(ctx: &Ctx, detach: bool) -> Res {
     if detach {
         return up_detached(ctx, &config, &exe).await;
     }
-    std::fs::create_dir_all(config.layout().logs())
+    make_private_dir(&config.state_dir)
+        .and_then(|()| std::fs::create_dir_all(config.layout().logs()))
         .map_err(|e| Fail::Failed(format!("cannot make {}: {e}", config.state_dir.display())))?;
     let _ = logs::init(
         Some((&config.layout().service_log(), &config.service.logs)),

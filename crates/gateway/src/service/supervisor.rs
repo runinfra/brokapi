@@ -151,7 +151,8 @@ impl Service {
     pub async fn start(config: Config, options: ServiceOptions) -> Result<Self, ServiceError> {
         let layout = config.layout();
         let state_dir = layout.root.clone();
-        std::fs::create_dir_all(layout.logs())
+        super::config::make_private_dir(&state_dir)
+            .and_then(|()| std::fs::create_dir_all(layout.logs()))
             .map_err(io(format!("making {}", state_dir.display())))?;
         let me = std::process::id();
         let occupant = registry::find(&state_dir)
