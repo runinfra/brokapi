@@ -78,18 +78,16 @@ WantedBy=multi-user.target
 
 ## Мониторинг
 
-`brokapi ps` отвечает кодом 0, даже когда гейтвей в состоянии `failed`: код говорит, что команда выполнилась, а не что все здоровы. Для проверки берите `brokapi ps --json`.
-Это список гейтвеев, у каждого `name`, `state` (`starting`, `running`, `stopped`, `failed`), `restarts` и `last_error`. Проверка для cron или системы мониторинга, которая
-выходит с кодом 1 и печатает гейтвеи, которые не работают (нужен `jq`):
+`brokapi ps` отвечает кодом 0 при любых состояниях гейтвеев: код говорит, что команда выполнилась, а не что все здоровы. Для проверки есть `brokapi ps --check`.
+Он печатает ту же таблицу и выходит с кодом 1, если хоть один гейтвей не в состоянии `running`, с кодом 3, если службы нет. Строка ошибки называет гейтвеи, которые не работают
+(`not running: bcs-main failed`). Этого достаточно для cron и системы мониторинга:
 
 ```sh
-#!/bin/sh
-out=$(brokapi -c /etc/brokapi/brokapi.toml ps --json) || { echo "the brokapi service is not running"; exit 1; }
-bad=$(printf '%s' "$out" | jq -r '.[] | select(.state != "running") | "\(.name) \(.state) \(.last_error)"')
-[ -z "$bad" ] || { echo "$bad"; exit 1; }
+brokapi -c /etc/brokapi/brokapi.toml ps --check >/dev/null || echo "brokapi: a gateway is down"
 ```
 
-Гейтвей с `autostart = false`, который вы держите остановленным, эта проверка тоже назовет: уберите его из проверки или поправьте условие.
+Гейтвей с `autostart = false`, который вы держите остановленным, `--check` тоже считает неработающим. Если нужна своя проверка, берите `brokapi ps --json`: это список гейтвеев,
+у каждого `name`, `state` (`starting`, `running`, `restarting`, `stopping`, `stopped`, `failed`), `restarts`, `last_error` и `last_error_age_s` (сколько секунд назад).
 
 Что еще стоит смотреть:
 
@@ -194,7 +192,8 @@ brokapi.state/                  каталог состояния службы (
 | `the state directory ... is used by another service (pid ..., config ...)` | Для этого каталога служба уже работает | `brokapi down` для нее или другой `state_dir` в этом конфиге |
 | `a service already runs for ... (see brokapi services)` | `up -d` на уже запущенный конфиг | Ничего: служба работает |
 | `no service is running for ...` (код 3) | Службы нет | `brokapi up -d` |
-| `the gateway ... is not running. Start the service with ..., or the gateway with brokapi start ...` (код 4) | Гейтвей не запущен (остановлен, `failed`, `autostart = false`) | `brokapi ps`, потом `brokapi start <гейтвей>` |
+| `the gateway ... is starting: try again in a few seconds` или `is restarting` (код 4) | Служба запускает гейтвей, он еще сверяет журнал или ждет паузы перед перезапуском | Подождать, `brokapi ps` покажет `running`. Если `restarting` не проходит, причина в `Last error` |
+| `the gateway ... is stopped` или `is failed: start it with brokapi start ...` (код 4) | Гейтвей остановлен, упал 5 раз за минуту или у него `autostart = false` | `brokapi logs <гейтвей>`, затем `brokapi start <гейтвей>` |
 | `the service refused the access key` | Ключ в `service.key` не от этой службы | Команда ходит в тот же `state_dir`, что и служба? Проверьте `-c` |
 | `the service ended at once (...)` и хвост журнала | Служба при `up -d` сразу вышла | Хвост журнала называет причину, чаще всего это конфиг |
 | `... has mode 644: the access key must be readable by its owner only (chmod 600)` | У `access.key` чужие права, гейтвей с ним не стартует | `chmod 600` на файл |

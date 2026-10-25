@@ -31,6 +31,17 @@ pub fn table(rows: &[Vec<String>]) -> String {
 }
 
 /// `3s`, `5m02s`, `2h13m`, `1d04h`; `-` for nothing.
+/// The last error with how long ago it was: "3m05s ago: exited with code 1: ...". Empty when there is none.
+pub fn last_error(g: &pb::GatewayInfo) -> String {
+    if g.last_error.is_empty() {
+        String::new()
+    } else if g.last_error_age_ns == 0 {
+        g.last_error.clone()
+    } else {
+        format!("{} ago: {}", duration(g.last_error_age_ns), g.last_error)
+    }
+}
+
 pub fn duration(ns: u64) -> String {
     if ns == 0 {
         return "-".into();
@@ -142,7 +153,7 @@ pub fn gateways_table(list: &[pb::GatewayInfo], wide: bool) -> String {
                 memory(g.memory_bytes)
             });
         }
-        row.push(g.last_error.clone());
+        row.push(last_error(g));
         rows.push(row);
     }
     table(&rows)

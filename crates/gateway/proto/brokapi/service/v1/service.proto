@@ -91,6 +91,8 @@ message GatewayInfo {
   string state_dir = 15;
   // What the gateway says of itself. Not set when it does not answer.
   optional brokapi.gateway.v1.HealthResponse health = 16;
+  // How long ago last_error happened. 0 when there is none.
+  uint64 last_error_age_ns = 17;
 }
 
 message StopRequest {

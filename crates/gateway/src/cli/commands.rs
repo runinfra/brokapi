@@ -36,7 +36,7 @@ pub(super) async fn run(cli: Cli) -> Res {
         Command::Up { detach } => up(&ctx, detach).await,
         Command::Down { leave_gateways } => down(&ctx, leave_gateways).await,
         Command::Services => services(&ctx).await,
-        Command::Ps => ps(&ctx).await,
+        Command::Ps { check } => ps(&ctx, check).await,
         Command::Top { interval, count } => top(&ctx, interval, count).await,
         Command::Start { wait, names } => start(&ctx, &names, wait, false).await,
         Command::Restart { wait, names } => start(&ctx, &names, wait, true).await,
@@ -153,6 +153,7 @@ fn gateway_json(g: &pb::GatewayInfo) -> Value {
         "uptime_s": g.uptime_ns as f64 / 1e9,
         "restarts": g.restarts,
         "last_error": g.last_error,
+        "last_error_age_s": (g.last_error_age_ns != 0).then_some(g.last_error_age_ns as f64 / 1e9),
         "restart_in_s": (g.restart_in_ns != 0).then_some(g.restart_in_ns as f64 / 1e9),
         "cpu_percent": g.cpu_percent,
         "memory_bytes": g.memory_bytes,
@@ -579,7 +580,7 @@ async fn services(ctx: &Ctx) -> Res {
     Ok(())
 }
 
-async fn ps(ctx: &Ctx) -> Res {
+async fn ps(ctx: &Ctx, check: bool) -> Res {
     let config = ctx.config()?;
     let client = ctx.service(&config).await?;
     let list = client
@@ -596,6 +597,14 @@ async fn ps(ctx: &Ctx) -> Res {
             }
         },
     );
+    let down: Vec<String> = list
+        .iter()
+        .filter(|g| g.state != "running")
+        .map(|g| format!("{} {}", g.name, g.state))
+        .collect();
+    if check && !down.is_empty() {
+        return Err(Fail::Failed(format!("not running: {}", down.join(", "))));
+    }
     Ok(())
 }
 
@@ -851,7 +860,7 @@ fn status_text(g: &pb::GatewayInfo) -> String {
     );
     kv("restarts", g.restarts.to_string());
     if !g.last_error.is_empty() {
-        kv("last error", g.last_error.clone());
+        kv("last error", fmt::last_error(g));
     }
     if g.restart_in_ns > 0 {
         kv("restart in", duration(g.restart_in_ns));
@@ -1007,14 +1016,49 @@ async fn connect_gateway(ctx: &Ctx, config: &Config, name: &str) -> Result<Remot
             }
         )));
     }
-    admin::connect_gateway(&config.layout(), name, admin::TOOL_BOT)
-        .await
-        .map_err(|_| {
+    match admin::connect_gateway(&config.layout(), name, admin::TOOL_BOT).await {
+        Ok(client) => Ok(client),
+        Err(_) => Err(why_not_reachable(ctx, config, name).await),
+    }
+}
+
+/// Why a gateway did not answer, in the words of its state at the service: a gateway that is starting is waited for,
+/// not started again.
+async fn why_not_reachable(ctx: &Ctx, config: &Config, name: &str) -> Fail {
+    let state = match ctx.service(config).await {
+        Err(fail) => return fail,
+        Ok(service) => service
+            .list(vec![name.to_owned()])
+            .await
+            .ok()
+            .and_then(|list| list.into_iter().next()),
+    };
+    match state {
+        Some(g) if matches!(g.state.as_str(), "starting" | "restarting") => {
             Fail::NoGateway(format!(
-                "the gateway {name} is not running. Start the service with `{}`, or the gateway with `brokapi start {name}`",
-                ctx.up_hint(config)
+                "the gateway {name} is {}: try again in a few seconds (`brokapi ps` shows when it runs){}",
+                g.state,
+                if g.last_error.is_empty() {
+                    String::new()
+                } else {
+                    format!(". Last error: {}", fmt::last_error(&g))
+                }
             ))
-        })
+        }
+        Some(g) if matches!(g.state.as_str(), "stopped" | "failed") => Fail::NoGateway(format!(
+            "the gateway {name} is {}: start it with `brokapi start {name}`{}",
+            g.state,
+            if g.last_error.is_empty() {
+                String::new()
+            } else {
+                format!(". Last error: {}", fmt::last_error(&g))
+            }
+        )),
+        _ => Fail::NoGateway(format!(
+            "the gateway {name} is not running. Start the service with `{}`, or the gateway with `brokapi start {name}`",
+            ctx.up_hint(config)
+        )),
+    }
 }
 
 async fn through_gateway(

@@ -1149,9 +1149,28 @@ async fn cancel_all_clears_the_account_and_stop_can_do_it_first() {
     );
     // Plain `stop` leaves orders alone.
     env.run(&["start", "bcs-main", "--wait"]).await;
+    let healthy = env.run(&["ps", "--check"]).await;
+    assert_eq!(healthy.code, 0, "{}", healthy.stderr);
     let bot = env.bot("bcs-main", "bot-1").await;
     place(&bot, "1.0").await;
     env.json(&["stop", "bcs-main"]).await;
+    // `ps` answers 0 whatever the states, `ps --check` 1 when a gateway does not run.
+    assert_eq!(env.run(&["ps"]).await.code, 0);
+    let down = env.run(&["ps", "--check"]).await;
+    assert_eq!(down.code, 1);
+    assert!(
+        down.stderr.contains("not running: bcs-main stopped"),
+        "{}",
+        down.stderr
+    );
+    // A command for a stopped gateway says how to start it, not to start the service that runs.
+    let out = env.run(&["portfolio", "bcs-main"]).await;
+    assert_eq!(out.code, 4);
+    assert!(
+        out.stderr.contains("is stopped") && out.stderr.contains("brokapi start bcs-main"),
+        "{}",
+        out.stderr
+    );
     let direct = env
         .json(&["direct", "bcs", "orders", "--from", "bcs-main"])
         .await;
@@ -1377,11 +1396,11 @@ async fn mistakes_have_clear_messages_and_exit_codes() {
     assert_eq!(only.code, 0, "{}{}", only.stdout, only.stderr);
     assert_eq!(env.run(&["check", "nope"]).await.code, 4);
 
-    // Commands that need a gateway, when it is not running.
+    // Commands that need a gateway, when there is no service and so no gateway.
     let out = env.run(&["portfolio", "bcs-main"]).await;
-    assert_eq!(out.code, 4);
+    assert_eq!(out.code, 3);
     assert!(
-        out.stderr.contains("not running") && out.stderr.contains(" up`"),
+        out.stderr.contains("no service is running") && out.stderr.contains(" up`"),
         "{}",
         out.stderr
     );

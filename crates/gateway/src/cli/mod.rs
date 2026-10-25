@@ -123,7 +123,11 @@ pub enum Command {
     /// List the services running on this machine, whatever their config.
     Services,
     /// List the gateways of the service: state, pid, uptime, restarts, bots, events, orders, limit use, last error.
-    Ps,
+    Ps {
+        /// Exit with 1 when a gateway is not running (starting, restarting, stopped or failed): for cron and monitoring.
+        #[arg(long)]
+        check: bool,
+    },
     /// Like `ps`, with CPU and memory, refreshed in place until Ctrl+C.
     Top {
         /// Seconds between refreshes.

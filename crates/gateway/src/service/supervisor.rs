@@ -98,6 +98,7 @@ struct Status {
     started: Option<std::time::Instant>,
     restarts: u32,
     last_error: String,
+    last_error_at: Option<std::time::Instant>,
     restart_at: Option<tokio::time::Instant>,
     adopted: bool,
     health: Option<gw::HealthResponse>,
@@ -359,6 +360,7 @@ impl Inner {
                 started: None,
                 restarts: 0,
                 last_error: String::new(),
+                last_error_at: None,
                 restart_at: None,
                 adopted: false,
                 health: None,
@@ -424,6 +426,9 @@ impl Slot {
             },
             restarts: st.restarts,
             last_error: st.last_error.clone(),
+            last_error_age_ns: st.last_error_at.map_or(0, |at| {
+                crate::metrics::nanos(brokapi::runtime::now().saturating_duration_since(at)).max(1)
+            }),
             restart_in_ns: st.restart_at.map_or(0, |at| {
                 crate::metrics::nanos(at.saturating_duration_since(tokio::time::Instant::now()))
             }),
@@ -549,6 +554,18 @@ async fn fetch_health(
     }
 }
 
+/// The text of a log line of the level ERROR or WARN: "2026-10-23T10:00:00.123456Z  WARN text" gives "text".
+fn problem_of(line: &str) -> Option<String> {
+    let mut words = line.split_whitespace();
+    let _time = words.next()?;
+    let level = words.next()?;
+    if level != "ERROR" && level != "WARN" {
+        return None;
+    }
+    let at = line.find(level)? + level.len();
+    Some(line[at..].trim().to_owned())
+}
+
 impl Runner {
     fn status<R>(&self, f: impl FnOnce(&mut Status) -> R) -> R {
         f(&mut lock(&self.slot.status))
@@ -638,6 +655,7 @@ impl Runner {
             s.health = None;
             s.adopted = false;
             s.last_error = why;
+            s.last_error_at = Some(brokapi::runtime::now());
             s.restarts = total;
         });
         match next {
@@ -660,20 +678,15 @@ impl Runner {
         }
     }
 
-    /// The last line of the gateway's log that says what was wrong, for `last_error`.
+    /// The last line of the gateway's log that says what was wrong, for `last_error`: a line of the level ERROR or WARN.
+    /// Nothing when there is none: the last line of another level is not a reason.
     fn last_log_problem(&self) -> String {
         let path = self.inner.layout.gateway_log(&self.slot.name);
         let lines = logs::tail_lines(&path, 30).unwrap_or_default();
         lines
             .iter()
             .rev()
-            .find(|l| l.contains("ERROR") || l.contains("WARN"))
-            .or(lines.last())
-            .map(|l| {
-                // "2026-10-23T10:00:00.123456Z ERROR text" -> "text"
-                let text = l.splitn(3, ' ').nth(2).unwrap_or(l);
-                text.trim().to_owned()
-            })
+            .find_map(|l| problem_of(l))
             .unwrap_or_default()
     }
 
@@ -831,5 +844,33 @@ async fn run_slot(
                 },
             },
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::problem_of;
+
+    #[test]
+    fn only_a_line_of_error_or_warn_is_a_reason() {
+        assert_eq!(
+            problem_of("2026-10-25T18:57:19.250363Z  WARN the token is refused gateway=x")
+                .as_deref(),
+            Some("the token is refused gateway=x")
+        );
+        assert_eq!(
+            problem_of("2026-10-25T18:57:19.250363Z ERROR cannot connect").as_deref(),
+            Some("cannot connect")
+        );
+        // The last line of a gateway that was killed is often an ordinary one: it says nothing of the end.
+        assert_eq!(
+            problem_of("2026-10-25T18:57:19.250363Z  INFO Restored 1 subscriptions"),
+            None
+        );
+        assert_eq!(
+            problem_of("2026-10-25T18:57:19.250363Z  INFO WARN in the text is not the level"),
+            None
+        );
+        assert_eq!(problem_of(""), None);
     }
 }

@@ -1328,6 +1328,7 @@ A gateway as the service sees it.
 | `adopted` | `bool` | 13 | The service found this process running when it started, instead of starting it. |
 | `address` | `string` | 14 | Where the gateway listens, and its directory. |
 | `state_dir` | `string` | 15 |  |
+| `last_error_age_ns` | `uint64` | 17 | How long ago last_error happened. 0 when there is none. |
 
 <a id="brokapi-service-v1-stoprequest"></a>
 
