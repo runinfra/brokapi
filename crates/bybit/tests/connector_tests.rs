@@ -775,3 +775,37 @@ async fn the_raw_handle_reaches_methods_the_traits_do_not_and_spends_the_quota()
     md.shutdown(ShutdownMode::Immediate).await;
     ud.shutdown(ShutdownMode::Immediate).await;
 }
+
+#[tokio::test]
+async fn the_lists_of_orders_spend_the_quota_of_the_reads() {
+    // One read of the order list a second, and nothing comes back within the test: the second call of each list is
+    // refused before it is sent.
+    let server = MockServer::start(Arc::default()).await;
+    let limiter = {
+        let mut limits = default_limits();
+        for b in limits.buckets.values_mut() {
+            b.burst = b.burst.max(1000);
+        }
+        let read = limits.buckets.get_mut("trade_read").unwrap();
+        (read.rate, read.per, read.burst) = (1, Duration::from_secs(3600), 1);
+        BrokerLimiter::new(&limits)
+    };
+    let (tx, _rx) = mpsc::channel(256);
+    let cfg = BybitConfig::for_mock(DEFAULT_KEY, SECRET, &server.http_base);
+    let ud = UserDataConnector::start(UserDataConfig::new(cfg, "bybit-ud"), limiter, tx)
+        .await
+        .unwrap();
+    ud.active_orders().await.unwrap();
+    assert!(
+        matches!(ud.active_orders().await, Err(Error::RateLimited { .. })),
+        "active_orders"
+    );
+    assert!(
+        matches!(
+            ud.active_stop_orders().await,
+            Err(Error::RateLimited { .. })
+        ),
+        "active_stop_orders"
+    );
+    ud.shutdown(ShutdownMode::Immediate).await;
+}

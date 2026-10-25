@@ -43,6 +43,25 @@ fn refused(code: &str, sub: u64, why: &str) -> Error {
     }
 }
 
+/// The subscriptions whose call to the broker takes no options: the gateway holds them itself, and the options a bot
+/// sends with them (`backpressure`, `cap`) do not reach the broker.
+const WITHOUT_OPTIONS: [&str; 3] = [
+    "subscribe_order_state",
+    "subscribe_stop_orders",
+    "subscribe_executions",
+];
+
+/// The name under which a subscription is shared: the call and the request as the broker gets it. The same name is one
+/// subscription at the broker. Options that do not reach the broker are not part of it, or a bot that sends them would
+/// open a second subscription to the same stream and get every event of it twice.
+pub(crate) fn key(kind: &str, request: &str) -> String {
+    if WITHOUT_OPTIONS.contains(&kind) {
+        kind.to_owned()
+    } else {
+        format!("{kind} {request}")
+    }
+}
+
 impl Subscriptions {
     fn publish(&self, all: &HashMap<String, Entry>) {
         let mut out: Vec<_> = all
@@ -192,6 +211,29 @@ mod tests {
     fn open(id: u64, opened: &AtomicU32) -> impl Future<Output = Result<SubscriptionId, Error>> {
         opened.fetch_add(1, Ordering::SeqCst);
         async move { Ok(SubscriptionId::new(id)) }
+    }
+
+    #[test]
+    fn options_that_do_not_reach_the_broker_do_not_make_a_second_subscription() {
+        let plain = format!("{:?}", pb::SubscribeRequest::default());
+        let with_opts = format!(
+            "{:?}",
+            pb::SubscribeRequest {
+                opts: Some(pb::SubscribeOpts {
+                    backpressure: pb::Backpressure::Lossless as i32,
+                    cap: 1000,
+                    depth: None,
+                }),
+            }
+        );
+        for kind in WITHOUT_OPTIONS {
+            assert_eq!(key(kind, &with_opts), key(kind, &plain), "{kind}");
+        }
+        // The options of a market subscription reach the broker (the depth of a book, the buffer): they stay apart.
+        assert_ne!(
+            key("subscribe_order_book", &with_opts),
+            key("subscribe_order_book", &plain)
+        );
     }
 
     #[tokio::test]

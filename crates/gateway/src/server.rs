@@ -26,7 +26,7 @@ use crate::journal::Journal;
 use crate::metrics::RateMeter;
 use crate::pb;
 use crate::pb::error_detail::Kind;
-use crate::subs::{OWN, Subscriptions};
+use crate::subs::{self, OWN, Subscriptions};
 
 /// The largest message the gateway takes or sends: a year of minute candles is a few megabytes.
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;
@@ -249,7 +249,7 @@ impl Shared {
                     .subs
                     .subscribe(
                         OWN,
-                        format!("{kind} {plain}"),
+                        subs::key(kind, &plain),
                         kind.trim_start_matches("subscribe_").to_owned(),
                         || async move {
                             if kind == "subscribe_order_state" {
@@ -739,7 +739,7 @@ impl GatewayService {
         let what = kind.trim_start_matches("subscribe_").to_owned();
         let sub = sh
             .subs
-            .subscribe(bot, format!("{kind} {request}"), what, || open)
+            .subscribe(bot, subs::key(kind, &request), what, || open)
             .await
             .map_err(|e| status_of(&e))?;
         // A bot that subscribes without reading events is gone as soon as it has been quiet long enough.

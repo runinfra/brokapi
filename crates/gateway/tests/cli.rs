@@ -435,6 +435,45 @@ async fn a_bybit_gateway_gets_its_key_and_its_secret_from_two_files() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn check_warns_of_two_gateways_on_one_token() {
+    // Two gateways on one Bybit key, each token in a file of its own: the broker sees one client, the gateways count two
+    // limits. check says so for both, and it is a warning, not a failure.
+    let bybit = Mock::start(Broker::Bybit).await;
+    let env = Env::new(&[
+        ("by-a", Broker::Bybit, &bybit),
+        ("by-b", Broker::Bybit, &bybit),
+    ]);
+    let checked = env.json(&["check", "--offline"]).await;
+    assert_eq!(checked["ok"], true);
+    for (name, other) in [("by-a", "by-b"), ("by-b", "by-a")] {
+        let gateway = checked["gateways"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["name"] == name)
+            .unwrap();
+        let notes = gateway["notes"].to_string();
+        assert!(
+            notes.contains("same token as") && notes.contains(other),
+            "{notes}"
+        );
+    }
+    let text = env.run(&["check", "--offline"]).await;
+    assert_eq!(text.code, 0, "{}", text.stderr);
+    assert!(
+        text.stdout
+            .contains("warning: by-a uses the same token as by-b"),
+        "{}",
+        text.stdout
+    );
+
+    // One gateway per token: no warning.
+    let alone = Env::new(&[("by", Broker::Bybit, &bybit)]);
+    let checked = alone.json(&["check", "--offline"]).await;
+    assert!(!checked.to_string().contains("same token"), "{checked}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_service_runs_the_gateways_and_the_commands_see_them() {
     let (bcs, tbank) = (
         Mock::start(Broker::Bcs).await,

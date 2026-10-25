@@ -351,7 +351,7 @@ impl UserDataConnector {
         Ok(rules)
     }
 
-    /// Takes the pages of a list until the cursor ends.
+    /// Takes the pages of a list until the cursor ends. The caller has taken the quota of the first page.
     async fn all_open_orders(&self) -> Result<Vec<OrderRecord>, Error> {
         let mut all = Vec::new();
         let mut cursor: Option<String> = None;
@@ -756,6 +756,8 @@ impl OrderExecutor for UserDataConnector {
     }
 
     async fn active_orders(&self) -> Result<Vec<OrderSnapshot>, Error> {
+        // all_open_orders takes the quota of the pages after the first: the first is this call's.
+        self.acquire("GetOrders")?;
         let records = self.all_open_orders().await?;
         let now = brokapi_runtime::now();
         let mut out = Vec::new();
@@ -1116,6 +1118,7 @@ impl StopOrderExecutor for UserDataConnector {
     }
 
     async fn active_stop_orders(&self) -> Result<Vec<StopOrderSnapshot>, Error> {
+        self.acquire("GetOrders")?;
         let records = self.all_open_orders().await?;
         let now = brokapi_runtime::now();
         let mut core = self.inner.core.lock().await;

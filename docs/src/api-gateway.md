@@ -259,7 +259,7 @@ A call named like the type it returns (Portfolio, OrderBook, TradingParams, Trad
 
 | Поле | Тип | № | Описание |
 |---|---|---|---|
-| `opts` | [`SubscribeOpts`](#brokapi-gateway-v1-subscribeopts) | 1 |  |
+| `opts` | [`SubscribeOpts`](#brokapi-gateway-v1-subscribeopts) | 1 | Used by SubscribePortfolio. SubscribeOrderState, SubscribeStopOrders and SubscribeExecutions do not use it: the gateway holds one such subscription for all bots, and every bot gets each event of it once, whatever it sends here. |
 
 <a id="brokapi-gateway-v1-subscribeinstrumentrequest"></a>
 

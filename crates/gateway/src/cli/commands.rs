@@ -12,7 +12,7 @@ use super::fmt::{self, duration, gateways_table, is_tool, table};
 use super::read::{self, Read};
 use super::{Cli, Command, DirectCommand, Fail, GatewayCommand, Res};
 use crate::RemoteClient;
-use crate::service::config::{Config, ConfigError, find_config, sample};
+use crate::service::config::{Config, ConfigError, GatewaySpec, find_config, sample};
 use crate::service::{
     CallError, Service, ServiceClient, ServiceError, ServiceOptions, admin, logs, pb, proc,
     registry, run_gateway,
@@ -254,13 +254,22 @@ async fn check(ctx: &Ctx, offline: bool, names: &[String]) -> Res {
     if !state_ok {
         problems += 1;
     }
+    let shared = shared_tokens(&config.gateways);
     for spec in config
         .gateways
         .iter()
         .filter(|g| names.is_empty() || names.contains(&g.name))
     {
-        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut notes: Vec<String> = Vec::new();
+        if let Some(others) = shared.get(&spec.name) {
+            notes.push(format!(
+                "warning: {} uses the same token as {}: the broker sees one client, but each gateway counts the rate \
+                 limit on its own, so together they can go over it. Keep one gateway per token, or share the buckets \
+                 between them in [gateway.limits]",
+                spec.name,
+                others.join(", ")
+            ));
+        }
         #[cfg(unix)]
         if let Some(file) = &spec.token_file
             && let Ok(meta) = std::fs::metadata(file)
@@ -352,6 +361,29 @@ async fn check(ctx: &Ctx, offline: bool, names: &[String]) -> Res {
         return Err(Fail::Failed(format!("{problems} problem(s) found")));
     }
     Ok(())
+}
+
+/// For every gateway that shares its token with others (the same broker, contour and token, wherever the token is
+/// read from): the names of the others. The tokens are compared in memory and never printed.
+fn shared_tokens(gateways: &[GatewaySpec]) -> std::collections::HashMap<String, Vec<String>> {
+    let mut by_token: std::collections::HashMap<(String, bool, String), Vec<String>> =
+        std::collections::HashMap::new();
+    for g in gateways {
+        if let Ok(token) = g.token() {
+            by_token
+                .entry((g.broker.clone(), g.sandbox, token))
+                .or_default()
+                .push(g.name.clone());
+        }
+    }
+    let mut out = std::collections::HashMap::new();
+    for group in by_token.into_values().filter(|names| names.len() > 1) {
+        for name in &group {
+            let others = group.iter().filter(|n| *n != name).cloned().collect();
+            out.insert(name.clone(), others);
+        }
+    }
+    out
 }
 
 /// Connects to the broker and reads the account: nothing is placed.
