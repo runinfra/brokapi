@@ -38,6 +38,8 @@ message InfoRequest {}
 
 message ServiceInfo {
   uint32 pid = 1;
+  // The version of the program, as `brokapi --version` prints it: the number, and the commit for a build from git
+  // (`1.2.0 (commit 1a2b3c4d5)`).
   string version = 2;
   // The config file the service was started with, and its state directory.
   string config = 3;

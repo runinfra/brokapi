@@ -731,10 +731,13 @@ impl Runner {
                 s.health = Some(h);
             });
         } else {
+            // A process that does not answer (hung, or stopped with SIGSTOP): `starting`, and no numbers. The last ones
+            // would show a gateway that serves bots.
             self.status(|s| {
                 if s.state == GatewayState::Running {
                     s.state = GatewayState::Starting;
                 }
+                s.health = None;
             });
         }
     }

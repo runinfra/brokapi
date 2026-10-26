@@ -292,12 +292,22 @@ fn run(args: &[&str], cwd: &Path, registry: &Path, env: &[(String, String)]) -> 
 /// A line as its shape: words with a digit or a slash in them (numbers, times, paths of any system) become `~`, spaces are one.
 /// The memory of a process after `cpu,` is one `~` whatever it is: a number with its unit (`9.1 MB`, `512 B`), or `-` while the
 /// service has not read it yet. The unit is a part of the number, and which one it is depends on the machine.
+/// The commit after the version (`1.2.0 (commit 1a2b3c4d5)`) is left out: a build from git has it, a package does not.
 fn shape(line: &str) -> String {
     const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
     let mut words: Vec<&str> = Vec::new();
     let mut after_cpu = false;
     let mut after_memory = false;
+    let mut after_commit = false;
     for w in line.split_whitespace() {
+        if after_commit {
+            after_commit = false;
+            continue;
+        }
+        if w == "(commit" {
+            after_commit = true;
+            continue;
+        }
         if after_memory && UNITS.contains(&w) {
             after_memory = false;
             continue;
@@ -321,6 +331,12 @@ fn shape(line: &str) -> String {
         );
     }
     words.join(" ")
+}
+
+#[test]
+fn the_commit_after_the_version_is_not_a_part_of_the_shape() {
+    assert_eq!(shape("version       0 (commit 1a2b3c4d5)"), "version ~");
+    assert_eq!(shape("version       0"), "version ~");
 }
 
 #[test]

@@ -77,7 +77,7 @@ impl pb::service_server::Service for Api {
         let uptime = brokapi::runtime::now().saturating_duration_since(self.inner.started);
         Ok(Response::new(pb::ServiceInfo {
             pid: std::process::id(),
-            version: env!("CARGO_PKG_VERSION").to_owned(),
+            version: env!("BROKAPI_VERSION").to_owned(),
             config,
             state_dir: self.inner.layout.root.display().to_string(),
             address: self.inner.address.to_string(),

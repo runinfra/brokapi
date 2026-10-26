@@ -6,7 +6,19 @@
 ## Постоянный запуск (systemd)
 
 `brokapi up` без `-d` работает на переднем плане и печатает, что запустилась: это ровно то, что нужно менеджеру служб. Когда systemd посылает `SIGTERM`, служба
-останавливает гейтвеи (каждому дается `stop_timeout`, по умолчанию 10 секунд) и выходит. Образец юнита `/etc/systemd/system/brokapi.service`:
+останавливает гейтвеи (каждому дается `stop_timeout`, по умолчанию 10 секунд) и выходит.
+
+Сначала пользователь службы, программа, конфиг и токены. Команды для Linux, из каталога, где лежат `brokapi`, `brokapi.toml` и `tokens.env`:
+
+```sh
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin brokapi
+sudo install -m 755 brokapi /usr/local/bin/brokapi
+sudo install -d -m 750 -o root -g brokapi /etc/brokapi
+sudo install -m 640 -o root -g brokapi brokapi.toml /etc/brokapi/brokapi.toml
+sudo install -m 600 -o brokapi -g brokapi tokens.env /etc/brokapi/tokens.env
+```
+
+Конфиг и каталог `/etc/brokapi` принадлежат root, служба их только читает. Каталог состояния создаст systemd. Образец юнита `/etc/systemd/system/brokapi.service`:
 
 ```ini
 [Unit]
@@ -20,6 +32,7 @@ User=brokapi
 ExecStart=/usr/local/bin/brokapi -c /etc/brokapi/brokapi.toml up
 EnvironmentFile=/etc/brokapi/tokens.env
 StateDirectory=brokapi
+StateDirectoryMode=0700
 UMask=0077
 KillMode=process
 Restart=on-failure
@@ -29,15 +42,26 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
+Запуск и первая проверка:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now brokapi
+sudo -u brokapi brokapi -c /etc/brokapi/brokapi.toml ps
+```
+
 В конфиге к этому юниту каталог состояния - тот, что создает systemd: `state_dir = "/var/lib/brokapi"`. Замечания к образцу:
 
 - **`KillMode=process`.** Без него systemd при смерти службы убивает все процессы юнита, вместе с гейтвеями, и боты получают `Gap` с `NEW_EPOCH` на каждое падение
   службы. С ним гейтвеи переживают смерть службы, а служба, которую systemd запустил заново, подхватывает их (в журнале службы `taken over a running gateway`). `systemctl stop`
   и `systemctl restart` все равно останавливают гейтвеи: служба на `SIGTERM` останавливает их сама. Проверено на Linux временным юнитом `systemd-run`: без `KillMode=process`
   гейтвей умер вместе со службой, с ним остался тем же процессом и был подхвачен.
-- **`StateDirectory=brokapi` и `UMask=0077`.** systemd создает `/var/lib/brokapi` с владельцем из `User=`, а файлы службы получают права только для него. Без `state_dir`
-  каталог состояния лег бы рядом с конфигом, в `/etc/brokapi`, куда служба от своего пользователя писать не может. Служба хранит в каталоге состояния ключи доступа ботов,
-  поэтому сама создает его с правами 700.
+- **`StateDirectory=brokapi`, `StateDirectoryMode=0700` и `UMask=0077`.** systemd создает `/var/lib/brokapi` с владельцем из `User=`, а файлы службы получают права
+  только для него. Без `state_dir` каталог состояния лег бы рядом с конфигом, в `/etc/brokapi`, куда служба от своего пользователя писать не может. В каталоге состояния
+  ключи доступа ботов. Служба сама создает его с правами 700, но здесь каталог создает systemd, и без `StateDirectoryMode` он получит 755 (проверено временным юнитом).
+- **Команды `brokapi` - от пользователя службы**: `sudo -u brokapi brokapi -c /etc/brokapi/brokapi.toml ps`. Каталог состояния закрыт для других пользователей, и команда
+  от них отвечает `cannot read the state directory ...: it belongs to another user`. Так же бот: он должен работать от пользователя службы, чтобы прочитать `access.key`
+  и открыть сокет гейтвея.
 - **Токены** лежат в `/etc/brokapi/tokens.env` строками `TBANK_TOKEN=...` с правами 600 и владельцем из `User=`. В конфиге на них ссылается `token_env`. Либо
   `token_file` на файл с теми же правами.
 - **`-c` с полным путем.** У юнита нет рабочего каталога с `brokapi.toml`.
@@ -73,18 +97,39 @@ WantedBy=multi-user.target
 - **Как хранить:** в копии ключи доступа к службе и гейтвеям. Храните ее как токен: права 600, не в репозитории и не в общей папке. Токенов брокеров в каталоге нет.
 - **Как восстановить:** `brokapi down`, вернуть каталог на место, `brokapi up -d`. Гейтвей сверит журнал с брокером при старте.
 
+Под systemd с юнитом выше, копия в архив с правами 600 и обратно:
+
+```sh
+sudo systemctl stop brokapi
+sudo sh -c 'umask 077 && tar -C /var/lib -czf /root/brokapi-state-$(date +%F).tar.gz brokapi'
+sudo systemctl start brokapi
+```
+
+```sh
+sudo systemctl stop brokapi
+sudo mv /var/lib/brokapi /var/lib/brokapi.old
+sudo tar -C /var/lib -xzpf /root/brokapi-state-2026-10-26.tar.gz
+sudo systemctl start brokapi
+```
+
+`umask 077` закрывает архив от других пользователей, `tar` от root при распаковке возвращает владельца и права (700 у каталогов, 600 у ключей). Без systemd то же
+самое: `brokapi down`, `tar` каталога из `state_dir` вашего конфига, `brokapi up -d`.
+
 **Если каталог состояния пропал**, служба не ругается: она молча начинает с пустым журналом и новыми ключами доступа. Заявки на бирже остаются, но гейтвей больше не знает,
 какие из них поставили ваши боты: сверка бота покажет их как `foreign`. Ключ доступа ботов в `access.key` тоже будет новым.
 
 ## Мониторинг
 
-`brokapi ps` отвечает кодом 0 при любых состояниях гейтвеев: код говорит, что команда выполнилась, а не что все здоровы. Для проверки есть `brokapi ps --check`.
+`brokapi ps` отвечает кодом 0 при любых состояниях гейтвеев: код говорит, что команда выполнилась, а не что все здоровы. Для проверки есть `brokapi ps --check` (с версии 0.1.0-alpha.6).
 Он печатает ту же таблицу и выходит с кодом 1, если хоть один гейтвей не в состоянии `running`, с кодом 3, если службы нет. Строка ошибки называет гейтвеи, которые не работают
 (`not running: bcs-main failed`). Этого достаточно для cron и системы мониторинга:
 
 ```sh
 brokapi -c /etc/brokapi/brokapi.toml ps --check >/dev/null || echo "brokapi: a gateway is down"
 ```
+
+Проверка запускается от пользователя службы (cron этого пользователя или `sudo -u brokapi`): другому пользователю каталог состояния закрыт, и он получит код 1
+с `cannot read the state directory`, а не состояние гейтвеев.
 
 Гейтвей с `autostart = false`, который вы держите остановленным, `--check` тоже считает неработающим. Если нужна своя проверка, берите `brokapi ps --json`: это список гейтвеев,
 у каждого `name`, `state` (`starting`, `running`, `restarting`, `stopping`, `stopped`, `failed`), `restarts`, `last_error` и `last_error_age_s` (сколько секунд назад).
@@ -125,7 +170,7 @@ PID   GATEWAYS      UPTIME  CONFIG                      STATE DIRECTORY
 | Гейтвей упал или убит | Служба запускает его заново: сначала через 0,5 секунды, потом через 1, 2, 4 и так до 30 секунд. После 5 остановок за минуту гейтвей получает состояние `failed` и служба оставляет его в покое | Если `failed`: `brokapi logs <гейтвей>` покажет причину, после исправления `brokapi start <гейтвей>`. Боты получат `Gap` и сверятся: [События](events.md) |
 | Служба умерла | Гейтвеи продолжают работать, боты ничего не замечают (под systemd - только с `KillMode=process`, см. выше). Новая служба (`brokapi up` с тем же конфигом) находит их по pid-файлам и сокетам и берет под присмотр | `brokapi up -d`. Гейтвей с именем `brokapi`, который не отвечает, будет убит: иначе он держал бы сокет |
 | Машину перезагрузили | Ничего не работает, заявки на бирже остались | `brokapi up -d`. Гейтвей сверит журнал с брокером до приема команд. Боты получат `Gap` с причиной `NEW_EPOCH` |
-| Гейтвей завис | `ps` показывает прочерки вместо цифр в колонках `BOTS`, `EVENTS/S`, `ORDERS`, `LIMIT`: гейтвей не отвечает | `brokapi restart <гейтвей>` |
+| Гейтвей завис | Процесс жив, но не отвечает. `ps` показывает состояние `starting` у гейтвея, который уже работал (`UPTIME` не сбросился, `PID` тот же), и прочерки в колонках `BOTS`, `EVENTS/S`, `ORDERS`, `LIMIT` (с версии 0.1.0-alpha.6, раньше там оставались последние цифры). `ps --check` выходит с кодом 1. Ответит снова - вернется `running` | `brokapi restart <гейтвей>` |
 | Токен перестал подходить | Гейтвей не может стартовать или переподключиться. Причина обычно видна в `LAST ERROR` команды `ps` и в строках `ERROR` журнала | Заменить токен, `brokapi restart <гейтвей>` |
 
 ## Остановить гейтвей и снять заявки
@@ -191,7 +236,8 @@ brokapi.state/                  каталог состояния службы (
 | `the environment variable ... (token_env) is not set` | В окружении службы нет переменной с токеном | Для systemd - `EnvironmentFile=`. В терминале - `export` перед `brokapi up` |
 | `the state directory ... is used by another service (pid ..., config ...)` | Для этого каталога служба уже работает | `brokapi down` для нее или другой `state_dir` в этом конфиге |
 | `a service already runs for ... (see brokapi services)` | `up -d` на уже запущенный конфиг | Ничего: служба работает |
-| `no service is running for ...` (код 3) | Службы нет | `brokapi up -d` |
+| `no service is running for ...` (код 3) | Службы для этого конфига нет | Без systemd: `brokapi up -d`. Под systemd вторую службу не запускайте: `systemctl status brokapi` покажет, работает ли служба, и проверьте, что в команде тот же `-c`, что в юните |
+| `cannot read the state directory ...: it belongs to another user` (код 1, с версии 0.1.0-alpha.6, раньше - `no service is running`) | Команда запущена не от пользователя службы, каталог состояния 700 | `sudo -u <пользователь из User=> brokapi -c ...` |
 | `the gateway ... is starting: try again in a few seconds` или `is restarting` (код 4) | Служба запускает гейтвей, он еще сверяет журнал или ждет паузы перед перезапуском | Подождать, `brokapi ps` покажет `running`. Если `restarting` не проходит, причина в `Last error` |
 | `the gateway ... is stopped` или `is failed: start it with brokapi start ...` (код 4) | Гейтвей остановлен, упал 5 раз за минуту или у него `autostart = false` | `brokapi logs <гейтвей>`, затем `brokapi start <гейтвей>` |
 | `the service refused the access key` | Ключ в `service.key` не от этой службы | Команда ходит в тот же `state_dir`, что и служба? Проверьте `-c` |

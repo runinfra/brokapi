@@ -270,6 +270,8 @@ message HealthResponse {
   // The name of the gateway and the broker it serves.
   string name = 2;
   string broker = 3;
+  // The version of the program, as `brokapi --version` prints it: the number, and the commit for a build from git
+  // (`1.2.0 (commit 1a2b3c4d5)`).
   string version = 4;
   // Chosen at random each time the gateway starts. A bot keeps it with its last event number.
   uint64 epoch = 5;

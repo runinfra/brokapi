@@ -441,6 +441,57 @@ async fn a_bybit_gateway_gets_its_key_and_its_secret_from_two_files() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_version_starts_with_the_number_of_the_release() {
+    // The number first, as the book shows it. A build from git adds the commit (build.rs): `main` and the release before
+    // it have the same number.
+    let env = Env::new(&[]);
+    let out = env.run(&["--version"]).await;
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        out.stdout.trim(),
+        format!("brokapi {}", env!("BROKAPI_VERSION"))
+    );
+    assert!(
+        env!("BROKAPI_VERSION").starts_with(env!("CARGO_PKG_VERSION")),
+        "{}",
+        env!("BROKAPI_VERSION")
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_state_directory_of_another_user_is_not_called_a_missing_service() {
+    // Under systemd the state directory is the service's own, with mode 700. A command run by another user cannot read it,
+    // and "no service is running, start it with up" would send the person to start a second service.
+    use std::os::unix::fs::PermissionsExt;
+    let bcs = Mock::start(Broker::Bcs).await;
+    let env = Env::new(&[("bcs-main", Broker::Bcs, &bcs)]);
+    std::fs::create_dir_all(&env.state).unwrap();
+    std::fs::set_permissions(&env.state, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // root reads any directory: there is nothing to see.
+    let root = std::fs::read_dir(&env.state).is_ok();
+    let ps = env.run(&["ps"]).await;
+    let up = env.run(&["up", "-d"]).await;
+    std::fs::set_permissions(&env.state, std::fs::Permissions::from_mode(0o700)).unwrap();
+    if root {
+        return;
+    }
+    for out in [ps, up] {
+        assert_eq!(out.code, 1, "{}", out.stderr);
+        assert!(
+            out.stderr.contains("belongs to another user") && out.stderr.contains("sudo -u"),
+            "{}",
+            out.stderr
+        );
+        assert!(
+            !out.stderr.contains("no service is running"),
+            "{}",
+            out.stderr
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn check_warns_of_two_gateways_on_one_token() {
     // Two gateways on one Bybit key, each token in a file of its own: the broker sees one client, the gateways count two
     // limits. check says so for both, and it is a warning, not a failure.
@@ -477,6 +528,26 @@ async fn check_warns_of_two_gateways_on_one_token() {
     let alone = Env::new(&[("by", Broker::Bybit, &bybit)]);
     let checked = alone.json(&["check", "--offline"]).await;
     assert!(!checked.to_string().contains("same token"), "{checked}");
+    assert_eq!(checked["notes"], Value::Array(Vec::new()), "{checked}");
+
+    // A state directory that an older version made 755 is left as it is, and check says so.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&alone.state, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let checked = alone.json(&["check", "--offline"]).await;
+        assert_eq!(checked["ok"], true, "a warning, not a failure");
+        assert!(
+            checked["notes"].to_string().contains("chmod 700"),
+            "{checked}"
+        );
+        let text = alone.run(&["check", "--offline"]).await;
+        assert!(
+            text.stdout.contains("warning: the state directory"),
+            "{}",
+            text.stdout
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -563,6 +634,26 @@ async fn the_service_runs_the_gateways_and_the_commands_see_them() {
     let out = env.run(&["start", "tb", "--wait"]).await;
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(env.gateway("tb").await.unwrap()["state"], "running");
+
+    // A hung gateway (SIGSTOP) is `starting` with no numbers, as the book says, and running again when it answers.
+    #[cfg(unix)]
+    {
+        let pid = pid_of(&env.gateway("tb").await.unwrap()).to_string();
+        let signal = |sig: &str| {
+            let ok = Command::new("kill")
+                .args([sig, &pid])
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "kill {sig} {pid}");
+        };
+        signal("-STOP");
+        let hung = env.wait_state("tb", "starting").await;
+        assert!(hung["bots"].is_null() && hung["health"].is_null(), "{hung}");
+        signal("-CONT");
+        let back = env.wait_state("tb", "running").await;
+        assert_eq!(back["pid"].to_string(), pid, "the same process");
+    }
 
     // Restart gives a new process.
     let old = pid_of(&env.gateway("bcs-main").await.unwrap());

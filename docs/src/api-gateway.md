@@ -415,7 +415,7 @@ A call named like the type it returns (Portfolio, OrderBook, TradingParams, Trad
 | `state` | [`GatewayState`](#brokapi-gateway-v1-gatewaystate) | 1 |  |
 | `name` | `string` | 2 | The name of the gateway and the broker it serves. |
 | `broker` | `string` | 3 |  |
-| `version` | `string` | 4 |  |
+| `version` | `string` | 4 | The version of the program, as `brokapi --version` prints it: the number, and the commit for a build from git (`1.2.0 (commit 1a2b3c4d5)`). |
 | `epoch` | `uint64` | 5 | Chosen at random each time the gateway starts. A bot keeps it with its last event number. |
 | `last_seq` | `uint64` | 6 | The number of the last event. |
 | `detail` | `string` | 7 | While STARTING: what the gateway is doing or what went wrong the last time. |
@@ -1272,7 +1272,7 @@ listens on a Unix socket (or on 127.0.0.1 on Windows) in its state directory, an
 | Поле | Тип | № | Описание |
 |---|---|---|---|
 | `pid` | `uint32` | 1 |  |
-| `version` | `string` | 2 |  |
+| `version` | `string` | 2 | The version of the program, as `brokapi --version` prints it: the number, and the commit for a build from git (`1.2.0 (commit 1a2b3c4d5)`). |
 | `config` | `string` | 3 | The config file the service was started with, and its state directory. |
 | `state_dir` | `string` | 4 |  |
 | `address` | `string` | 5 | Where the service listens. |

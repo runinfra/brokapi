@@ -18,6 +18,10 @@ pub enum CallError {
     /// No service answers for this state directory.
     #[error("no service is running for the state directory {0}")]
     NotRunning(String),
+    /// The state directory or its files belong to another user: the command cannot tell whether a service runs. Under
+    /// systemd the directory is the service's own, with mode 700.
+    #[error("cannot read the state directory {0}: it belongs to another user")]
+    NoAccess(String),
     /// The service answered with a refusal.
     #[error("{}", .0.message())]
     Refused(Status),
@@ -35,7 +39,12 @@ impl ServiceClient {
     pub async fn connect(state_dir: &Path) -> Result<Self, CallError> {
         let not_running = || CallError::NotRunning(state_dir.display().to_string());
         let address: Address = std::fs::read_to_string(state_dir.join(ADDRESS_FILE))
-            .map_err(|_| not_running())?
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::PermissionDenied => {
+                    CallError::NoAccess(state_dir.display().to_string())
+                }
+                _ => not_running(),
+            })?
             .trim()
             .parse()
             .map_err(|_: String| not_running())?;

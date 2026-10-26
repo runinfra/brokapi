@@ -186,7 +186,7 @@ impl Shared {
             state: state as i32,
             name: self.name.clone(),
             broker: self.client.broker().as_str().to_owned(),
-            version: env!("CARGO_PKG_VERSION").to_owned(),
+            version: env!("BROKAPI_VERSION").to_owned(),
             epoch: self.hub.epoch(),
             last_seq: self.hub.last_seq(),
             detail: self

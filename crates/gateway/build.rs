@@ -6,7 +6,8 @@
 //! and they have to be inside the crate, or a package from crates.io would have nothing to compile.
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const PROTOS: &[&str] = &[
     "brokapi/gateway/v1/gateway.proto",
@@ -55,4 +56,49 @@ fn main() {
         .out_dir(&service_out)
         .compile_fds(fds)
         .expect("generate gRPC code of the service");
+
+    version(&manifest);
+}
+
+/// `BROKAPI_VERSION`: the version of the crate, and the commit when the program is built from a git checkout
+/// (`1.2.0 (commit 1a2b3c4d5)`). A build from `main` and the release before it have the same version number,
+/// and the book on the site follows `main`: the commit is what tells them apart.
+///
+/// A package from crates.io (it has `.cargo_vcs_info.json`) is a release as it is: the number alone. So is a build where
+/// git is not there.
+fn version(manifest: &Path) {
+    let number = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");
+    let commit = if manifest.join(".cargo_vcs_info.json").exists() {
+        None
+    } else {
+        git(manifest, &["rev-parse", "--short=9", "HEAD"])
+    };
+    if let Some(dir) = git(manifest, &["rev-parse", "--absolute-git-dir"]) {
+        // A new commit changes `HEAD` (a detached one) or the file of the branch, `packed-refs` after `git gc`.
+        let dir = PathBuf::from(dir);
+        println!("cargo:rerun-if-changed={}", dir.join("HEAD").display());
+        println!(
+            "cargo:rerun-if-changed={}",
+            dir.join("packed-refs").display()
+        );
+        if let Some(branch) = git(manifest, &["symbolic-ref", "-q", "HEAD"]) {
+            println!("cargo:rerun-if-changed={}", dir.join(branch).display());
+        }
+    }
+    let version = match commit {
+        Some(c) => format!("{number} (commit {c})"),
+        None => number,
+    };
+    println!("cargo:rustc-env=BROKAPI_VERSION={version}");
+}
+
+/// The output of a git command in `dir`, `None` when there is no git or no repository.
+fn git(dir: &Path, args: &[&str]) -> Option<String> {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    let text = String::from_utf8(out.stdout).ok()?.trim().to_owned();
+    (out.status.success() && !text.is_empty()).then_some(text)
 }

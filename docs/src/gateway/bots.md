@@ -164,7 +164,20 @@ cargo add brokapi-gateway --no-default-features
 ## Бот на другом языке
 
 Готового клиента для Go пока нет (для Python он есть, выше). Любой язык, в котором есть gRPC, подключается сам: контракт - файлы `.proto` в каталоге `crates/gateway/proto/` репозитория (они же лежат в пакете `brokapi-gateway` на crates.io), справочник
-по ним - [Gateway (gRPC)](../api-gateway.md). Что нужно сделать:
+по ним - [Gateway (gRPC)](../api-gateway.md). Берите файлы той версии, что у вашей программы `brokapi`: каталог `crates/gateway/proto` в теге `v<версия>` на
+`github.com/runinfra/brokapi`, например `v{{brokapi_version}}`. В `main` они могут быть новее выпуска. `protoc` и `buf` собирают эти файлы с версии 0.1.0-alpha.6, в более старых вызовы `Portfolio` и другие закрывают
+одноименные типы и `protoc` отказывает.
+
+Для Go нужны `protoc` 3.15 или новее (поля `optional` старые версии не собирают, проверьте `protoc --version`) и два плагина. Те версии, на которых клиент собирается
+в проверке `tools/proto-check`:
+
+```sh
+go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+```
+
+`protoc` ставится пакетом (`apt install protobuf-compiler`, `brew install protobuf`) или из выпусков `github.com/protocolbuffers/protobuf`. Плагины `go install` кладет
+в `$(go env GOPATH)/bin`, этот каталог должен быть в `PATH`. Что нужно сделать:
 
 1. **Сгенерировать клиент** из `proto/brokapi/gateway/v1/gateway.proto` (он подключает `types.proto`) обычным для вашего языка инструментом (`protoc` с плагином gRPC или `buf`).
    Строки `option go_package` в файлах нет, чтобы не навязывать путь модуля: для Go его задают флагами `M`. Так клиент получается в пакете `<ваш модуль>/gen/brokapi/gateway/v1`
@@ -183,7 +196,10 @@ cargo add brokapi-gateway --no-default-features
    Пока гейтвей перезапускается, файла нет (около полсекунды), а после его появления `Health` еще около секунды отвечает `STARTING`: читайте файл с повтором и паузой, затем ждите `Health = READY`.
    gRPC понимает адрес сокета Unix в виде `unix:/путь/к/сокету`. Шифрования нет: канал открытый, но локальный.
 3. **Слать два заголовка** с каждым вызовом: `authorization: Bearer <ключ>` и `x-brokapi-bot: <имя>`.
-4. **Соблюдать порядок**: открыть `Events`, дождаться кадра `Ready`, подписаться, вызвать `Reconcile`, торговать.
+4. **Соблюдать порядок**: открыть `Events`, дождаться кадра `Ready`, подписаться, вызвать `Reconcile`, торговать. Поток `Events` закончился (на Go `Recv` вернул
+   `io.EOF` или ошибку) - гейтвей остановился или перезапускается: пройдите шаги заново, начиная с чтения `gateway.addr`. Что при этом пропущено, скажет `Gap`
+   ([События](events.md)). Поле `opts` в `SubscribeRequest` читает только `SubscribePortfolio`: у `SubscribeOrderState`, `SubscribeStopOrders` и `SubscribeExecutions`
+   оно ни на что не влияет.
 5. **Читать значения как договорено**: цена, количество и деньги - строки с десятичным числом (не `double`), время - целое число наносекунд в полях `*_ns`, `cid` - UUID
    с дефисами, который придумывает бот. Сравнивайте числа как десятичные, а не как строки: заявка по цене `"70.00"` может вернуться в событиях с ценой `"70"`.
 6. **Разбирать ошибки** из двоичного заголовка ответа `brokapi-error-bin`: это сообщение `ErrorDetail`. Код статуса gRPC - подсказка общим инструментам, решает деталь.

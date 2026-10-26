@@ -191,6 +191,36 @@ fn hand_written_versions(text: &str) -> Vec<String> {
     found
 }
 
+/// A page may say from which release something works: «с версии 0.1.0-alpha.6». That is history, like the changelog,
+/// and stays true when the number moves on. The book follows `main` and is ahead of the release: the mark tells a person
+/// with an older program that it does not have this yet.
+fn without_since_marks(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    // The two marks are as long, so the first end is the end of the first mark.
+    while let Some(end) = ["с версии ", "С версии "]
+        .iter()
+        .filter_map(|m| rest.find(m).map(|i| i + m.len()))
+        .min()
+    {
+        out.push_str(&rest[..end]);
+        rest = rest[end..]
+            .trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+    }
+    out.push_str(rest);
+    out
+}
+
+#[test]
+fn a_mark_of_the_release_is_not_a_hand_written_number() {
+    let text =
+        "`ps --check` (с версии 0.1.0-alpha.6). С версии 0.1.0-alpha.7 тоже, но 0.1.0-alpha.8 нет";
+    assert_eq!(
+        hand_written_versions(&without_since_marks(text)),
+        ["0.1.0-alpha.8"]
+    );
+}
+
 #[test]
 fn detector_of_hand_written_versions() {
     assert_eq!(
@@ -230,7 +260,7 @@ fn the_number_is_not_written_by_hand() {
             if file.file_name().is_some_and(|n| n == "changelog.md") {
                 continue;
             }
-            let found = hand_written_versions(&read(&file));
+            let found = hand_written_versions(&without_since_marks(&read(&file)));
             assert!(
                 found.is_empty(),
                 "{} writes the version by hand ({found:?}): use {{{{brokapi_version}}}} (see docs/brokapi_version.py)",

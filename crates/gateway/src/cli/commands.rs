@@ -112,6 +112,11 @@ impl Ctx {
                 config.path.display(),
                 self.up_hint(config)
             )),
+            CallError::NoAccess(dir) => Fail::Failed(format!(
+                "cannot read the state directory {dir}: it belongs to another user. Run the command as the user of the \
+                 service (under systemd: `sudo -u <User of the unit> brokapi -c {} ...`)",
+                config.path.display()
+            )),
             CallError::Refused(status) => match status.code() {
                 tonic::Code::NotFound => Fail::NoGateway(status.message().to_owned()),
                 tonic::Code::Unauthenticated => Fail::Failed(
@@ -257,6 +262,20 @@ async fn check(ctx: &Ctx, offline: bool, names: &[String]) -> Res {
     if !state_ok {
         problems += 1;
     }
+    // The directory keeps the access keys and the journals. It is made 700, but one made by an older version stays as it was.
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut state_notes: Vec<String> = Vec::new();
+    #[cfg(unix)]
+    if let Ok(meta) = std::fs::metadata(&config.state_dir) {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o077 != 0 {
+            state_notes.push(format!(
+                "warning: the state directory {} can be read by other users, and it keeps the access keys of the \
+                 gateways (chmod 700)",
+                config.state_dir.display()
+            ));
+        }
+    }
     let shared = shared_tokens(&config.gateways);
     for spec in config
         .gateways
@@ -314,6 +333,7 @@ async fn check(ctx: &Ctx, offline: bool, names: &[String]) -> Res {
         "config": config.path,
         "state_dir": config.state_dir,
         "state_dir_writable": state_ok,
+        "notes": state_notes,
         "gateways": rows.iter().map(|(n, b, c, a, notes)| json!({
             "name": n, "broker": b,
             "config": c.as_ref().err().map_or("ok".to_owned(), Clone::clone),
@@ -333,6 +353,12 @@ async fn check(ctx: &Ctx, offline: bool, names: &[String]) -> Res {
                 "(CANNOT WRITE)"
             }
         ));
+        for note in &state_notes {
+            out.push_str(&format!("{note}\n"));
+        }
+        if !state_notes.is_empty() {
+            out.push('\n');
+        }
         let mut t = vec![
             ["GATEWAY", "BROKER", "CONFIG", "ACCESS"]
                 .map(String::from)
@@ -458,11 +484,16 @@ async fn up(ctx: &Ctx, detach: bool) -> Res {
 }
 
 async fn up_detached(ctx: &Ctx, config: &Config, exe: &Path) -> Res {
-    if ServiceClient::connect(&config.state_dir).await.is_ok() {
-        return Err(Fail::Failed(format!(
-            "a service already runs for {} (see `brokapi services`)",
-            config.path.display()
-        )));
+    match ServiceClient::connect(&config.state_dir).await {
+        Ok(_) => {
+            return Err(Fail::Failed(format!(
+                "a service already runs for {} (see `brokapi services`)",
+                config.path.display()
+            )));
+        }
+        // Another user's directory: a second service would not start there either, and one may be running.
+        Err(e @ CallError::NoAccess(_)) => return Err(ctx.call_fail(config, e)),
+        Err(_) => {}
     }
     let mut cmd = tokio::process::Command::new(exe);
     cmd.arg("-c").arg(&config.path).arg("up");
