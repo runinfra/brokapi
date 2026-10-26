@@ -15,7 +15,7 @@
 ```toml
 # edition = "2024" в [package], Rust 1.88 или новее
 [dev-dependencies]
-brokapi       = { path = "../brokapi", features = ["bcs", "tbank", "finam", "alor"] }
+brokapi       = { path = "../brokapi", features = ["bcs", "tbank", "finam", "alor", "bybit"] }
 brokapi-mocks = { path = "../brokapi/crates/mocks" }
 tokio         = { version = "1", features = ["full", "test-util"] }
 ```

@@ -55,7 +55,7 @@ python -c "import brokapi; print(brokapi.__version__)"
 | Портфель | `portfolio`, `positions`, `balances`, подписка `subscribe_portfolio` |
 | События | `async for envelope in client.events`, один поток на клиента, `brokapi.merge` для нескольких |
 | Ошибки | исключения с теми же именами и текстом, что у `Error` в Rust: `Unknown`, `Rejected`, `RateLimited`, `NotReconciled`, `Degraded` и другие |
-| Тесты | `brokapi.testing.mock_bcs()`, `mock_tbank()`, `mock_finam()`, `mock_alor()`: имитации брокеров, на них идет каждый пример книги |
+| Тесты | `brokapi.testing.mock_bcs()`, `mock_tbank()`, `mock_finam()`, `mock_alor()`, `mock_bybit()`: имитации брокеров, на них идет каждый пример книги |
 
 Python повторяет Rust по возможностям. Отличие одно: `raw` не отдает потоки (метод, который открывает поток, и WebSocket-каналы БКС), их
 читает общий интерфейс. Подробности: [Любой метод брокера, Python](raw.md).

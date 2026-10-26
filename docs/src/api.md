@@ -16,6 +16,8 @@
 | `brokapi` | главный крейт: все остальное под одним именем, брокеры включаются флагами `bcs`, `tbank`, `finam`, `alor`, `bybit` | [brokapi](api/brokapi/index.html) |
 | `brokapi-core` | типы, трейты возможностей, ошибки, `Envelope`. С него начинать | [brokapi_core](api/brokapi_core/index.html) |
 | `brokapi-runtime` | лимиты запросов, буферы подписок, сверка, остановка | [brokapi_runtime](api/brokapi_runtime/index.html) |
+| `brokapi-client` | один счет у любого брокера за одним типом, на нем стоят Python и гейтвей | [brokapi_client](api/brokapi_client/index.html) |
+| `brokapi-gateway` | сервер и клиент гейтвея, программа `brokapi` | [brokapi_gateway](api/brokapi_gateway/index.html) |
 | `brokapi-sansio` | ядро коннектора без сети, стенд для записанных кадров | [brokapi_sansio](api/brokapi_sansio/index.html) |
 | `brokapi-bcs` | коннекторы БКС | [brokapi_bcs](api/brokapi_bcs/index.html) |
 | `brokapi-tbank` | коннекторы Т-Банка | [brokapi_tbank](api/brokapi_tbank/index.html) |

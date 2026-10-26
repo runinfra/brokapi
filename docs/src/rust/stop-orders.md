@@ -26,7 +26,7 @@
 | `place_stop(req)` | ставит стоп-заявку, возвращает `OrderAck` с номером брокера |
 | `cancel_stop(ref)` | снимает не сработавшую. `ref` - либо `StopOrderRef::Cid(cid)`, либо `StopOrderRef::Broker(номер)` |
 | `active_stop_orders()` | список стоп-заявок, которые ждут срабатывания |
-| `subscribe_stop_orders()` | поток статусов. **У всех брокеров `Unsupported`**: у БКС потока статусов стоп-заявок нет, у Т-Банка потока нет в API, у Финама отдельного потока нет |
+| `subscribe_stop_orders()` | поток статусов. **У всех брокеров `Unsupported`**: у БКС потока статусов стоп-заявок нет, у Т-Банка потока нет в API, у Финама отдельного потока нет, у АЛОРа и Bybit тоже, список читает `active_stop_orders` |
 
 Шлюз команд (`NotReconciled`, `Degraded`, `ShuttingDown`) действует на `place_stop` и `cancel_stop` так же, как на
 `place` и `cancel`. Неясный ответ - `Unknown`, повтора нет. Подробности исходов: [Круг команд](../orders.md).

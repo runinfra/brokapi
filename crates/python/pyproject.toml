@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "brokapi"
-description = "One interface to the APIs of Russian brokers (BCS, T-Bank, Finam, ALOR) for Python: a thin layer over the Rust core of brokapi."
+description = "One interface to the APIs of Russian brokers (BCS, T-Bank, Finam, ALOR) and the Bybit exchange for Python: a thin layer over the Rust core of brokapi."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT OR Apache-2.0" }
