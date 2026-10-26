@@ -165,8 +165,9 @@ cargo install --path crates/gateway --locked
 brokapi --version
 ```
 
-Должно напечататься `brokapi {{brokapi_version}}` (номер как у библиотеки). Программа, собранная из git (`cargo install --path` или `--git`), с версии 0.1.0-alpha.6
-добавляет к номеру коммит: `brokapi {{brokapi_version}} (commit 1a2b3c4d5)`. Так сборка из `main` отличается от выпуска с тем же номером.
+Должно напечататься `brokapi {{brokapi_version}}` (номер как у библиотеки). Готовый файл и программа, собранная из git (`cargo install --path` или `--git`),
+с версии 0.1.0-alpha.6 добавляют к номеру коммит: `brokapi {{brokapi_version}} (commit 1a2b3c4d5)`. Так сборка из `main` отличается от выпуска с тем же номером. Программа из
+crates.io (`cargo install brokapi-gateway`) печатает только номер.
 
 Книга на сайте описывает `main`, и она может опережать выпуск. Новое помечено «с версии ...», а все, чего еще нет в выпуске, перечислено в [Изменениях](changelog.md),
 раздел «Следующая версия».

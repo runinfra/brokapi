@@ -2,6 +2,10 @@
 # Started by a tag `v*` (it builds, tests and creates the release) or by hand (Actions -> release -> Run workflow: it builds
 # and tests the same files and keeps them as artifacts of the run, and creates NO release).
 #
+# By hand with `tag` (`gh workflow run release.yml --ref main -f tag=v1.2.0`): the code of that tag is built with this file
+# and its release is created. For a tag whose own run failed in the workflow, not in the code: the tag stays where it is,
+# and the files are built from it.
+#
 # It does NOT publish to crates.io or PyPI. That is a separate decision, made by hand, version by version (`tools/release`).
 #
 # Why these targets:
@@ -19,6 +23,11 @@ name: release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing tag v<version>: build its code and create its release (empty: build only)"
+        required: false
+        default: ""
   push:
     tags:
       - "v*"
@@ -39,13 +48,17 @@ jobs:
       version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - name: Read the version and compare it with the tag
         id: v
+        env:
+          TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
         run: |
           version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
           echo "Cargo.toml: $version"
-          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
-            echo "::error::the tag is ${GITHUB_REF_NAME}, but version in Cargo.toml is ${version}"
+          if [ -n "${TAG}" ] && [ "${TAG}" != "v${version}" ]; then
+            echo "::error::the tag is ${TAG}, but version in Cargo.toml is ${version}"
             exit 1
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
@@ -76,6 +89,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -127,10 +142,10 @@ jobs:
           echo "${info}"
           echo "${info}" | grep -E "${{ matrix.file }}"
           if [ "${{ contains(matrix.target, 'musl') }}" = "true" ]; then echo "${info}" | grep -E "statically linked|static-pie linked"; fi
-          # It starts and says the version of the release.
+          # It starts and says the version of the release and the commit it was built from (build.rs of the gateway).
           out=$("${bin}" --version)
           echo "${out}"
-          test "${out}" = "brokapi ${VERSION}"
+          test "${out}" = "brokapi ${VERSION} (commit $(git -C "${GITHUB_WORKSPACE}" rev-parse --short=9 HEAD))"
           "${bin}" --help > /dev/null
           # It does the first command of the quick start: a config and the state directory in an empty directory.
           mkdir work && cd work
@@ -146,10 +161,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Only for a tag. The files of all five builds, one list of sums, one GitHub release. A run started by hand ends above.
+  # Only for a tag (pushed, or given by hand). The files of all five builds, one list of sums, one GitHub release. A run
+  # started by hand without a tag ends above.
   release:
     name: release
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || inputs.tag != ''
     needs: [version, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -157,6 +173,7 @@ jobs:
       contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ inputs.tag || github.ref_name }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/download-artifact@v7
@@ -186,6 +203,6 @@ jobs:
         run: |
           flags=""
           case "${VERSION}" in *-*) flags="--prerelease" ;; esac
-          gh release create "${GITHUB_REF_NAME}" dist/* \
+          gh release create "${TAG}" dist/* \
             --repo "${GITHUB_REPOSITORY}" --verify-tag \
             --title "brokapi ${VERSION}" --notes-file notes.md ${flags}

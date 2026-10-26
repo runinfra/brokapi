@@ -708,7 +708,20 @@ async fn a_killed_gateway_is_started_again_checks_its_journal_and_the_bot_catche
     // The process of the gateway dies.
     let first = env.gateway("bcs-main").await.unwrap();
     assert!(proc::kill(pid_of(&first)));
-    let again = env.wait_state("bcs-main", "running").await;
+    // Running again, and counted: right after the kill the service may not have seen it yet and still says `running`
+    // with the old process.
+    let found = std::sync::Mutex::new(Value::Null);
+    env.wait_for("bcs-main is running again", || async {
+        match env.gateway("bcs-main").await {
+            Some(g) if g["state"] == "running" && g["restarts"] == 1 => {
+                *found.lock().unwrap() = g;
+                true
+            }
+            _ => false,
+        }
+    })
+    .await;
+    let again = found.into_inner().unwrap();
     assert_ne!(pid_of(&again), pid_of(&first), "a new process");
     assert_eq!(again["restarts"], 1);
     assert!(
