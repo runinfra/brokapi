@@ -1,6 +1,6 @@
 # brokapi for Python
 
-One interface to the APIs of Russian brokers (BCS, T-Bank, Finam, ALOR) and the Bybit exchange: market data, orders, reconciliation and rate limits.
+One interface to the APIs of Russian brokers and crypto exchanges: market data, orders, reconciliation and rate limits. Supported now: BCS, T-Bank, Finam, ALOR and Bybit.
 A thin layer over the Rust core of [brokapi](https://brokapi.ru/): `asyncio` for the events, `decimal.Decimal` for money,
 the same errors and the same rules as the core.
 

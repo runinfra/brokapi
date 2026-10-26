@@ -81,7 +81,7 @@ brokapi-mocks = { path = "crates/mocks" }
 
 [package]
 name = "brokapi"
-description = "One interface to the APIs of Russian brokers (BCS, T-Bank, Finam, ALOR) and the Bybit exchange: market data, orders, reconciliation, rate limits."
+description = "One interface to the APIs of Russian brokers and crypto exchanges (now BCS, T-Bank, Finam, ALOR, Bybit): market data, orders, reconciliation, rate limits."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
