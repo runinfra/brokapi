@@ -83,6 +83,9 @@ pub struct MockOptions {
     /// The broker takes a stop order (`PlaceOrder` of type STOP or STOP_LIMIT, `PlaceSLTPOrder`), then the answer is
     /// lost: the stop order is in the book and the client gets `UNAVAILABLE`.
     pub stop_answer_lost: std::sync::atomic::AtomicBool,
+    /// The broker takes a new order (not a stop order), then the answer is lost: the order is in the book and the
+    /// client gets `UNAVAILABLE`. The failure a bot must survive without placing the order twice.
+    pub order_answer_lost: std::sync::atomic::AtomicBool,
     /// The next N calls that need auth answer UNAUTHENTICATED.
     pub unauth_next: AtomicU32,
     /// Interval of periodic stream messages.
@@ -100,6 +103,9 @@ pub struct MockOptions {
     /// Every `Bars`, `Trades` and `Transactions` request seen: (method, interval start seconds, interval end
     /// seconds), `None` for a missing bound. For checking that the end of the period is always sent.
     pub intervals: Mutex<Vec<SeenInterval>>,
+    /// The price a test set for a ticker: the order book, the last deals and the bars follow it, and the open market
+    /// data streams of the ticker get a new message when it changes.
+    pub prices: crate::market::Prices,
 }
 
 struct Account {
@@ -256,6 +262,90 @@ impl MockState {
             None => acc.orders.push(os.clone()),
         }
         let _ = acc.orders_tx.send(os);
+    }
+
+    /// Executes `qty` of the order whose comment is `comment` at `price`, as the broker does: the order is partly filled
+    /// or filled, a trade with an id of its own is recorded and pushed, and the position of the account moves.
+    pub fn fill(
+        &self,
+        account: &str,
+        comment: &str,
+        qty: brokapi_core::Decimal,
+        price: brokapi_core::Decimal,
+    ) -> Result<(), String> {
+        use brokapi_core::Decimal as Dec;
+        let num = |x: &Option<Decimal>| {
+            x.as_ref()
+                .and_then(|x| x.value.parse::<Dec>().ok())
+                .unwrap_or_default()
+        };
+        let mut accs = self.accounts.lock().unwrap();
+        let acc = accs
+            .get_mut(account)
+            .ok_or("the mock has no such account")?;
+        let order = acc
+            .orders
+            .iter_mut()
+            .find(|o| o.order.as_ref().is_some_and(|x| x.comment == comment))
+            .ok_or("the mock has no such order")?;
+        // A waiting stop order triggers and fills, as the broker does when the price reaches it.
+        let working = [
+            po::OrderStatus::New,
+            po::OrderStatus::PartiallyFilled,
+            po::OrderStatus::Watching,
+        ]
+        .map(|s| s as i32)
+        .contains(&order.status);
+        if !working {
+            return Err("the order is not working".into());
+        }
+        let whole = num(&order.initial_quantity);
+        let executed = (num(&order.executed_quantity) + qty).min(whole);
+        order.executed_quantity = d(&executed.to_string());
+        order.remaining_quantity = d(&(whole - executed).to_string());
+        order.status = if executed >= whole {
+            po::OrderStatus::Filled
+        } else {
+            po::OrderStatus::PartiallyFilled
+        } as i32;
+        let os = order.clone();
+        let inner = os.order.clone().unwrap_or_default();
+        let trade = v1::AccountTrade {
+            trade_id: format!("TR-{}-{}", os.order_id, acc.trades.len() + 1),
+            symbol: inner.symbol.clone(),
+            price: d(&price.to_string()),
+            size: d(&qty.to_string()),
+            side: inner.side,
+            timestamp: Some(now_ts()),
+            order_id: os.order_id.clone(),
+            comment: comment.into(),
+            account_id: account.into(),
+            ..Default::default()
+        };
+        let change = if inner.side == v1::Side::Sell as i32 {
+            -qty
+        } else {
+            qty
+        };
+        match acc.positions.iter_mut().find(|p| p.symbol == inner.symbol) {
+            Some(p) => {
+                p.quantity = d(&(num(&p.quantity) + change).to_string());
+                p.current_price = d(&price.to_string());
+            }
+            None => acc.positions.push(pa::Position {
+                symbol: inner.symbol.clone(),
+                quantity: d(&change.to_string()),
+                average_price: d(&price.to_string()),
+                current_price: d(&price.to_string()),
+                ..Default::default()
+            }),
+        }
+        acc.positions.retain(|p| !num(&p.quantity).is_zero());
+        acc.trades.push(trade.clone());
+        let _ = acc.orders_tx.send(os);
+        let _ = acc.trades_tx.send(trade);
+        let _ = acc.account_tx.send(());
+        Ok(())
     }
 
     pub fn push_trade(&self, account: &str, t: v1::AccountTrade) {
@@ -611,6 +701,9 @@ impl OrdersService for Mock {
         if is_stop && self.0.options.stop_answer_lost.load(Ordering::SeqCst) {
             return Err(Status::unavailable("connection reset by peer"));
         }
+        if !is_stop && self.0.options.order_answer_lost.load(Ordering::SeqCst) {
+            return Err(Status::unavailable("connection reset by peer"));
+        }
         Ok(Response::new(os))
     }
 
@@ -783,7 +876,31 @@ impl OrdersService for Mock {
 
 // --------------------------------------------------------- market data
 
-fn book_rows(snapshot: bool, bump: u32) -> Vec<pm::stream_order_book::Row> {
+/// The price a test set for the ticker of `symbol` (`SBER@MISX` is `SBER`).
+fn price_of(state: &MockState, symbol: &str) -> Option<brokapi_core::Decimal> {
+    state
+        .options
+        .prices
+        .get(symbol.split('@').next().unwrap_or(symbol))
+}
+
+/// Three levels on each side around `price`, sizes 10, 20, 30: (price, is a bid, size).
+fn levels_at(price: brokapi_core::Decimal) -> Vec<(String, bool, String)> {
+    let (bids, asks) = crate::market::levels(price, 3);
+    let side = |prices: Vec<brokapi_core::Decimal>, bid: bool| {
+        prices
+            .into_iter()
+            .enumerate()
+            .map(move |(k, p)| (p.to_string(), bid, (10 * (k + 1)).to_string()))
+    };
+    side(bids, true).chain(side(asks, false)).collect()
+}
+
+fn book_rows(
+    snapshot: bool,
+    bump: u32,
+    price: Option<brokapi_core::Decimal>,
+) -> Vec<pm::stream_order_book::Row> {
     use pm::stream_order_book::{
         Row,
         row::{Action, Side},
@@ -794,6 +911,15 @@ fn book_rows(snapshot: bool, bump: u32) -> Vec<pm::stream_order_book::Row> {
         action: action as i32,
         ..Default::default()
     };
+    if let Some(price) = price {
+        return levels_at(price)
+            .into_iter()
+            .map(|(p, bid, size)| {
+                let side = if bid { Side::BuySize } else { Side::SellSize };
+                row(&p, side, size, Action::Add)
+            })
+            .collect();
+    }
     if snapshot {
         vec![
             row("100.0", Side::BuySize, "10".into(), Action::Add),
@@ -813,13 +939,20 @@ fn book_rows(snapshot: bool, bump: u32) -> Vec<pm::stream_order_book::Row> {
     }
 }
 
-fn rest_book() -> pm::OrderBook {
+fn rest_book(price: Option<brokapi_core::Decimal>) -> pm::OrderBook {
     use pm::order_book::{Row, row::Side};
     let row = |price: &str, side: fn(Decimal) -> Side, size: &str| Row {
         price: d(price),
         side: Some(side(Decimal { value: size.into() })),
         ..Default::default()
     };
+    if let Some(price) = price {
+        let rows = levels_at(price)
+            .into_iter()
+            .map(|(p, bid, size)| row(&p, if bid { Side::BuySize } else { Side::SellSize }, &size))
+            .collect();
+        return pm::OrderBook { rows };
+    }
     // Deliberately unsorted: the connector must sort best-first.
     pm::OrderBook {
         rows: vec![
@@ -833,15 +966,21 @@ fn rest_book() -> pm::OrderBook {
     }
 }
 
-fn quote(symbol: &str, n: u32) -> pm::Quote {
+fn quote(symbol: &str, n: u32, price: Option<brokapi_core::Decimal>) -> pm::Quote {
+    let at = |recorded: &str, steps: i64| {
+        price.map_or_else(
+            || d(recorded),
+            |p| d(&(p + crate::market::STEP * brokapi_core::Decimal::from(steps)).to_string()),
+        )
+    };
     pm::Quote {
         symbol: symbol.into(),
         timestamp: Some(now_ts()),
-        bid: d("100.0"),
+        bid: at("100.0", -1),
         bid_size: d("10"),
-        ask: d("100.1"),
+        ask: at("100.1", 1),
         ask_size: d(&format!("{}", 10 + n)),
-        last: d("100.05"),
+        last: at("100.05", 0),
         ..Default::default()
     }
 }
@@ -874,7 +1013,15 @@ impl MarketDataService for Mock {
             .lock()
             .unwrap()
             .push((r.timeframe, start));
-        let bars = if self
+        let price = price_of(&self.0, &r.symbol);
+        let flat = |mut bar: pm::Bar| {
+            if let Some(p) = price {
+                let p = d(&p.to_string());
+                (bar.open, bar.high, bar.low, bar.close) = (p.clone(), p.clone(), p.clone(), p);
+            }
+            bar
+        };
+        let bars: Vec<pm::Bar> = if self
             .0
             .options
             .synthetic_candles
@@ -927,7 +1074,7 @@ impl MarketDataService for Mock {
         };
         Ok(Response::new(pm::BarsResponse {
             symbol: r.symbol,
-            bars,
+            bars: bars.into_iter().map(flat).collect(),
         }))
     }
 
@@ -939,7 +1086,7 @@ impl MarketDataService for Mock {
         let s = req.into_inner().symbol;
         self.0.record(format!("LastQuote:{s}"));
         Ok(Response::new(pm::QuoteResponse {
-            quote: Some(quote(&s, 0)),
+            quote: Some(quote(&s, 0, price_of(&self.0, &s))),
             symbol: s,
         }))
     }
@@ -956,9 +1103,10 @@ impl MarketDataService for Mock {
         if s.starts_with("NOPE@") {
             return Err(Status::not_found("unknown instrument"));
         }
+        let book = rest_book(price_of(&self.0, &s));
         Ok(Response::new(pm::OrderBookResponse {
             symbol: s,
-            orderbook: Some(rest_book()),
+            orderbook: Some(book),
         }))
     }
 
@@ -968,10 +1116,11 @@ impl MarketDataService for Mock {
     ) -> Result<Response<pm::LatestTradesResponse>, Status> {
         self.0.check_auth(&req)?;
         let s = req.into_inner().symbol;
+        let price = price_of(&self.0, &s).map_or_else(|| "100.05".to_string(), |p| p.to_string());
         let trade = |i: u32, side: v1::Side| pm::Trade {
             trade_id: format!("T{i}"),
             timestamp: Some(now_ts()),
-            price: d("100.05"),
+            price: d(&price),
             size: d("5"),
             side: side as i32,
             ..Default::default()
@@ -1004,10 +1153,11 @@ impl MarketDataService for Mock {
         self.0.denied(&symbol)?;
         let (tx, out) = mpsc::channel(16);
         let tick = self.0.tick();
+        let state = Arc::clone(&self.0);
         tokio::spawn(async move {
             for n in 0.. {
                 let msg = pm::SubscribeQuoteResponse {
-                    quote: vec![quote(&symbol, n)],
+                    quote: vec![quote(&symbol, n, price_of(&state, &symbol))],
                     error: None,
                 };
                 if tx.send(Ok(msg)).await.is_err() {
@@ -1049,14 +1199,17 @@ impl MarketDataService for Mock {
         let drop_after = self.0.options.book_drop_after.load(Ordering::SeqCst);
         let (tx, out) = mpsc::channel(16);
         let tick = self.0.tick();
+        let state = Arc::clone(&self.0);
         tokio::spawn(async move {
             let mut sent = 0u32;
             loop {
-                let snapshot = sent == 0 && !first_incr;
+                // With a price set every message is a whole book around it.
+                let price = price_of(&state, &symbol);
+                let snapshot = (sent == 0 && !first_incr) || price.is_some();
                 let msg = pm::SubscribeOrderBookResponse {
                     order_book: vec![pm::StreamOrderBook {
                         symbol: symbol.clone(),
-                        rows: book_rows(snapshot, sent),
+                        rows: book_rows(snapshot, sent, price),
                         is_data_snapshot: snapshot,
                     }],
                 };
@@ -1088,16 +1241,19 @@ impl MarketDataService for Mock {
         self.0.denied(&symbol)?;
         let (tx, out) = mpsc::channel(16);
         let tick = self.0.tick();
+        let state = Arc::clone(&self.0);
         tokio::spawn(async move {
             // Every stream starts by replaying T1 (a "snapshot" of recent trades), then new ones.
             for i in 1.. {
+                let price = price_of(&state, &symbol)
+                    .map_or_else(|| "100.05".to_string(), |p| p.to_string());
                 let ids: Vec<u32> = if i == 1 { vec![1] } else { vec![1, i] };
                 let trades = ids
                     .into_iter()
                     .map(|n| pm::Trade {
                         trade_id: format!("T{n}"),
                         timestamp: Some(now_ts()),
-                        price: d("100.05"),
+                        price: d(&price),
                         size: d("5"),
                         side: v1::Side::Buy as i32,
                         ..Default::default()
@@ -1135,11 +1291,23 @@ impl MarketDataService for Mock {
         self.0.denied(&symbol)?;
         let (tx, out) = mpsc::channel(16);
         let tick = self.0.tick();
+        let state = Arc::clone(&self.0);
         tokio::spawn(async move {
             for n in 0..i64::MAX {
-                let msg = pm::SubscribeBarsResponse {
-                    symbol: symbol.clone(),
-                    bars: vec![pm::Bar {
+                let bar = match price_of(&state, &symbol) {
+                    Some(p) => pm::Bar {
+                        timestamp: Some(prost_types::Timestamp {
+                            seconds: now_ts().seconds / 60 * 60,
+                            nanos: 0,
+                        }),
+                        open: d(&p.to_string()),
+                        high: d(&p.to_string()),
+                        low: d(&p.to_string()),
+                        close: d(&p.to_string()),
+                        volume: d("1000"),
+                        is_data_snapshot: n == 0,
+                    },
+                    None => pm::Bar {
                         timestamp: Some(prost_types::Timestamp {
                             seconds: 1_700_000_000,
                             nanos: 0,
@@ -1150,7 +1318,11 @@ impl MarketDataService for Mock {
                         close: d(&format!("{}", 100 + n)),
                         volume: d("1000"),
                         is_data_snapshot: n == 0,
-                    }],
+                    },
+                };
+                let msg = pm::SubscribeBarsResponse {
+                    symbol: symbol.clone(),
+                    bars: vec![bar],
                 };
                 if tx.send(Ok(msg)).await.is_err() {
                     return;

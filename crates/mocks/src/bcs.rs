@@ -109,6 +109,9 @@ pub struct MockOptions {
     /// The broker takes a stop order (a conditional order, `orderType` 5), then the answer is lost: the order is
     /// in the book and the client gets HTTP 503.
     pub stop_answer_lost: AtomicBool,
+    /// The broker takes a new order (not a stop order), then the answer is lost: the order is in the book and the
+    /// client gets HTTP 503. The failure a bot must survive without placing the order twice.
+    pub order_answer_lost: AtomicBool,
     /// `GET /orders` answers an empty list of reports (`data: []`) for a known order: an answer that says
     /// nothing about the order.
     pub empty_reports: AtomicBool,
@@ -121,6 +124,9 @@ pub struct MockOptions {
     /// answered) and the answer to the commands of the market data socket, until `stream_gate.release()`. For a
     /// broker that is slow to open its streams.
     pub stream_gate: crate::gate::StreamGate,
+    /// The price a test set for a ticker: the order book, the last deals and the bars follow it, and the market data
+    /// sockets subscribed to the ticker get a new message when it changes.
+    pub prices: crate::market::Prices,
     /// Orders, trades and open event sockets of all accounts.
     book: std::sync::Mutex<Book>,
 }
@@ -312,9 +318,42 @@ struct Book {
     sockets: Vec<(String, tokio::sync::mpsc::UnboundedSender<String>)>,
     /// Orders (by cid) the order list does not show, though `GET /orders` knows them.
     hidden: std::collections::HashSet<String>,
+    /// What the fills bought and sold, on top of the recorded portfolio: (account, ticker, board) to the
+    /// change of the quantity and the price of the last fill.
+    held: std::collections::BTreeMap<(String, String, String), (Decimal, Decimal)>,
+    /// Open `portfolio/ws` sockets: (access token of the account, sender). A fill sends the new portfolio to them.
+    portfolio_sockets: Vec<(String, tokio::sync::mpsc::UnboundedSender<String>)>,
 }
 
 impl Book {
+    /// The portfolio of `owner`: the recorded one with the fills on top. A holding the fills brought to zero is gone.
+    fn portfolio(&self, owner: &str) -> String {
+        let mut rows: Vec<Value> = serde_json::from_str(&fixture("ws/portfolio.json"))
+            .expect("the recorded portfolio is JSON");
+        for ((who, ticker, board), (change, price)) in &self.held {
+            if who != owner {
+                continue;
+            }
+            let row = rows.iter_mut().find(|r| {
+                r["type"] == "depoLimit"
+                    && r["ticker"] == ticker.as_str()
+                    && r["board"] == board.as_str()
+            });
+            match row {
+                Some(row) => {
+                    let had = Decimal::from_str(&row["quantity"].to_string()).unwrap_or_default();
+                    row["quantity"] = num(had + change);
+                }
+                None => rows.push(json!({
+                    "type": "depoLimit", "ticker": ticker, "board": board, "quantity": num(*change),
+                    "balancePrice": num(*price), "currentPrice": num(*price),
+                })),
+            }
+        }
+        rows.retain(|r| r["type"] != "depoLimit" || r["quantity"].as_f64() != Some(0.0));
+        Value::Array(rows).to_string()
+    }
+
     fn push(&mut self, owner: &str, text: &str) {
         self.sockets.retain(|(_, tx)| !tx.is_closed());
         for (o, tx) in &self.sockets {
@@ -519,6 +558,12 @@ impl MockServer {
             "1".into()
         };
         let o = o.clone();
+        let change = if o.side == "1" { qty } else { -qty };
+        let held = b
+            .held
+            .entry((owner.to_string(), o.ticker.clone(), o.class_code.clone()))
+            .or_default();
+        *held = (held.0 + change, price);
         b.trades.push(MockTrade {
             owner: owner.to_string(),
             order_no: o
@@ -536,6 +581,12 @@ impl MockServer {
         });
         let et = if o.status == "2" { "2" } else { "1" };
         b.event(&o, et, qty, Some(&exec_id));
+        // The new portfolio after the event of the order.
+        let portfolio = b.portfolio(owner);
+        b.portfolio_sockets.retain(|(_, tx)| !tx.is_closed());
+        for (_, tx) in b.portfolio_sockets.iter().filter(|(o, _)| o == owner) {
+            let _ = tx.send(portfolio.clone());
+        }
         exec_id
     }
 }
@@ -572,6 +623,15 @@ async fn ws_handler(
             .lock()
             .unwrap()
             .sockets
+            .push((owner.clone(), pushes.0.clone()));
+    }
+    if channel_from_path(&path) == BcsWsChannel::Portfolio {
+        state
+            .options
+            .book
+            .lock()
+            .unwrap()
+            .portfolio_sockets
             .push((owner.clone(), pushes.0.clone()));
     }
     ws.on_upgrade(move |socket| handle_ws(socket, path, owner, state, pushes))
@@ -634,7 +694,12 @@ async fn http_handler(
         && matches!(uri.path().strip_prefix(ORDERS_PATH), Some("" | "/sync"))
         && serde_json::from_slice::<Value>(&body)
             .is_ok_and(|v| v["orderType"].as_str() == Some("5"));
-    if lose_answer {
+    let lose_order_answer = state.options.order_answer_lost.load(Ordering::SeqCst)
+        && method == Method::POST
+        && matches!(uri.path().strip_prefix(ORDERS_PATH), Some("" | "/sync"))
+        && serde_json::from_slice::<Value>(&body)
+            .is_ok_and(|v| v["orderType"].as_str() != Some("5"));
+    if lose_answer || lose_order_answer {
         let _ = handle_http(state, method, uri, headers, body).await;
         return json_response(StatusCode::SERVICE_UNAVAILABLE, r#"{"type":"UNAVAILABLE"}"#);
     }
@@ -646,6 +711,20 @@ fn not_found() -> Response {
         StatusCode::NOT_FOUND,
         r#"{"type":"NOT_FOUND","traceId":"mock"}"#,
     )
+}
+
+/// Puts `depth` levels around `price` in a book of the recorded shape (`bids` and `asks` of `price` and `quantity`).
+fn set_levels(book: &mut Value, price: Decimal, depth: usize) {
+    let (bids, asks) = crate::market::levels(price, depth.clamp(1, 20));
+    let side = |prices: Vec<Decimal>| -> Value {
+        prices
+            .into_iter()
+            .enumerate()
+            .map(|(i, p)| json!({"price": num(p), "quantity": 100 + 10 * i}))
+            .collect()
+    };
+    book["bids"] = side(bids);
+    book["asks"] = side(asks);
 }
 
 fn validation(field: &str, message: &str) -> Response {
@@ -746,11 +825,23 @@ async fn handle_http(
         if query_param(&uri, "ticker").as_deref() == Some(UNKNOWN_TICKER) {
             return not_found();
         }
+        let ticker = query_param(&uri, "ticker").unwrap_or_else(|| "SBER".into());
+        if let Some(price) = state.options.prices.get(&ticker) {
+            let depth = query_param(&uri, "depth")
+                .and_then(|d| d.parse().ok())
+                .unwrap_or(20);
+            let mut book: Value = serde_json::from_str(&fixture("rest/order_book.json")).unwrap();
+            book["ticker"] = json!(ticker);
+            set_levels(&mut book, price, depth);
+            return json_response(StatusCode::OK, &book.to_string());
+        }
         return json_response(StatusCode::OK, &fixture("rest/order_book.json"));
     }
 
     if path == PORTFOLIO_PATH && method == Method::GET {
-        return json_response(StatusCode::OK, &fixture("ws/portfolio.json"));
+        let owner = bearer(&headers).unwrap_or_default();
+        let portfolio = state.options.book.lock().unwrap().portfolio(&owner);
+        return json_response(StatusCode::OK, &portfolio);
     }
 
     if path == CANDLES_PATH && method == Method::GET {
@@ -763,7 +854,8 @@ async fn handle_http(
         let ticker = query_param(&uri, "ticker").unwrap_or_else(|| "SBER".into());
         let class_code = query_param(&uri, "classCode").unwrap_or_else(|| "TQBR".into());
         let tf = query_param(&uri, "timeFrame").unwrap_or_else(|| "M1".into());
-        if state.options.synthetic_candles.load(Ordering::Relaxed) {
+        let price = state.options.prices.get(&ticker);
+        if state.options.synthetic_candles.load(Ordering::Relaxed) || price.is_some() {
             let secs = |name: &str| {
                 query_param(&uri, name)
                     .map(|v| pct_decode(&v))
@@ -790,7 +882,10 @@ async fn handle_http(
                 "W" => 7 * 86_400,
                 _ => 30 * 86_400,
             };
-            let series = crate::synthetic_bars(from, to, step);
+            let mut series = crate::synthetic_bars(from, to, step);
+            if let Some(price) = price {
+                series = crate::market::flat_bars(series.into_iter().map(|bar| bar.0), price);
+            }
             if series.len() > 1440 {
                 return validation("endDate", "at most 1440 bars in one request");
             }
@@ -845,6 +940,19 @@ async fn handle_http(
         }
         if !req["limit"].is_null() {
             return validation("limit", "unknown field");
+        }
+        if let Some(price) = req["ticker"]
+            .as_str()
+            .and_then(|t| state.options.prices.get(t))
+        {
+            let mut records: Value =
+                serde_json::from_str(&fixture("rest/last_trades_records.json")).unwrap();
+            for r in records["records"].as_array_mut().into_iter().flatten() {
+                r["volume"] =
+                    num(price * Decimal::from_str(&r["quantity"].to_string()).unwrap_or_default());
+                r["price"] = num(price);
+            }
+            return json_response(StatusCode::OK, &records.to_string());
         }
         return json_response(StatusCode::OK, &fixture("rest/last_trades_records.json"));
     }
@@ -1252,7 +1360,7 @@ fn handle_orders(
 async fn handle_ws(
     socket: WebSocket,
     path: String,
-    _owner: String,
+    owner: String,
     state: MockState,
     mut pushes: (
         tokio::sync::mpsc::UnboundedSender<String>,
@@ -1264,9 +1372,8 @@ async fn handle_ws(
     let (mut write, mut read) = socket.split();
 
     if channel == BcsWsChannel::Portfolio {
-        let _ = write
-            .send(Message::Text(fixture("ws/portfolio.json").into()))
-            .await;
+        let portfolio = state.options.book.lock().unwrap().portfolio(&owner);
+        let _ = write.send(Message::Text(portfolio.into())).await;
     }
     // Like the real broker, the limits and margin channels send a first snapshot on connect.
     if channel == BcsWsChannel::Limits {
@@ -1282,8 +1389,19 @@ async fn handle_ws(
     }
 
     let mut frames_sent = 0u32;
+    // The subscriptions of this market data socket: a new price of their ticker is sent to them.
+    let mut subs: Vec<Value> = Vec::new();
+    let mut moved = state.options.prices.subscribe();
     loop {
         let msg = tokio::select! {
+            Ok(()) = moved.changed() => {
+                for req in &subs {
+                    if let Some((_, data)) = market_data(&state, req, true) {
+                        let _ = write.send(Message::Text(data.to_string().into())).await;
+                    }
+                }
+                continue;
+            }
             Some(text) = pushes.1.recv() => {
                 if text == CLOSE_SENTINEL {
                     // The broker side ends the socket (the test cut the link).
@@ -1311,6 +1429,10 @@ async fn handle_ws(
                 let req: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
                 // Unsubscribe (subscribeType 1) gets no answer.
                 if req["subscribeType"].as_i64() == Some(1) {
+                    subs.retain(|r| {
+                        r["dataType"] != req["dataType"]
+                            || r["instruments"][0] != req["instruments"][0]
+                    });
                     continue;
                 }
                 if subscribe_should_fail(&state, &text).await {
@@ -1319,34 +1441,13 @@ async fn handle_ws(
                         .await;
                     continue;
                 }
-                let key = &req["instruments"][0];
-                let ticker = key["ticker"].as_str().unwrap_or("SBER").to_owned();
-                let class_code = key["classCode"].as_str().unwrap_or("TQBR").to_owned();
-                // dataType: 0 order book, 1 last candle, 2 trades, 3 quotes.
-                let (success, data) = match req["dataType"].as_i64() {
-                    Some(1) => (
-                        json!({"responseType": "CandleStickSuccess", "instruments": [key], "timeFrame": req["timeFrame"]}),
-                        json!({"responseType": "CandleStick", "ticker": ticker, "classCode": class_code,
-                               "timeFrame": req["timeFrame"], "dateTime": "2026-10-19T07:05:00.000Z",
-                               "open": 300.0, "close": 300.5, "high": 301.0, "low": 299.5, "volume": 1200.0}),
-                    ),
-                    Some(2) => (
-                        json!({"responseType": "LastTradesSuccess", "instruments": [key]}),
-                        json!({"responseType": "LastTrades", "ticker": ticker, "classCode": class_code,
-                               "side": "BUY", "volume": 30015.0, "price": 300.15, "quantity": 100,
-                               "dateTime": "2026-10-19T07:05:01.000Z"}),
-                    ),
-                    Some(3) => (
-                        json!({"responseType": "QuotesSuccess", "instruments": [key]}),
-                        json!({"responseType": "Quotes", "ticker": ticker, "classCode": class_code,
-                               "dateTime": "2026-10-19T07:05:02.000Z", "bid": 300.1, "ask": 300.2,
-                               "lastPrice": 300.15, "volume": 1234567}),
-                    ),
-                    _ => (
-                        serde_json::from_str(&fixture("ws/order_book_success.json")).unwrap(),
-                        serde_json::from_str(&fixture("ws/order_book.json")).unwrap(),
-                    ),
+                let Some((success, data)) = market_data(&state, &req, false) else {
+                    continue;
                 };
+                subs.retain(|r| {
+                    r["dataType"] != req["dataType"] || r["instruments"][0] != req["instruments"][0]
+                });
+                subs.push(req.clone());
                 let _ = write.send(Message::Text(success.to_string().into())).await;
                 let _ = write.send(Message::Text(data.to_string().into())).await;
                 if req["dataType"].as_i64() == Some(0) {
@@ -1370,6 +1471,75 @@ async fn handle_ws(
             _ => {}
         }
     }
+}
+
+/// The answer to a subscription of the market data socket and its first message, at the price a test set for the
+/// ticker or at the recorded numbers. With `only_moved` it is `None` for a ticker without a price set.
+fn market_data(state: &MockState, req: &Value, only_moved: bool) -> Option<(Value, Value)> {
+    let key = &req["instruments"][0];
+    let ticker = key["ticker"].as_str().unwrap_or("SBER").to_owned();
+    let class_code = key["classCode"].as_str().unwrap_or("TQBR").to_owned();
+    let price = state.options.prices.get(&ticker);
+    if only_moved && price.is_none() {
+        return None;
+    }
+    let p = |recorded: f64| price.map_or(json!(recorded), num);
+    let now = chrono::Utc::now()
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string();
+    let at = |recorded: &str| {
+        if price.is_some() {
+            now.clone()
+        } else {
+            recorded.to_string()
+        }
+    };
+    let (bid, ask) = match price {
+        Some(price) => (
+            num(price - crate::market::STEP),
+            num(price + crate::market::STEP),
+        ),
+        None => (json!(300.1), json!(300.2)),
+    };
+    // dataType: 0 order book, 1 last candle, 2 trades, 3 quotes.
+    let answer = match req["dataType"].as_i64() {
+        Some(1) => (
+            json!({"responseType": "CandleStickSuccess", "instruments": [key], "timeFrame": req["timeFrame"]}),
+            json!({"responseType": "CandleStick", "ticker": ticker, "classCode": class_code,
+                   "timeFrame": req["timeFrame"], "dateTime": at("2026-10-19T07:05:00.000Z"),
+                   "open": p(300.0), "close": p(300.5), "high": p(301.0), "low": p(299.5), "volume": 1200.0}),
+        ),
+        Some(2) => (
+            json!({"responseType": "LastTradesSuccess", "instruments": [key]}),
+            json!({"responseType": "LastTrades", "ticker": ticker, "classCode": class_code,
+                   "side": "BUY", "volume": 30015.0, "price": p(300.15), "quantity": 100,
+                   "dateTime": at("2026-10-19T07:05:01.000Z")}),
+        ),
+        Some(3) => (
+            json!({"responseType": "QuotesSuccess", "instruments": [key]}),
+            json!({"responseType": "Quotes", "ticker": ticker, "classCode": class_code,
+                   "dateTime": at("2026-10-19T07:05:02.000Z"), "bid": bid, "ask": ask,
+                   "lastPrice": p(300.15), "volume": 1234567}),
+        ),
+        _ => {
+            let mut book: Value = serde_json::from_str(&fixture("ws/order_book.json")).unwrap();
+            if let Some(price) = price {
+                book["ticker"] = json!(ticker);
+                book["classCode"] = json!(class_code);
+                book["dateTime"] = json!(now);
+                set_levels(
+                    &mut book,
+                    price,
+                    req["depth"].as_u64().unwrap_or(20) as usize,
+                );
+            }
+            (
+                serde_json::from_str(&fixture("ws/order_book_success.json")).unwrap(),
+                book,
+            )
+        }
+    };
+    Some(answer)
 }
 
 async fn subscribe_should_fail(state: &MockState, text: &str) -> bool {

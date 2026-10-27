@@ -459,10 +459,17 @@ async fn own_trades_stream_and_history() {
         ))
         .await
         .unwrap();
-    assert_eq!(hist.len(), 1);
+    // The recorded operation of the account, then the fill of this test.
+    let seen: Vec<_> = hist
+        .iter()
+        .map(|e| (e.qty.decimal(), e.price.decimal(), e.commission.decimal()))
+        .collect();
     assert_eq!(
-        (hist[0].qty.decimal(), hist[0].commission.decimal()),
-        (dec!(10.0), dec!(1.0))
+        seen,
+        [
+            (dec!(10.0), dec!(270.0), dec!(1.0)),
+            (dec!(20.0), dec!(250.0), dec!(0.0))
+        ]
     );
 }
 

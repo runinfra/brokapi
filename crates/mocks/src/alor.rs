@@ -69,6 +69,9 @@ pub struct MockOptions {
     /// The broker takes a stop order (`actions/stop`, `actions/stopLimit`), then the answer is lost: the stop order
     /// is in the book and the client gets HTTP 503.
     pub stop_answer_lost: AtomicBool,
+    /// The broker takes a new order (not a stop order), then the answer is lost: the order is in the book and the
+    /// client gets HTTP 503. The failure a bot must survive without placing the order twice.
+    pub order_answer_lost: AtomicBool,
     /// The read of one instrument (`GET /md/v2/Securities/{exchange}/{symbol}`, where the connectors take the lot
     /// size) answers HTTP 503.
     pub instrument_fail: AtomicBool,
@@ -93,6 +96,9 @@ pub struct MockOptions {
     /// Holds every subscribe request of the data socket (the subscription is not made and not confirmed) until
     /// `stream_gate.release()`. For a broker that is slow to open its streams.
     pub stream_gate: crate::gate::StreamGate,
+    /// The price a test set for a ticker: the order book, the last deals and the bars follow it, and the open market
+    /// data streams of the ticker get a new message when it changes.
+    pub prices: crate::market::Prices,
     /// Orders, trades and open sockets of all accounts.
     book: std::sync::Mutex<Book>,
 }
@@ -285,6 +291,29 @@ struct Book {
 }
 
 impl Book {
+    /// The positions of `owner`: the recorded ones with the fills on top. A holding the fills brought to zero is gone.
+    fn positions(&self, owner: &str) -> Vec<Value> {
+        let mut rows = positions_json();
+        for t in self.trades.iter().filter(|t| t.owner == owner) {
+            let change = if t.side == "sell" { -t.units } else { t.units };
+            let row = rows.iter_mut().find(|r| r["symbol"] == t.symbol.as_str());
+            match row {
+                Some(row) => {
+                    let had = Decimal::from_str(&row["qtyUnits"].to_string()).unwrap_or_default();
+                    row["qtyUnits"] = num(had + change);
+                    row["qty"] = num((had + change) / Decimal::from(LOT));
+                }
+                None => rows.push(json!({
+                    "symbol": t.symbol, "exchange": "MOEX", "portfolio": PORTFOLIO, "qtyUnits": num(change),
+                    "qty": num(change / Decimal::from(LOT)), "lotSize": LOT, "avgPrice": num(t.price),
+                    "isCurrency": false, "unrealisedPl": 0,
+                })),
+            }
+        }
+        rows.retain(|r| r["isCurrency"] == true || r["qtyUnits"].as_f64() != Some(0.0));
+        rows
+    }
+
     fn push(&mut self, kind: &str, owner: &str, data: &Value) {
         self.subs.retain(|s| !s.tx.is_closed());
         for s in &self.subs {
@@ -435,7 +464,18 @@ impl MockServer {
         // The order event comes first, then the fill.
         b.push("orders", owner, &o.json());
         b.push("trades", owner, &trade.json());
+        let symbol = trade.symbol.clone();
         b.trades.push(trade);
+        // The position of the instrument after the fill (zero when the fill closed it).
+        let position = b
+            .positions(owner)
+            .into_iter()
+            .find(|r| r["symbol"] == symbol.as_str())
+            .unwrap_or_else(|| {
+                json!({"symbol": symbol, "exchange": "MOEX", "portfolio": PORTFOLIO, "qtyUnits": 0, "qty": 0,
+                       "lotSize": LOT, "avgPrice": 0, "isCurrency": false})
+            });
+        b.push("positions", owner, &position);
         trade_id
     }
 }
@@ -599,7 +639,10 @@ async fn http_handler(
     let lose_answer = state.options.stop_answer_lost.load(Ordering::SeqCst)
         && method == Method::POST
         && (path.ends_with("/actions/stop") || path.ends_with("/actions/stopLimit"));
-    if lose_answer {
+    let lose_order_answer = state.options.order_answer_lost.load(Ordering::SeqCst)
+        && method == Method::POST
+        && (path.ends_with("/actions/limit") || path.ends_with("/actions/market"));
+    if lose_answer || lose_order_answer {
         let _ = handle_http(state, method, uri, headers, body).await;
         return json_response(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -707,7 +750,10 @@ async fn handle_http(
                 let list: Vec<Value> = symbols
                     .split(',')
                     .map(|p| p.split_once(':').map(|x| x.1).unwrap_or(p))
-                    .map(|s| quote_json(s, 300.1, 300.2))
+                    .map(|s| match opts.prices.get(s) {
+                        Some(price) => quote_at(s, price),
+                        None => quote_json(s, 300.1, 300.2),
+                    })
                     .collect();
                 return json_response(StatusCode::OK, &Value::Array(list).to_string());
             }
@@ -716,10 +762,11 @@ async fn handle_http(
                     return not_found("instrument");
                 }
                 let take: usize = param(&q, "take").and_then(|v| v.parse().ok()).unwrap_or(2);
+                let price = opts.prices.get(symbol).map_or(json!(300.15), num);
                 let trades: Vec<Value> = (0..take.min(3))
                     .map(|i| {
                         json!({"id": 9000 - i as i64, "orderno": "1", "symbol": symbol, "board": "TQBR", "qty": 100,
-                               "price": 300.15, "time": now_text(), "timestamp": now_ms(), "side": "buy", "oi": 0, "existing": true})
+                               "price": price, "time": now_text(), "timestamp": now_ms(), "side": "buy", "oi": 0, "existing": true})
                     })
                     .collect();
                 return json_response(StatusCode::OK, &Value::Array(trades).to_string());
@@ -746,7 +793,10 @@ async fn handle_http(
                     return not_found("instrument");
                 }
                 // The REST answer names the time `msTimestamp`, the stream `ms_timestamp`.
-                let mut book = order_book_json();
+                let depth = param(&q, "depth")
+                    .and_then(|d| d.parse().ok())
+                    .unwrap_or(20);
+                let mut book = order_book_at(opts.prices.get(symbol), depth);
                 let ms = book["ms_timestamp"].take();
                 book.as_object_mut().unwrap().remove("ms_timestamp");
                 book.as_object_mut().unwrap().remove("timestamp");
@@ -761,6 +811,7 @@ async fn handle_http(
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(from + 3600);
                 let tf = param(&q, "tf").unwrap_or("60").to_string();
+                let price = param(&q, "symbol").and_then(|s| opts.prices.get(s));
                 opts.history_requests
                     .lock()
                     .unwrap()
@@ -779,8 +830,12 @@ async fn handle_http(
                 while t < to && bars.len() < 50_000 {
                     let n = t.div_euclid(step);
                     let open = 100 + n.rem_euclid(20);
-                    bars.push(json!({"time": t, "open": open, "high": open + 1, "low": open - 1, "close": open,
-                                     "volume": 1000 + n.rem_euclid(7)}));
+                    bars.push(match price {
+                        Some(p) => json!({"time": t, "open": num(p), "high": num(p), "low": num(p), "close": num(p),
+                                          "volume": 1000 + n.rem_euclid(7)}),
+                        None => json!({"time": t, "open": open, "high": open + 1, "low": open - 1, "close": open,
+                                       "volume": 1000 + n.rem_euclid(7)}),
+                    });
                     t += step;
                 }
                 return json_response(
@@ -836,7 +891,10 @@ async fn handle_http(
                 };
             }
             [_ex, _pf, "positions"] => {
-                return json_response(StatusCode::OK, &Value::Array(positions_json()).to_string());
+                return json_response(
+                    StatusCode::OK,
+                    &Value::Array(b.positions(&owner)).to_string(),
+                );
             }
             [_ex, _pf, "summary"] => {
                 return json_response(
@@ -910,6 +968,53 @@ async fn handle_http(
     }
 
     not_found("method")
+}
+
+/// The first frames of a market data subscription: at the price a test set for the symbol, or the recorded numbers.
+fn market_frames(opcode: &str, symbol: &str, depth: usize, price: Option<Decimal>) -> Vec<Value> {
+    let p = |recorded: f64| price.map_or(json!(recorded), num);
+    match opcode {
+        "OrderBookGetAndSubscribe" => vec![order_book_at(price, depth)],
+        "QuotesSubscribe" => vec![match price {
+            Some(price) => quote_at(symbol, price),
+            None => quote_json(symbol, 300.1, 300.2),
+        }],
+        // A deal at a price a test set is a new deal, with an id of its own.
+        "AllTradesGetAndSubscribe" => vec![json!({
+            "id": if price.is_some() { json!(now_ms()) } else { json!(9001) }, "orderno": "1", "symbol": symbol, "board": "TQBR", "qty": 100, "price": p(300.15),
+            "time": now_text(), "timestamp": now_ms(), "side": "buy", "oi": 0, "existing": false})],
+        "BarsGetAndSubscribe" => vec![json!({
+            "time": chrono::Utc::now().timestamp() / 60 * 60, "open": p(300.0), "close": p(300.5),
+            "high": p(301.0), "low": p(299.5), "volume": 1200})],
+        _ => Vec::new(),
+    }
+}
+
+/// The book of the stream: the recorded one, or the levels around the price a test set.
+fn order_book_at(price: Option<Decimal>, depth: usize) -> Value {
+    let mut book = order_book_json();
+    if let Some(price) = price {
+        let (bids, asks) = crate::market::levels(price, depth.clamp(1, 20));
+        let side = |prices: Vec<Decimal>| -> Value {
+            prices
+                .into_iter()
+                .enumerate()
+                .map(|(i, p)| json!({"price": num(p), "volume": 100 + 10 * i}))
+                .collect()
+        };
+        book["bids"] = side(bids);
+        book["asks"] = side(asks);
+    }
+    book
+}
+
+/// A quote with the bid a step below `price`, the ask a step above, the last deal at it.
+fn quote_at(symbol: &str, price: Decimal) -> Value {
+    let mut q = quote_json(symbol, 0.0, 0.0);
+    q["bid"] = num(price - crate::market::STEP);
+    q["ask"] = num(price + crate::market::STEP);
+    q["last_price"] = num(price);
+    q
 }
 
 fn quote_json(symbol: &str, bid: f64, ask: f64) -> Value {
@@ -1085,9 +1190,22 @@ async fn handle_ws(socket: WebSocket, state: MockState) {
     };
     let (push_tx, mut push_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let mut frames_sent = 0u32;
-    // The subscriptions of this socket that are market data: guid -> opcode.
+    // The market data subscriptions of this socket: (guid, opcode, symbol). A new price of their symbol is sent to them.
+    let mut market: Vec<(String, String, String, usize)> = Vec::new();
+    let mut moved = state.options.prices.subscribe();
     loop {
         let msg = tokio::select! {
+            Ok(()) = moved.changed() => {
+                for (guid, opcode, symbol, depth) in &market {
+                    let Some(price) = state.options.prices.get(symbol) else { continue };
+                    for f in market_frames(opcode, symbol, *depth, Some(price)) {
+                        let _ = write
+                            .send(Message::Text(json!({"data": f, "guid": guid}).to_string().into()))
+                            .await;
+                    }
+                }
+                continue;
+            }
             Some(text) = push_rx.recv() => {
                 if text == CLOSE_SENTINEL {
                     let _ = write.send(Message::Close(None)).await;
@@ -1135,6 +1253,7 @@ async fn handle_ws(socket: WebSocket, state: MockState) {
                         .unwrap()
                         .subs
                         .retain(|s| !(s.socket == socket_id && s.guid == guid));
+                    market.retain(|(g, ..)| *g != guid);
                     let _ = write.send(status(200, "Handled successfully")).await;
                     continue;
                 }
@@ -1150,14 +1269,15 @@ async fn handle_ws(socket: WebSocket, state: MockState) {
                 let owner = req["token"].as_str().unwrap_or("").to_string();
                 let symbol = req["code"].as_str().unwrap_or("SBER").to_string();
                 let frames: Vec<Value> = match opcode.as_str() {
-                    "OrderBookGetAndSubscribe" => vec![order_book_json()],
-                    "QuotesSubscribe" => vec![quote_json(&symbol, 300.1, 300.2)],
-                    "AllTradesGetAndSubscribe" => vec![json!({
-                        "id": 9001, "orderno": "1", "symbol": symbol, "board": "TQBR", "qty": 100, "price": 300.15,
-                        "time": now_text(), "timestamp": now_ms(), "side": "buy", "oi": 0, "existing": false})],
-                    "BarsGetAndSubscribe" => vec![json!({
-                        "time": chrono::Utc::now().timestamp() / 60 * 60, "open": 300.0, "close": 300.5,
-                        "high": 301.0, "low": 299.5, "volume": 1200})],
+                    "OrderBookGetAndSubscribe"
+                    | "QuotesSubscribe"
+                    | "AllTradesGetAndSubscribe"
+                    | "BarsGetAndSubscribe" => {
+                        let depth = req["depth"].as_u64().unwrap_or(20) as usize;
+                        market.retain(|(g, ..)| *g != guid);
+                        market.push((guid.clone(), opcode.clone(), symbol.clone(), depth));
+                        market_frames(&opcode, &symbol, depth, state.options.prices.get(&symbol))
+                    }
                     "OrdersGetAndSubscribeV2"
                     | "TradesGetAndSubscribeV2"
                     | "PositionsGetAndSubscribeV2" => {
@@ -1185,7 +1305,7 @@ async fn handle_ws(socket: WebSocket, state: MockState) {
                                         v
                                     })
                                     .collect(),
-                                "positions" => positions_json(),
+                                "positions" => state.options.book.lock().unwrap().positions(&owner),
                                 _ => Vec::new(),
                             }
                         };

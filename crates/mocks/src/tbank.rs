@@ -110,6 +110,9 @@ pub struct MockOptions {
     /// The broker takes the stop order, then the answer is lost: the stop order is in the book, the client gets
     /// `UNAVAILABLE`. The failure that matters most for a bot: the order is there and nobody told it.
     pub stop_answer_lost: AtomicBool,
+    /// The broker takes a new order (not a stop order), then the answer is lost: the order is in the book and the
+    /// client gets `UNAVAILABLE`. The failure a bot must survive without placing the order twice.
+    pub order_answer_lost: AtomicBool,
     /// The broker takes the stop order and answers, but the answer carries no stop order id.
     pub stop_answer_without_id: AtomicBool,
     /// `GetLastPrices` calls served (a method no connector wraps, used to test `raw()`).
@@ -130,9 +133,12 @@ pub struct MockOptions {
     pub user_stream_refuse: Mutex<Option<(tonic::Code, String)>>,
     /// The `operation_types` of every `GetOperationsByCursor` request, in the order they came.
     pub operation_types: Mutex<Vec<Vec<i32>>>,
+    /// The price a test set for a ticker: the order book, the last deals and the bars follow it, and the open market
+    /// data streams of the ticker get a new message when it changes.
+    pub prices: crate::market::Prices,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct Inst {
     uid: &'static str,
     figi: &'static str,
@@ -176,6 +182,18 @@ struct MockOrder {
     status: i32,
 }
 
+/// A fill the mock made: it moves the portfolio and is a trade of the operation history.
+#[derive(Clone)]
+struct MockFill {
+    account: String,
+    inst: Inst,
+    direction: i32,
+    pieces: i64,
+    price: Decimal,
+    secs: i64,
+    trade_id: String,
+}
+
 #[derive(Clone)]
 struct OrderEvent {
     account: String,
@@ -192,6 +210,10 @@ struct State {
     events: broadcast::Sender<OrderEvent>,
     /// Counts the cuts of the user streams: every stream task ends when it changes.
     cut: tokio::sync::watch::Sender<u64>,
+    /// Every fill, in order.
+    fills: Mutex<Vec<MockFill>>,
+    /// Counts the fills: an open portfolio stream sends the new portfolio when it changes.
+    portfolio_changed: tokio::sync::watch::Sender<u64>,
 }
 
 use pb::OrderExecutionReportStatus as St;
@@ -261,6 +283,91 @@ impl State {
         });
     }
 
+    /// Records the fill of the whole order `o` (the portfolio and the history follow it) and returns the trade.
+    fn record_fill(&self, o: &MockOrder) -> MockFill {
+        let mut fills = self.fills.lock().unwrap();
+        let fill = MockFill {
+            account: o.account.clone(),
+            inst: o.inst.clone(),
+            direction: o.direction,
+            pieces: o.lots * i64::from(o.inst.lot),
+            price: o.price,
+            secs: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64),
+            trade_id: format!("TR-{}-{}", o.exchange_id, fills.len() + 1),
+        };
+        fills.push(fill.clone());
+        drop(fills);
+        self.portfolio_changed.send_modify(|n| *n += 1);
+        fill
+    }
+
+    /// The portfolio of `account`: the recorded holding of SBER with the fills on top.
+    fn portfolio_of(&self, account: &str) -> pb::PortfolioResponse {
+        let mut held: Vec<(Inst, Decimal, Decimal)> = vec![(
+            SBER,
+            if account == ACCOUNT_A {
+                dec!(30)
+            } else {
+                dec!(7)
+            },
+            dec!(274),
+        )];
+        for f in self
+            .fills
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|f| f.account == account)
+        {
+            let change = Decimal::from(f.pieces)
+                * if f.direction == pb::OrderDirection::Sell as i32 {
+                    dec!(-1)
+                } else {
+                    dec!(1)
+                };
+            match held.iter_mut().find(|(i, _, _)| i.uid == f.inst.uid) {
+                Some(h) => {
+                    h.1 += change;
+                    h.2 = f.price;
+                }
+                None => held.push((f.inst.clone(), change, f.price)),
+            }
+        }
+        held.retain(|(_, qty, _)| !qty.is_zero());
+        let value: Decimal = held.iter().map(|(_, qty, price)| qty * price).sum();
+        let mut positions: Vec<pb::PortfolioPosition> = held
+            .into_iter()
+            .map(|(inst, qty, price)| pb::PortfolioPosition {
+                figi: inst.figi.into(),
+                instrument_type: "share".into(),
+                quantity: Some(quot(qty)),
+                average_position_price: Some(money(if inst.uid == SBER.uid {
+                    dec!(250)
+                } else {
+                    price
+                })),
+                current_price: Some(money(price)),
+                instrument_uid: inst.uid.into(),
+                ticker: inst.ticker.into(),
+                class_code: inst.class.into(),
+                ..Default::default()
+            })
+            .collect();
+        positions.push(pb::PortfolioPosition {
+            instrument_type: "currency".into(),
+            figi: "RUB000UTSTOM".into(),
+            ..Default::default()
+        });
+        pb::PortfolioResponse {
+            total_amount_portfolio: Some(money(cash_of(account) + value)),
+            account_id: account.into(),
+            positions,
+            ..Default::default()
+        }
+    }
+
     fn find(&self, account: &str, id: &str, by_request: bool) -> Option<MockOrder> {
         self.orders
             .lock()
@@ -313,29 +420,57 @@ fn order(price: Decimal, qty: i64) -> pb::Order {
     }
 }
 
-fn book_msg(i: &Inst, depth: i32, n: u32) -> pb::OrderBook {
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// The `n`-th book of a burst: the recorded numbers moved by `n` steps, or the levels around the price a test set.
+fn book_msg(i: &Inst, depth: i32, n: u32, price: Option<Decimal>) -> pb::OrderBook {
     let step = Decimal::from(n) * dec!(0.01);
+    let (bids, asks) = match price {
+        Some(price) => {
+            let (bids, asks) = crate::market::levels(price, depth.clamp(1, 50) as usize);
+            let side = |prices: Vec<Decimal>, base: i64| -> Vec<pb::Order> {
+                prices
+                    .into_iter()
+                    .enumerate()
+                    .map(|(k, p)| order(p, base + 10 * k as i64))
+                    .collect()
+            };
+            (side(bids, 100), side(asks, 80))
+        }
+        None => (
+            (0..depth.min(5))
+                .map(|k| {
+                    order(
+                        dec!(273.90) - dec!(0.1) * Decimal::from(k) + step,
+                        100 - 10 * i64::from(k),
+                    )
+                })
+                .collect(),
+            (0..depth.min(5))
+                .map(|k| {
+                    order(
+                        dec!(274.00) + dec!(0.1) * Decimal::from(k) + step,
+                        80 + 10 * i64::from(k),
+                    )
+                })
+                .collect(),
+        ),
+    };
     pb::OrderBook {
         figi: i.figi.into(),
         depth,
         is_consistent: true,
-        bids: (0..depth.min(5))
-            .map(|k| {
-                order(
-                    dec!(273.90) - dec!(0.1) * Decimal::from(k) + step,
-                    100 - 10 * i64::from(k),
-                )
-            })
-            .collect(),
-        asks: (0..depth.min(5))
-            .map(|k| {
-                order(
-                    dec!(274.00) + dec!(0.1) * Decimal::from(k) + step,
-                    80 + 10 * i64::from(k),
-                )
-            })
-            .collect(),
-        time: ts(1_700_000_000 + i64::from(n)),
+        bids,
+        asks,
+        time: ts(if price.is_some() {
+            now_secs()
+        } else {
+            1_700_000_000 + i64::from(n)
+        }),
         instrument_uid: i.uid.into(),
         ticker: i.ticker.into(),
         class_code: i.class.into(),
@@ -350,8 +485,10 @@ impl MarketDataService for Mock {
         r: Request<pb::GetCandlesRequest>,
     ) -> Result<Response<pb::GetCandlesResponse>, Status> {
         let opts = &self.0.opts;
-        if opts.synthetic_candles.load(Ordering::Relaxed) {
-            let r = r.into_inner();
+        let r = r.into_inner();
+        let price = lookup(r.instrument_id.as_deref().unwrap_or(""))
+            .and_then(|i| opts.prices.get(i.ticker));
+        if opts.synthetic_candles.load(Ordering::Relaxed) || price.is_some() {
             let from = r.from.as_ref().map(|t| t.seconds).unwrap_or(0);
             let to = r.to.as_ref().map(|t| t.seconds).unwrap_or(0);
             opts.candle_requests
@@ -390,7 +527,11 @@ impl MarketDataService for Mock {
             if to - from > max_days * 86_400 {
                 return Err(Status::invalid_argument("30014"));
             }
-            let candles = crate::synthetic_bars(from, to, step)
+            let mut series = crate::synthetic_bars(from, to, step);
+            if let Some(price) = price {
+                series = crate::market::flat_bars(series.into_iter().map(|bar| bar.0), price);
+            }
+            let candles = series
                 .into_iter()
                 .map(|(t, o, h, l, c, v)| pb::HistoricCandle {
                     open: Some(quot(o)),
@@ -427,7 +568,7 @@ impl MarketDataService for Mock {
         let r = r.into_inner();
         let i = lookup(r.instrument_id.as_deref().unwrap_or(""))
             .ok_or_else(|| Status::not_found("50002"))?;
-        let b = book_msg(&i, r.depth, 0);
+        let b = book_msg(&i, r.depth, 0, self.0.opts.prices.get(i.ticker));
         Ok(Response::new(pb::GetOrderBookResponse {
             figi: i.figi.into(),
             depth: r.depth,
@@ -452,7 +593,9 @@ impl MarketDataService for Mock {
             .iter()
             .filter_map(|r| lookup(r))
             .map(|i| pb::LastPrice {
-                price: Some(quot(dec!(274.05))),
+                price: Some(quot(
+                    self.0.opts.prices.get(i.ticker).unwrap_or(dec!(274.05)),
+                )),
                 time: ts(1_700_000_000),
                 ticker: i.ticker.into(),
                 class_code: i.class.into(),
@@ -482,12 +625,18 @@ impl MarketDataService for Mock {
         &self,
         r: Request<pb::GetLastTradesRequest>,
     ) -> Result<Response<pb::GetLastTradesResponse>, Status> {
-        let _ = r;
+        let r = r.into_inner();
+        let price = lookup(r.instrument_id.as_deref().unwrap_or(""))
+            .and_then(|i| self.0.opts.prices.get(i.ticker));
         let t = |p: Decimal, d: i32| pb::Trade {
             direction: d,
-            price: Some(quot(p)),
+            price: Some(quot(price.unwrap_or(p))),
             quantity: 5,
-            time: ts(1_700_000_000),
+            time: ts(if price.is_some() {
+                now_secs()
+            } else {
+                1_700_000_000
+            }),
             ..Default::default()
         };
         Ok(Response::new(pb::GetLastTradesResponse {
@@ -512,8 +661,32 @@ impl MarketDataStreamService for Mock {
         let (tx, rx) = mpsc::channel::<Result<pb::MarketDataResponse, Status>>(1024);
         tokio::spawn(async move {
             let mut data_sent = 0u32;
-            while let Ok(Some(msg)) = input.message().await {
+            // The subscriptions of this stream: a new price of their ticker is sent to them.
+            let mut subs: Vec<MdSub> = Vec::new();
+            let mut moved = opts.prices.subscribe();
+            loop {
+                let msg = tokio::select! {
+                    msg = input.message() => match msg {
+                        Ok(Some(msg)) => msg,
+                        _ => break,
+                    },
+                    Ok(()) = moved.changed() => {
+                        for sub in &subs {
+                            let Some(price) = opts.prices.get(sub.inst().ticker) else { continue };
+                            if tx.send(Ok(sub.at(price))).await.is_err() {
+                                return;
+                            }
+                        }
+                        continue;
+                    }
+                };
                 let Some(payload) = msg.payload else { continue };
+                let action = |a: i32, sub: MdSub, subs: &mut Vec<MdSub>| {
+                    subs.retain(|s| *s != sub);
+                    if a == pb::SubscriptionAction::Subscribe as i32 {
+                        subs.push(sub);
+                    }
+                };
                 match payload {
                     Req::SubscribeOrderBookRequest(r) => {
                         for ins in &r.instruments {
@@ -532,6 +705,13 @@ impl MarketDataStreamService for Mock {
                                 pb::SubscriptionStatus::Success
                             };
                             let i = known.clone().unwrap_or(SBER);
+                            if status == pb::SubscriptionStatus::Success {
+                                action(
+                                    r.subscription_action,
+                                    MdSub::Book(i.clone(), ins.depth),
+                                    &mut subs,
+                                );
+                            }
                             if !opts.md_silent.load(Ordering::SeqCst) {
                                 let ack = pb::OrderBookSubscription {
                                     figi: i.figi.into(),
@@ -567,7 +747,12 @@ impl MarketDataStreamService for Mock {
                                     for n in 0..burst {
                                         let cut = opts2.md_cut_after.load(Ordering::SeqCst);
                                         let msg = pb::MarketDataResponse {
-                                            payload: Some(Resp::Orderbook(book_msg(&i, depth, n))),
+                                            payload: Some(Resp::Orderbook(book_msg(
+                                                &i,
+                                                depth,
+                                                n,
+                                                opts2.prices.get(i.ticker),
+                                            ))),
                                         };
                                         if tx2.send(Ok(msg)).await.is_err() {
                                             return;
@@ -583,6 +768,8 @@ impl MarketDataStreamService for Mock {
                     Req::SubscribeTradesRequest(r) => {
                         for ins in &r.instruments {
                             let i = lookup(&ins.instrument_id).unwrap_or(SBER);
+                            action(r.subscription_action, MdSub::Trades(i.clone()), &mut subs);
+                            let price = opts.prices.get(i.ticker);
                             let ack = pb::TradeSubscription {
                                 figi: i.figi.into(),
                                 subscription_status: pb::SubscriptionStatus::Success as i32,
@@ -604,9 +791,13 @@ impl MarketDataStreamService for Mock {
                             let trade = pb::Trade {
                                 figi: i.figi.into(),
                                 direction: pb::TradeDirection::Buy as i32,
-                                price: Some(quot(dec!(274))),
+                                price: Some(quot(price.unwrap_or(dec!(274)))),
                                 quantity: 7,
-                                time: ts(1_700_000_001),
+                                time: ts(if price.is_some() {
+                                    now_secs()
+                                } else {
+                                    1_700_000_001
+                                }),
                                 instrument_uid: i.uid.into(),
                                 ticker: i.ticker.into(),
                                 class_code: i.class.into(),
@@ -622,6 +813,11 @@ impl MarketDataStreamService for Mock {
                     Req::SubscribeCandlesRequest(r) => {
                         for ins in &r.instruments {
                             let i = lookup(&ins.instrument_id).unwrap_or(SBER);
+                            action(
+                                r.subscription_action,
+                                MdSub::Candles(i.clone(), ins.interval),
+                                &mut subs,
+                            );
                             let ack = pb::CandleSubscription {
                                 figi: i.figi.into(),
                                 interval: ins.interval,
@@ -641,25 +837,26 @@ impl MarketDataStreamService for Mock {
                                     payload: Some(Resp::SubscribeCandlesResponse(resp)),
                                 }))
                                 .await;
-                            let c = pb::Candle {
-                                figi: i.figi.into(),
-                                interval: ins.interval,
-                                open: Some(quot(dec!(270))),
-                                high: Some(quot(dec!(275))),
-                                low: Some(quot(dec!(269))),
-                                close: Some(quot(dec!(274))),
-                                volume: 500,
-                                time: ts(1_700_000_000),
-                                instrument_uid: i.uid.into(),
-                                ticker: i.ticker.into(),
-                                class_code: i.class.into(),
-                                ..Default::default()
+                            let bar = match opts.prices.get(i.ticker) {
+                                Some(price) => MdSub::Candles(i.clone(), ins.interval).at(price),
+                                None => pb::MarketDataResponse {
+                                    payload: Some(Resp::Candle(pb::Candle {
+                                        figi: i.figi.into(),
+                                        interval: ins.interval,
+                                        open: Some(quot(dec!(270))),
+                                        high: Some(quot(dec!(275))),
+                                        low: Some(quot(dec!(269))),
+                                        close: Some(quot(dec!(274))),
+                                        volume: 500,
+                                        time: ts(1_700_000_000),
+                                        instrument_uid: i.uid.into(),
+                                        ticker: i.ticker.into(),
+                                        class_code: i.class.into(),
+                                        ..Default::default()
+                                    })),
+                                },
                             };
-                            let _ = tx
-                                .send(Ok(pb::MarketDataResponse {
-                                    payload: Some(Resp::Candle(c)),
-                                }))
-                                .await;
+                            let _ = tx.send(Ok(bar)).await;
                         }
                     }
                     _ => {}
@@ -674,6 +871,57 @@ impl MarketDataStreamService for Mock {
             }
         });
         Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
+    }
+}
+
+/// A subscription of the market data stream.
+#[derive(Clone, PartialEq)]
+enum MdSub {
+    Book(Inst, i32),
+    Trades(Inst),
+    Candles(Inst, i32),
+}
+
+impl MdSub {
+    fn inst(&self) -> &Inst {
+        match self {
+            Self::Book(i, _) | Self::Trades(i) | Self::Candles(i, _) => i,
+        }
+    }
+
+    /// The message of this subscription at `price`.
+    fn at(&self, price: Decimal) -> pb::MarketDataResponse {
+        let payload = match self {
+            Self::Book(i, depth) => Resp::Orderbook(book_msg(i, *depth, 0, Some(price))),
+            Self::Trades(i) => Resp::Trade(pb::Trade {
+                figi: i.figi.into(),
+                direction: pb::TradeDirection::Buy as i32,
+                price: Some(quot(price)),
+                quantity: 7,
+                time: ts(now_secs()),
+                instrument_uid: i.uid.into(),
+                ticker: i.ticker.into(),
+                class_code: i.class.into(),
+                ..Default::default()
+            }),
+            Self::Candles(i, interval) => Resp::Candle(pb::Candle {
+                figi: i.figi.into(),
+                interval: *interval,
+                open: Some(quot(price)),
+                high: Some(quot(price)),
+                low: Some(quot(price)),
+                close: Some(quot(price)),
+                volume: 500,
+                time: ts(now_secs() / 60 * 60),
+                instrument_uid: i.uid.into(),
+                ticker: i.ticker.into(),
+                class_code: i.class.into(),
+                ..Default::default()
+            }),
+        };
+        pb::MarketDataResponse {
+            payload: Some(payload),
+        }
     }
 }
 
@@ -734,6 +982,9 @@ impl OrdersService for Mock {
             state.publish(&placed, None);
         });
         let _ = work.await;
+        if self.0.opts.order_answer_lost.load(Ordering::SeqCst) {
+            return Err(Status::unavailable("connection reset by peer"));
+        }
         Ok(Response::new(State::post_response(&o)))
     }
 
@@ -940,46 +1191,15 @@ fn cash_of(account: &str) -> Decimal {
     }
 }
 
-fn portfolio_of(account: &str) -> pb::PortfolioResponse {
-    let qty: Decimal = if account == ACCOUNT_A {
-        dec!(30)
-    } else {
-        dec!(7)
-    };
-    pb::PortfolioResponse {
-        total_amount_portfolio: Some(money(cash_of(account) + qty * dec!(274))),
-        account_id: account.into(),
-        positions: vec![
-            pb::PortfolioPosition {
-                figi: SBER.figi.into(),
-                instrument_type: "share".into(),
-                quantity: Some(quot(qty)),
-                average_position_price: Some(money(dec!(250))),
-                current_price: Some(money(dec!(274))),
-                instrument_uid: SBER.uid.into(),
-                ticker: SBER.ticker.into(),
-                class_code: SBER.class.into(),
-                ..Default::default()
-            },
-            pb::PortfolioPosition {
-                instrument_type: "currency".into(),
-                figi: "RUB000UTSTOM".into(),
-                ..Default::default()
-            },
-        ],
-        ..Default::default()
-    }
-}
-
 #[tonic::async_trait]
 impl OperationsService for Mock {
     async fn get_portfolio(
         &self,
         request: Request<pb::PortfolioRequest>,
     ) -> Result<Response<pb::PortfolioResponse>, Status> {
-        Ok(Response::new(portfolio_of(
-            &request.into_inner().account_id,
-        )))
+        Ok(Response::new(
+            self.0.portfolio_of(&request.into_inner().account_id),
+        ))
     }
 
     async fn get_positions(
@@ -1033,6 +1253,36 @@ impl OperationsService for Mock {
             }),
             ..Default::default()
         };
+        let mut items = vec![op];
+        if !has_next {
+            // The fills the mock made, after the recorded operation.
+            let fills = self.0.fills.lock().unwrap();
+            items.extend(fills.iter().filter(|f| f.account == account).map(|f| {
+                pb::OperationItem {
+                    id: format!("op-{}", f.trade_id),
+                    r#type: if f.direction == pb::OrderDirection::Sell as i32 {
+                        pb::OperationType::Sell
+                    } else {
+                        pb::OperationType::Buy
+                    } as i32,
+                    ticker: f.inst.ticker.into(),
+                    class_code: f.inst.class.into(),
+                    figi: f.inst.figi.into(),
+                    instrument_uid: f.inst.uid.into(),
+                    commission: Some(money(dec!(0))),
+                    trades_info: Some(pb::OperationItemTrades {
+                        trades: vec![pb::OperationItemTrade {
+                            num: f.trade_id.clone(),
+                            quantity: f.pieces,
+                            price: Some(money(f.price)),
+                            date: ts(f.secs),
+                            ..Default::default()
+                        }],
+                    }),
+                    ..Default::default()
+                }
+            }));
+        }
         Ok(Response::new(pb::GetOperationsByCursorResponse {
             has_next,
             next_cursor: if has_next {
@@ -1040,7 +1290,7 @@ impl OperationsService for Mock {
             } else {
                 String::new()
             },
-            items: vec![op],
+            items,
         }))
     }
 }
@@ -1054,6 +1304,8 @@ impl OperationsStreamService for Mock {
         self.0.opts.stream_gate.pass().await;
         let account = account_of(&request.into_inner().accounts);
         let (tx, rx) = mpsc::channel(16);
+        let state = Arc::clone(&self.0);
+        let mut changed = state.portfolio_changed.subscribe();
         tokio::spawn(async move {
             use pb::portfolio_stream_response::Payload as P;
             let ack = pb::PortfolioSubscriptionResult {
@@ -1068,13 +1320,24 @@ impl OperationsStreamService for Mock {
                     payload: Some(P::Subscriptions(ack)),
                 }))
                 .await;
-            let _ = tx
-                .send(Ok(pb::PortfolioStreamResponse {
-                    payload: Some(P::Portfolio(portfolio_of(&account))),
-                }))
-                .await;
-            // Keep the stream open until the client goes away.
-            tx.closed().await;
+            // The portfolio now, then again after every fill, until the client goes away.
+            loop {
+                changed.mark_unchanged();
+                let portfolio = state.portfolio_of(&account);
+                if tx
+                    .send(Ok(pb::PortfolioStreamResponse {
+                        payload: Some(P::Portfolio(portfolio)),
+                    }))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                tokio::select! {
+                    _ = tx.closed() => return,
+                    moved = changed.changed() => if moved.is_err() { return },
+                }
+            }
         });
         Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
     }
@@ -1480,6 +1743,8 @@ impl MockServer {
             next_id: AtomicU64::new(1),
             events,
             cut: tokio::sync::watch::channel(0).0,
+            fills: Mutex::new(Vec::new()),
+            portfolio_changed: tokio::sync::watch::channel(0).0,
         });
         let mock = Mock(Arc::clone(&state));
 
@@ -1567,6 +1832,7 @@ impl MockServer {
                 o.executed = o.lots;
             })
             .expect("exists");
+        let fill = self.state.record_fill(&o);
         let trades = pb::OrderTrades {
             order_id: o.exchange_id.clone(),
             direction: o.direction,
@@ -1575,8 +1841,8 @@ impl MockServer {
                 date_time: ts(1_700_000_100),
                 price: Some(quot(o.price)),
                 // Own trades are counted in pieces, not in lots (the order itself is in lots).
-                quantity: o.lots * i64::from(o.inst.lot),
-                trade_id: format!("TR-{}", o.exchange_id),
+                quantity: fill.pieces,
+                trade_id: fill.trade_id,
             }],
             account_id: o.account.clone(),
             instrument_uid: o.inst.uid.into(),
@@ -1623,10 +1889,12 @@ impl MockServer {
             .state
             .find(account, request_id, true)
             .expect("order exists");
-        self.state.update(&o.exchange_id, |o| {
+        if let Some(o) = self.state.update(&o.exchange_id, |o| {
             o.status = St::ExecutionReportStatusFill as i32;
             o.executed = o.lots;
-        });
+        }) {
+            self.state.record_fill(&o);
+        }
     }
 
     /// Orders the mock holds for an account (any status).

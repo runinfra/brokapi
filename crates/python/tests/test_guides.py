@@ -20,6 +20,7 @@ import bybit_first_day  # noqa: E402
 import emergency_stop  # noqa: E402
 import finam_first_day  # noqa: E402
 import from_tinkoff  # noqa: E402
+import levers  # noqa: E402
 import quickstart_tbank  # noqa: E402
 import stop_restart  # noqa: E402
 
@@ -32,6 +33,7 @@ async def test_the_quick_start_without_a_token_reads_places_and_cancels(capsys: 
     assert "placed: broker order id" in out
     assert "after cancel: Cancelled, orders alive: 0" in out
     assert "the price stands still: bid 273.9" in out
+    assert "after set_price: bid 249.99, ask 250.01" in out
 
 
 async def test_the_quick_start_runs_unchanged_on_every_imitation() -> None:
@@ -213,3 +215,12 @@ async def test_the_first_day_at_finam_places_restarts_recognises_and_cancels(cap
         out = capsys.readouterr().out
         assert "came back as ours: 0 foreign" in out
         assert "orders left after the cancel: 0" in out
+
+
+async def test_the_levers_move_the_price_and_lose_an_answer() -> None:
+    assert await levers.the_bot_sees_the_price_come_to_its_level() == [
+        Decimal("250.99"),
+        Decimal("249.99"),
+        Decimal("248.99"),
+    ]
+    assert await levers.a_lost_answer_is_asked_about_not_sent_again() is brokapi.OrderStateKind.ACKED

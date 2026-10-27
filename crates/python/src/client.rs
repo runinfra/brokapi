@@ -44,6 +44,20 @@ fn broker_kind(name: &str) -> Result<Broker, CallError> {
     name.parse::<Broker>().map_err(CallError::Broker)
 }
 
+/// `limiter_from_toml(broker, text)`: a counter with limits of your own, the `[broker]` section of a limits file.
+#[pyfunction]
+pub fn limiter_from_toml(broker: String, text: String) -> PyResult<NativeLimiter> {
+    let make = || {
+        let kind = broker_kind(&broker)?;
+        let limits = brokapi::runtime::BrokerLimits::from_toml_section(&text, kind.as_str())
+            .map_err(|e| CallError::Broker(config(format!("limits of {kind}: {e}"))))?;
+        Ok::<_, CallError>(NativeLimiter {
+            limiter: Limiter::with_limits(kind, &limits),
+        })
+    };
+    make().map_err(into_pyerr)
+}
+
 /// `connect(broker, name, settings_json, limiter, event_buffer)`: an awaitable of a [`NativeClient`].
 #[pyfunction]
 #[pyo3(signature = (broker, name, settings, limiter=None, event_buffer=8192))]

@@ -62,8 +62,14 @@ async def on_the_imitation() -> None:
         await first_order(client)
 
         # The price of the imitation stands still: it has no market behind it.
-        book = await client.order_book(await client.instrument("SBER"), depth=1)
+        sber = await client.instrument("SBER")
+        book = await client.order_book(sber, depth=1)
         print(f"the price stands still: bid {book.bids[0].price}")
+
+        # A test moves it: the book is built around the new price, a step of 0.01 on each side.
+        mock.set_price("SBER", "250")
+        book = await client.order_book(sber, depth=1)
+        print(f"after set_price: bid {book.bids[0].price}, ask {book.asks[0].price}")
         # ANCHOR_END: mock
 
 

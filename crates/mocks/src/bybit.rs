@@ -74,6 +74,9 @@ pub struct MockOptions {
     /// The exchange takes a conditional order, then the answer is lost: the order is in the book and the client gets
     /// HTTP 503.
     pub stop_answer_lost: AtomicBool,
+    /// The broker takes a new order (not a stop order), then the answer is lost: the order is in the book and the
+    /// client gets HTTP 503. The failure a bot must survive without placing the order twice.
+    pub order_answer_lost: AtomicBool,
     /// The read of the instruments (`/v5/market/instruments-info`, where the connector takes the rules of a symbol)
     /// answers HTTP 503.
     pub instrument_fail: AtomicBool,
@@ -96,6 +99,9 @@ pub struct MockOptions {
     pub stream_gate: crate::gate::StreamGate,
     /// Frames of the order book streams sent so far.
     pub book_frames: AtomicU32,
+    /// The price a test set for a ticker: the order book, the last deals and the bars follow it, and the open market
+    /// data streams of the ticker get a new message when it changes.
+    pub prices: crate::market::Prices,
     /// Orders, fills and open sockets of all accounts.
     book: std::sync::Mutex<Book>,
 }
@@ -270,6 +276,37 @@ struct Book {
 }
 
 impl Book {
+    /// The positions of `owner`: the recorded one with the fills on top, one net position per symbol (one-way mode).
+    /// A position the fills brought to zero is gone.
+    fn positions(&self, owner: &str) -> Vec<Value> {
+        let mut rows = positions_json();
+        for t in self.trades.iter().filter(|t| t.owner == owner) {
+            let change = if t.side == "Sell" { -t.qty } else { t.qty };
+            let signed = |r: &Value| {
+                let size = Decimal::from_str(r["size"].as_str().unwrap_or("0")).unwrap_or_default();
+                if r["side"] == "Sell" { -size } else { size }
+            };
+            let net = match rows.iter().position(|r| r["symbol"] == t.symbol.as_str()) {
+                Some(i) => {
+                    let net = signed(&rows[i]) + change;
+                    rows.remove(i);
+                    net
+                }
+                None => change,
+            };
+            rows.push(json!({
+                "positionIdx": 0, "symbol": t.symbol, "side": if net < Decimal::ZERO { "Sell" } else { "Buy" },
+                "size": net.abs().to_string(), "avgPrice": t.price.to_string(), "markPrice": t.price.to_string(),
+                "unrealisedPnl": "0", "positionStatus": "Normal", "leverage": "10",
+                "createdTime": t.time.to_string(), "updatedTime": t.time.to_string(), "takeProfit": "0.00", "stopLoss": "0.00",
+            }));
+        }
+        rows.retain(|r| {
+            Decimal::from_str(r["size"].as_str().unwrap_or("0")).is_ok_and(|s| !s.is_zero())
+        });
+        rows
+    }
+
     fn push(&mut self, topic: &str, owner: &str, data: Vec<Value>) {
         self.subs.retain(|s| !s.tx.is_closed());
         let text = json!({"id": format!("m{}", now_ms()), "topic": topic, "creationTime": now_ms(), "data": data}).to_string();
@@ -436,7 +473,18 @@ impl MockServer {
         // The order event comes first, then the fill.
         b.push("order.linear", owner, vec![o.json()]);
         b.push("execution.linear", owner, vec![trade.json()]);
+        let symbol = trade.symbol.clone();
         b.trades.push(trade);
+        // The position of the symbol after the fill, with size 0 when the fill closed it.
+        let position = b
+            .positions(owner)
+            .into_iter()
+            .find(|r| r["symbol"] == symbol.as_str())
+            .unwrap_or_else(|| {
+                json!({"positionIdx": 0, "symbol": symbol, "side": "", "size": "0", "avgPrice": "0",
+                       "markPrice": price.to_string(), "positionStatus": "Normal", "leverage": "10"})
+            });
+        b.push("position.linear", owner, vec![position]);
         exec_id
     }
 
@@ -590,7 +638,11 @@ fn instrument_json(i: &(&str, &str, &str, &str, &str)) -> Value {
 }
 
 /// The mid price the mock books quote around, by symbol.
-fn mid(symbol: &str) -> Decimal {
+/// The price of `symbol`: the one a test set, or the recorded one.
+fn mid(prices: &crate::market::Prices, symbol: &str) -> Decimal {
+    if let Some(price) = prices.get(symbol) {
+        return price;
+    }
     if symbol.starts_with("BTC") {
         Decimal::new(8_169_500, 2)
     } else {
@@ -598,14 +650,36 @@ fn mid(symbol: &str) -> Decimal {
     }
 }
 
-fn book_levels(symbol: &str, depth: usize) -> (Vec<Value>, Vec<Value>) {
-    let m = mid(symbol);
-    let tick = instrument_row(symbol)
-        .map(|i| Decimal::from_str(i.2).unwrap())
-        .unwrap_or(Decimal::new(1, 2));
+/// The book of `symbol`: the best bid at the recorded price and the best ask a tick above, or, with a price a test set,
+/// the best bid a step of 0.01 below it and the best ask a step above.
+fn book_levels(
+    prices: &crate::market::Prices,
+    symbol: &str,
+    depth: usize,
+) -> (Vec<Value>, Vec<Value>) {
+    let m = mid(prices, symbol);
     let step = instrument_row(symbol)
         .map(|i| Decimal::from_str(i.3).unwrap())
         .unwrap_or(Decimal::ONE);
+    if prices.get(symbol).is_some() {
+        let (bids, asks) = crate::market::levels(m, depth.clamp(1, 50));
+        let side = |levels: Vec<Decimal>| -> Vec<Value> {
+            levels
+                .into_iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    json!([
+                        p.to_string(),
+                        (step * Decimal::from(i as i64 + 1)).to_string()
+                    ])
+                })
+                .collect()
+        };
+        return (side(bids), side(asks));
+    }
+    let tick = instrument_row(symbol)
+        .map(|i| Decimal::from_str(i.2).unwrap())
+        .unwrap_or(Decimal::new(1, 2));
     let mut bids = Vec::new();
     let mut asks = Vec::new();
     for i in 0..depth.clamp(1, 50) {
@@ -618,8 +692,8 @@ fn book_levels(symbol: &str, depth: usize) -> (Vec<Value>, Vec<Value>) {
 }
 
 /// The ticker row of the exchange for one symbol, around the mid price of the mock.
-fn ticker_json(symbol: &str) -> Value {
-    let m = mid(symbol);
+fn ticker_json(prices: &crate::market::Prices, symbol: &str) -> Value {
+    let m = mid(prices, symbol);
     json!({
         "symbol": symbol, "lastPrice": m.to_string(), "indexPrice": m.to_string(), "markPrice": m.to_string(),
         "prevPrice24h": m.to_string(), "price24hPcnt": "0.000057", "highPrice24h": (m + Decimal::ONE).to_string(),
@@ -681,7 +755,11 @@ async fn http_handler(
         && method == Method::POST
         && path == "/v5/order/create"
         && serde_json::from_slice::<Value>(&body).is_ok_and(|v| !v["triggerPrice"].is_null());
-    if lose_answer {
+    let lose_order_answer = state.options.order_answer_lost.load(Ordering::SeqCst)
+        && method == Method::POST
+        && path == "/v5/order/create"
+        && serde_json::from_slice::<Value>(&body).is_ok_and(|v| v["triggerPrice"].is_null());
+    if lose_answer || lose_order_answer {
         let _ = handle_http(state, method, uri, headers, body).await;
         return json_response(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -812,7 +890,7 @@ async fn handle_http(
                 let limit: usize = param(&q, "limit")
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(25);
-                let (bids, asks) = book_levels(symbol, limit);
+                let (bids, asks) = book_levels(&opts.prices, symbol, limit);
                 return ok(
                     json!({"s": symbol, "a": asks, "b": bids, "ts": now_ms(), "u": 4_428_270, "seq": 831_240_640_200_i64, "cts": now_ms()}),
                 );
@@ -823,8 +901,11 @@ async fn handle_http(
                     Some(symbol) if instrument_row(symbol).is_none() => {
                         return refuse(10001, "params error: symbol invalid");
                     }
-                    Some(symbol) => vec![ticker_json(symbol)],
-                    None => INSTRUMENTS.iter().map(|i| ticker_json(i.0)).collect(),
+                    Some(symbol) => vec![ticker_json(&opts.prices, symbol)],
+                    None => INSTRUMENTS
+                        .iter()
+                        .map(|i| ticker_json(&opts.prices, i.0))
+                        .collect(),
                 };
                 return ok(json!({"category": "linear", "list": rows}));
             }
@@ -838,7 +919,7 @@ async fn handle_http(
                     .unwrap_or(500);
                 let t = now_ms();
                 let list: Vec<Value> = (0..limit.min(3))
-                    .map(|i| json!({"execId": format!("e{}", 9000 - i), "symbol": symbol, "price": mid(symbol).to_string(), "size": "0.003",
+                    .map(|i| json!({"execId": format!("e{}", 9000 - i), "symbol": symbol, "price": mid(&opts.prices, symbol).to_string(), "size": "0.003",
                                     "side": if i % 2 == 0 { "Buy" } else { "Sell" }, "time": (t - i as i64 * 1000).to_string(),
                                     "isBlockTrade": false, "isRPITrade": false, "seq": "1"}))
                     .collect();
@@ -869,15 +950,17 @@ async fn handle_http(
                 // `limit`: a long history gets bars that depend on the range.
                 let mut rows = Vec::new();
                 let mut t = (from + step_ms - 1).div_euclid(step_ms) * step_ms;
+                let price = opts.prices.get(symbol);
                 while t <= to && rows.len() < 20_000 {
                     let n = t.div_euclid(step_ms);
                     let open = 100 + n.rem_euclid(20);
+                    let at = |recorded: String| price.map_or(recorded, |p| p.to_string());
                     rows.push(json!([
                         t.to_string(),
-                        open.to_string(),
-                        (open + 1).to_string(),
-                        (open - 1).to_string(),
-                        format!("{open}.5"),
+                        at(open.to_string()),
+                        at((open + 1).to_string()),
+                        at((open - 1).to_string()),
+                        at(format!("{open}.5")),
                         (1000 + n.rem_euclid(7)).to_string(),
                         "1"
                     ]));
@@ -1073,7 +1156,13 @@ async fn handle_http(
             if param(&q, "symbol").is_none() && param(&q, "settleCoin").is_none() {
                 return refuse(10001, "params error: symbol or settleCoin is required");
             }
-            ok(json!({"category": "linear", "list": positions_json(), "nextPageCursor": ""}))
+            let symbol = param(&q, "symbol");
+            let list: Vec<Value> = b
+                .positions(&owner)
+                .into_iter()
+                .filter(|r| symbol.is_none_or(|s| r["symbol"] == s))
+                .collect();
+            ok(json!({"category": "linear", "list": list, "nextPageCursor": ""}))
         }
         ("GET", "/v5/account/wallet-balance") => ok(wallet_json()),
         ("POST", "/v5/account/demo-apply-money") => ok(json!({})),
@@ -1165,13 +1254,13 @@ async fn private_ws_handler(
     ws.on_upgrade(move |socket| handle_ws(socket, state, true))
 }
 
-/// The first frame of a topic after its subscription is confirmed.
-fn first_frames(topic: &str) -> Vec<Value> {
+/// The first frame of a topic after its subscription is confirmed, and the frame of a new price a test set.
+fn first_frames(prices: &crate::market::Prices, topic: &str) -> Vec<Value> {
     let parts: Vec<&str> = topic.split('.').collect();
     match parts.as_slice() {
         ["orderbook", depth, symbol] => {
             let depth: usize = depth.parse().unwrap_or(1);
-            let (bids, asks) = book_levels(symbol, depth);
+            let (bids, asks) = book_levels(prices, symbol, depth);
             vec![
                 json!({"topic": topic, "type": "snapshot", "ts": now_ms(), "data": {"s": symbol, "b": bids, "a": asks, "u": 1_000, "seq": 7},
                         "cts": now_ms()}),
@@ -1179,7 +1268,7 @@ fn first_frames(topic: &str) -> Vec<Value> {
         }
         ["publicTrade", symbol] => vec![
             json!({"topic": topic, "type": "snapshot", "ts": now_ms(), "data": [
-            {"T": now_ms(), "s": symbol, "S": "Buy", "v": "0.074", "p": mid(symbol).to_string(), "L": "PlusTick",
+            {"T": now_ms(), "s": symbol, "S": "Buy", "v": "0.074", "p": mid(prices, symbol).to_string(), "L": "PlusTick",
              "i": format!("t{}", now_ms()), "BT": false, "RPI": false, "seq": 1}]}),
         ],
         ["kline", interval, symbol] => {
@@ -1190,11 +1279,17 @@ fn first_frames(topic: &str) -> Vec<Value> {
                 n => n.parse::<i64>().unwrap_or(1) * 60_000,
             };
             let start = now_ms() / step * step;
-            let m = mid(symbol);
+            let m = mid(prices, symbol);
+            // A bar of a price a test set is flat at it.
+            let (close, high, low) = if prices.get(symbol).is_some() {
+                (m, m, m)
+            } else {
+                (m + Decimal::new(5, 1), m + Decimal::ONE, m - Decimal::ONE)
+            };
             vec![
                 json!({"topic": topic, "type": "snapshot", "ts": now_ms(), "data": [
-                {"start": start, "end": start + step - 1, "interval": interval, "open": m.to_string(), "close": (m + Decimal::new(5, 1)).to_string(),
-                 "high": (m + Decimal::ONE).to_string(), "low": (m - Decimal::ONE).to_string(), "volume": "1200", "turnover": "1", "confirm": false,
+                {"start": start, "end": start + step - 1, "interval": interval, "open": m.to_string(), "close": close.to_string(),
+                 "high": high.to_string(), "low": low.to_string(), "volume": "1200", "turnover": "1", "confirm": false,
                  "timestamp": now_ms()}]}),
             ]
         }
@@ -1219,8 +1314,23 @@ async fn handle_ws(socket: WebSocket, state: MockState, private: bool) {
     };
     let mut owner: Option<String> = None;
     let mut book_frames = 0u32;
+    // The topics of a public socket: a new price of their symbol is sent to them.
+    let mut topics_here: Vec<String> = Vec::new();
+    let mut moved = state.options.prices.subscribe();
     'socket: loop {
         let msg = tokio::select! {
+            Ok(()) = moved.changed() => {
+                for t in &topics_here {
+                    let symbol = t.rsplit('.').next().unwrap_or("");
+                    if state.options.prices.get(symbol).is_none() {
+                        continue;
+                    }
+                    for f in first_frames(&state.options.prices, t) {
+                        let _ = write.send(Message::Text(f.to_string().into())).await;
+                    }
+                }
+                continue;
+            }
             Some(text) = push_rx.recv() => {
                 if text == CLOSE_SENTINEL {
                     let _ = write.send(Message::Close(None)).await;
@@ -1302,6 +1412,7 @@ async fn handle_ws(socket: WebSocket, state: MockState, private: bool) {
                                     !(s.socket == socket_id && topics.contains(&s.topic))
                                 });
                             }
+                            topics_here.retain(|t| !topics.contains(t));
                             let _ = write.send(ack(true, "")).await;
                             continue;
                         }
@@ -1349,8 +1460,12 @@ async fn handle_ws(socket: WebSocket, state: MockState, private: bool) {
                             }
                         }
                         let _ = write.send(ack(true, "")).await;
+                        if !private {
+                            topics_here.retain(|t| !topics.contains(t));
+                            topics_here.extend(topics.iter().cloned());
+                        }
                         for t in &topics {
-                            for f in first_frames(t) {
+                            for f in first_frames(&state.options.prices, t) {
                                 let _ = write.send(Message::Text(f.to_string().into())).await;
                                 if t.starts_with("orderbook") {
                                     book_frames += 1;

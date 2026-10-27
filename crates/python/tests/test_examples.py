@@ -420,7 +420,9 @@ async def test_record_example_one_analysis_for_the_live_stream_and_for_the_file(
         mock.fill(cid, qty=qty, price=Decimal("250.25"))
 
         path = tmp_path / "run.jsonl"
-        live = await asyncio.wait_for(record_example.record_run(client, path, count=4), 10)
+        # Five events: the portfolio at the start and after the fill, the order acked and filled, the fill. The
+        # portfolio comes on a socket of its own, so its place among the others is not fixed.
+        live = await asyncio.wait_for(record_example.record_run(client, path, count=5), 10)
 
     assert live.traded == qty * Decimal("250.25")
     assert await record_example.analyze_file(path) == live  # the file says the same as the live run

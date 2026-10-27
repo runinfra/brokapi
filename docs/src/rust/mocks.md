@@ -116,6 +116,10 @@ let server = MockServer::start(opts.clone()).await;
   `INVALID_ARGUMENT 30014` по таблице пределов). Так проверяется выгрузка окнами.
 - **АЛОР.** Стакан: покупка 244.30, продажа 244.31, подписка на стакан дает один снимок. Бумаги `SBER`, `GAZP` (режим `TQBR`, лот 10, шаг 0.01) и фьючерс `SiZ6`, тикер `NOPE` неизвестен. Портфель: рубли и 30 штук `SBER`. Свечи всегда рядом по сетке таймфрейма на весь запрошенный период. Повтор `X-REQID` получает копию первого ответа, как сказано в документации брокера.
 - **Заявки.** Имитации помнят заявки: их можно поставить, прочитать, снять, заменить (где брокер умеет). Данные счета отдельные.
+- **Исполнения двигают счет.** После `fill` позиция по инструменту меняется (чтение портфеля и поток портфеля), каждое исполнение - своя сделка
+  истории со своим номером. Деньги не меняются.
+- **Цена по команде теста.** `prices.set(тикер, цена)` (модуль `brokapi_mocks::market`): стакан строится вокруг цены (лучшая покупка на 0.01 ниже,
+  продажа на 0.01 выше), сделки и бары идут по цене. Без цены остаются записанные числа выше.
 
 ## Имитация Bybit
 
@@ -132,15 +136,17 @@ let cfg = BybitConfig::for_mock("mock-key", "mock-secret", &server.http_base);
 - **Подпись настоящая.** Имитация проверяет подпись каждого приватного запроса и окно времени (`recv_window`), как биржа: клиент, который подписывает неверно, получает отказ. Ключ `brokapi_mocks::bybit::DEFAULT_KEY` (`"mock-key"`), секрет `SECRET` (`"mock-secret"`). Другой ключ - отдельный счет со своими заявками.
 - **Инструменты.** `MOCKUSDT` (бессрочный, шаг количества и самое малое количество 10, шаг цены 0.01, `LOT` = 10), `BTCUSDT` (числа настоящего контракта: шаг 0.001, цена 0.10) и срочный фьючерс `BTC-26DEC26`. Тикер `NOPEUSDT` (`UNKNOWN_SYMBOL`) неизвестен: чтение дает код 10001.
 - **Заявки и рычаги.** `server.fill(&cid.hyphenated().to_string(), qty, price)` исполняет заявку (статус, исполнение, события). `server.cut_event_sockets()` обрывает приватные сокеты (бот получает `Event::Reconnected`), `server.push_event(текст)` пишет сырое сообщение в приватные сокеты. Лимитная заявка по цене `brokapi_conformance::REJECT_PRICE` (13.37) отвергается кодом 110003.
-- **Настройки** (`MockOptions`): `rate_limit_order_book` (чтение стакана отвечает HTTP 429), `order_delay_ms` (команда ждет столько по часам теста, для `Unknown` по таймауту), `stop_answer_lost` (стоп принят, ответ потерян: HTTP 503), `clock_offset_ms` (часы биржи уходят вперед), `refuse_ws_login`, `fail_subscribe_text`, `stream_gate` (биржа медленно открывает потоки), `disconnect_after_data_frames`.
+- **Настройки** (`MockOptions`): `rate_limit_order_book` (чтение стакана отвечает HTTP 429), `order_delay_ms` (команда ждет столько по часам теста, для `Unknown` по таймауту), `stop_answer_lost` (стоп принят, ответ потерян: HTTP 503), `order_answer_lost` (то же с обычной заявкой), `prices` (цена тикера, за ней идут стакан, сделки и бары), `clock_offset_ms` (часы биржи уходят вперед), `refuse_ws_login`, `fail_subscribe_text`, `stream_gate` (биржа медленно открывает потоки), `disconnect_after_data_frames`.
 - **Свечи.** Ряд под запрошенный период, по одной свече на шаг интервала (`synthetic_candles` не нужен).
 
 ## Рычаги, которыми вызывают нужный исход
 
 | Что получить | БКС | Т-Банк | Финам | АЛОР |
 |---|---|---|---|---|
-| Исполнить заявку | `server.fill(&cid.hyphenated().to_string(), qty, price)` | `server.fill(ACCOUNT_A, &cid.hyphenated().to_string())` | вручную: `server.state.push_order(счет, ...)` | `server.fill(&cid.hyphenated().to_string(), qty, price)`: сначала событие заявки, потом сделка |
+| Исполнить заявку | `server.fill(&cid.hyphenated().to_string(), qty, price)` | `server.fill(ACCOUNT_A, &cid.hyphenated().to_string())` | `server.state.fill(счет, комментарий заявки, qty, price)`: комментарий - `cid` в коде Финама (`FinamCidCodec`) | `server.fill(&cid.hyphenated().to_string(), qty, price)`: сначала событие заявки, потом сделка |
 | `Rejected` на постановке (цена задается в тесте, не берется из стакана) | лимитная цена `brokapi_conformance::REJECT_PRICE` (13.37), в теле ответа 200 - цена 13.38 (`mbcs::REJECT_IN_BODY_PRICE`) | `REJECT_PRICE` (13.37) | `REJECT_PRICE` (13.37) | `REJECT_PRICE` (13.37), ответ HTTP 400 |
+| Брокер принял заявку, ответ потерян (`Unknown`, заявка у брокера) | `opts.order_answer_lost` (HTTP 503) | `opts.order_answer_lost` (`UNAVAILABLE`) | `server.state.options.order_answer_lost` | `opts.order_answer_lost` (HTTP 503) |
+| Цена тикера, за которой идут стакан, сделки и бары | `opts.prices.set("SBER", цена)`: открытые подписки на тикер получают новое сообщение | `opts.prices.set(...)` | `server.state.options.prices.set(...)`: следующее сообщение потока по таймеру | `opts.prices.set(...)` |
 | `Unknown` на постановке | `opts.order_delay_ms` больше, чем `cfg.request_timeout` клиента (имитация держит команду это время по часам теста). Пример: `a_place_without_an_answer_is_unknown` в `crates/bcs/tests/conformance.rs` | `opts.post_delay_ms` больше, чем `with_request_timeout(...)` клиента. Либо `opts.post_fail` с кодом gRPC | `opts.place_delay_ms` больше таймаута клиента, либо `opts.place_error` | `opts.order_delay_ms` больше, чем `request_timeout` клиента |
 | Обрыв потока стакана | `opts.disconnect_after_data_frames` | `opts.md_cut_after` | `opts.book_drop_after` | `opts.disconnect_after_data_frames` |
 | Брокер медленно открывает поток (`subscribe_*` должен ждать, а не вернуться раньше) | `opts.stream_gate.hold()` до старта коннектора: рукопожатие сокетов заявок и портфеля не отвечается. `opts.stream_gate.release()` отпускает. `opts.stream_gate.waiting()` - сколько запросов держится. Подписка рынка держится так же | `opts.stream_gate.hold()`: потоки заявок, исполнений и портфеля не открываются. Рынок: `opts.md_silent = true`, подтверждения подписок не приходят | `server.state.options.stream_gate.hold()`: открытие любого потока не возвращается | `opts.stream_gate.hold()`: подписки на сокете не обрабатываются и не подтверждаются |

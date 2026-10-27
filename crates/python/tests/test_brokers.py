@@ -70,7 +70,9 @@ async def test_read_place_fill(pair: tuple[testing.MockBroker, brokapi.Client]) 
     history = await client.executions(
         datetime(2020, 1, 1, tzinfo=timezone.utc), datetime.now(timezone.utc) + timedelta(days=1)
     )
-    assert len(history) == 1 and isinstance(history[0].price, Decimal)
+    # The fill is in the history (an imitation may keep older trades of the account there too).
+    mine = [e for e in history if e.price == price and e.qty == params.min_qty]
+    assert len(mine) == 1 and isinstance(mine[0].price, Decimal)
 
 
 async def test_cancel(pair: tuple[testing.MockBroker, brokapi.Client]) -> None:
@@ -164,3 +166,9 @@ async def test_the_root_certificate_of_tbank_is_a_setting_and_a_bad_path_is_name
 async def test_request_timeout_is_a_setting_and_a_bad_one_is_named() -> None:
     with pytest.raises(brokapi.Config, match="request_timeout"):
         await brokapi.connect("tbank", token="t.token", account_id="x", request_timeout=-1)
+
+
+async def test_request_timeout_takes_a_fraction_of_a_second() -> None:
+    async with await testing.mock_bcs() as mock:
+        client = await mock.connect(request_timeout=0.5)
+        assert str(await client.instrument("SBER")) == "SBER@TQBR"

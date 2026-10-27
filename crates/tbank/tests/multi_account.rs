@@ -195,8 +195,9 @@ async fn two_connectors_one_token_see_only_their_own_account() {
         .await
         .expect("portfolio event")
     };
-    assert_eq!(first_portfolio(rx_a, dec!(30.0)).await, Some(sub_a));
-    assert_eq!(first_portfolio(rx_b, dec!(7.0)).await, Some(sub_b));
+    // Each account holds its own fill of 10 on top of what it had (30 and 7), and not the fill of the other.
+    assert_eq!(first_portfolio(rx_a, dec!(40.0)).await, Some(sub_a));
+    assert_eq!(first_portfolio(rx_b, dec!(17.0)).await, Some(sub_b));
 
     a.shutdown(ShutdownMode::Immediate).await;
     b.shutdown(ShutdownMode::Immediate).await;

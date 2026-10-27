@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import json
 import os
 import uuid
 from collections.abc import AsyncIterator, Mapping
@@ -69,6 +70,16 @@ class Limiter:
 
     def __init__(self, native: _native.NativeLimiter) -> None:
         self._native = native
+
+    @classmethod
+    def from_toml(cls, broker: str, text: str) -> "Limiter":
+        """A counter with limits of your own: the ``[<broker>]`` section of a limits file, in the format of the page
+        "Лимиты запросов" of the book. Pass it to :func:`connect` as ``limiter``.
+
+        In a test a small budget is the way to get :class:`~brokapi.RateLimited` without a broker: ``burst = 1`` and a
+        long ``per``, and the second call is refused before it leaves. A wrong file raises :class:`~brokapi.Config`.
+        """
+        return cls(_native.limiter_from_toml(broker, text))
 
     @property
     def broker(self) -> str:
@@ -146,6 +157,17 @@ class CandlePager:
         page = _codec.loads(text)
         self.resume_from = _codec.from_nanos(page["resume_from"])
         return _codec.decode(list[Candle], page["bars"])
+
+
+def _settings_json(settings: dict[str, Any]) -> str:
+    """The settings of :func:`connect` as JSON. ``request_timeout`` is seconds and may be a float: a time, not money."""
+    timeout = settings.get("request_timeout")
+    if timeout is None:
+        return _codec.dumps(settings)
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float, Decimal)):
+        raise TypeError(f"request_timeout is a number of seconds, got {type(timeout).__name__}")
+    rest = json.loads(_codec.dumps({k: v for k, v in settings.items() if k != "request_timeout"}))
+    return json.dumps({**rest, "request_timeout": float(timeout)}, separators=(",", ":"))
 
 
 def _raw_json(value: Any) -> Any:
@@ -739,7 +761,7 @@ async def connect(
     native = await _native.connect(
         broker,
         name or broker,
-        _codec.dumps(given),
+        _settings_json(given),
         None if limiter is None else limiter._native,
         event_buffer,
     )

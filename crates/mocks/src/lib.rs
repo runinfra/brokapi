@@ -40,6 +40,7 @@ pub mod bybit;
 pub mod finam;
 pub mod gate;
 pub mod live;
+pub mod market;
 pub mod settings;
 pub mod tbank;
 pub mod time;

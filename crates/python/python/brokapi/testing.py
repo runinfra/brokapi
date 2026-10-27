@@ -148,6 +148,49 @@ class MockBroker:
         """
         self._native.lose_stop_answers(lose)
 
+    def lose_order_answers(self, lose: bool = True) -> None:
+        """While on, the broker takes every new order (not a stop order) and the answer is lost.
+
+        The order is at the broker, and ``place`` ends with :class:`~brokapi.Unknown`. Its ``cid`` is used up: a second
+        ``place`` with it is refused (``duplicate_place``) before anything is sent. The bot asks ``order_state(cid)``
+        and goes on from the answer. ``lose_order_answers(False)`` brings the usual answers back.
+        """
+        self._native.lose_order_answers(lose)
+
+    def delay_orders(self, seconds: float) -> None:
+        """The broker answers every new order ``seconds`` late (``0``: at once, as before).
+
+        With ``request_timeout`` of :meth:`connect` shorter than the delay, ``place`` ends with
+        :class:`~brokapi.Unknown`, and the order is at the broker when the delay is over at the latest: its event
+        comes then. This is a real wait, keep it short in a test (``request_timeout=0.2``, ``delay_orders(1)``). On
+        BCS, ALOR and Bybit the delay holds a cancel and a replace too.
+        """
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float, Decimal)) or seconds < 0:
+            raise ValueError(f"seconds is a number of seconds, 0 or more, got {seconds!r}")
+        self._native.delay_orders(int(Decimal(str(seconds)) * 1000))
+
+    def set_price(self, ticker: str, price: Decimal | str | int) -> None:
+        """The market of ``ticker`` moves to ``price``: the way to check what a bot does when the price comes to its level.
+
+        The order book is built around the price: the best bid one step of 0.01 below it, the best ask one step above, the
+        next levels a step further each. The last deals are at the price, and so are the bars: ``candles`` answers bars
+        for the period asked with open, high, low and close at the price. Every open subscription to the ticker (book,
+        quotes, deals, bars) gets a new message at once. Call it again for the next price of a series. A ticker without
+        a price set keeps the recorded numbers of the imitation.
+
+        ``ticker`` is the ticker of the broker (``"SBER"``, ``"GAZP"``, ``"MOCKUSDT"``), the same for every class.
+        """
+        self._native.set_price(ticker, _codec.decimal_text(price, "price"))
+
+    def cut_streams(self) -> None:
+        """Cuts the streams of the orders and fills of every account, from the broker side, as a broken link does.
+
+        The connector opens them again and tells of the hole with :class:`~brokapi.Reconnected`. Trading is closed
+        (:class:`~brokapi.Degraded`) until the bot reads the state and calls ``reconcile`` again. The market data
+        streams are not cut.
+        """
+        self._native.cut_streams()
+
     async def close(self) -> None:
         """Closes the clients that were connected through it, the gateways started on it, then stops the server."""
         for gateway in self._gateways:

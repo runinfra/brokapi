@@ -23,13 +23,46 @@ enum Server {
     Bybit(bybit::MockServer),
 }
 
+/// Moves the market of a ticker to a price.
+type PriceLever = Box<dyn Fn(&str, brokapi::core::Decimal) + Send + Sync>;
+
+/// The faults of an imitation a test turns on and off. Each broker keeps them in its own options.
+struct Levers {
+    /// "The broker takes a stop order, the answer is lost".
+    lose_stop_answers: Box<dyn Fn(bool) + Send + Sync>,
+    /// "The broker takes a new order, the answer is lost".
+    lose_order_answers: Box<dyn Fn(bool) + Send + Sync>,
+    /// The broker holds a new order this many milliseconds before it answers.
+    delay_orders: Box<dyn Fn(u64) + Send + Sync>,
+    /// The market of a ticker moves to a price.
+    set_price: PriceLever,
+}
+
+/// One closure per lever, each over its own handle of the options: `$opts` is an expression of an `Arc`, `$lose_stop`,
+/// `$lose_order` and `$delay` the fields of the options.
+macro_rules! levers {
+    ($opts:expr, $lose_stop:ident, $lose_order:ident, $delay:ident) => {{
+        let (a, b, c, d) = (
+            Arc::clone(&$opts),
+            Arc::clone(&$opts),
+            Arc::clone(&$opts),
+            Arc::clone(&$opts),
+        );
+        Levers {
+            lose_stop_answers: Box::new(move |on| a.$lose_stop.store(on, Ordering::SeqCst)),
+            lose_order_answers: Box::new(move |on| b.$lose_order.store(on, Ordering::SeqCst)),
+            delay_orders: Box::new(move |ms| c.$delay.store(ms, Ordering::SeqCst)),
+            set_price: Box::new(move |ticker, price| d.prices.set(ticker, price)),
+        }
+    }};
+}
+
 /// A running imitation of one broker.
 #[pyclass(module = "brokapi._native", frozen)]
 pub struct NativeMock {
     broker: &'static str,
     server: Mutex<Option<Server>>,
-    /// Turns on and off the fault "the broker takes a stop order, the answer is lost".
-    lose_stop_answers: Box<dyn Fn(bool) + Send + Sync>,
+    levers: Levers,
 }
 
 /// Starts the imitation of `broker` (`"bcs"`, `"tbank"`, `"finam"` or `"alor"`) on a free port.
@@ -41,17 +74,17 @@ pub fn start_mock(
     synthetic_candles: bool,
 ) -> PyResult<Bound<'_, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        let (kind, server, lose): (_, _, Box<dyn Fn(bool) + Send + Sync>) = match broker.as_str() {
+        let (kind, server, levers) = match broker.as_str() {
             "bcs" => {
                 let options = Arc::new(bcs::MockOptions::default());
                 options
                     .synthetic_candles
                     .store(synthetic_candles, Ordering::Relaxed);
-                let lose = Arc::clone(&options);
+                let levers = levers!(options, stop_answer_lost, order_answer_lost, order_delay_ms);
                 (
                     "bcs",
                     Server::Bcs(bcs::MockServer::start(options).await),
-                    Box::new(move |on| lose.stop_answer_lost.store(on, Ordering::SeqCst)),
+                    levers,
                 )
             }
             "tbank" => {
@@ -61,11 +94,11 @@ pub fn start_mock(
                     .store(synthetic_candles, Ordering::Relaxed);
                 // A stop order gets the time of the real clock, as the broker writes it.
                 options.stop_create_now.store(true, Ordering::Relaxed);
-                let lose = Arc::clone(&options);
+                let levers = levers!(options, stop_answer_lost, order_answer_lost, post_delay_ms);
                 (
                     "tbank",
                     Server::Tbank(tbank::MockServer::start(options).await),
-                    Box::new(move |on| lose.stop_answer_lost.store(on, Ordering::SeqCst)),
+                    levers,
                 )
             }
             "finam" => {
@@ -75,29 +108,42 @@ pub fn start_mock(
                     .options
                     .synthetic_candles
                     .store(synthetic_candles, Ordering::Relaxed);
-                let state = Arc::clone(&server.state);
-                (
-                    "finam",
-                    Server::Finam(server),
-                    Box::new(move |on| state.options.stop_answer_lost.store(on, Ordering::SeqCst)),
-                )
+                let (a, b, c, d) = (
+                    Arc::clone(&server.state),
+                    Arc::clone(&server.state),
+                    Arc::clone(&server.state),
+                    Arc::clone(&server.state),
+                );
+                let levers = Levers {
+                    lose_stop_answers: Box::new(move |on| {
+                        a.options.stop_answer_lost.store(on, Ordering::SeqCst)
+                    }),
+                    lose_order_answers: Box::new(move |on| {
+                        b.options.order_answer_lost.store(on, Ordering::SeqCst)
+                    }),
+                    delay_orders: Box::new(move |ms| {
+                        c.options.place_delay_ms.store(ms, Ordering::SeqCst)
+                    }),
+                    set_price: Box::new(move |ticker, price| d.options.prices.set(ticker, price)),
+                };
+                ("finam", Server::Finam(server), levers)
             }
             "alor" => {
                 let options = Arc::new(alor::MockOptions::default());
-                let lose = Arc::clone(&options);
+                let levers = levers!(options, stop_answer_lost, order_answer_lost, order_delay_ms);
                 (
                     "alor",
                     Server::Alor(alor::MockServer::start(options).await),
-                    Box::new(move |on| lose.stop_answer_lost.store(on, Ordering::SeqCst)),
+                    levers,
                 )
             }
             "bybit" => {
                 let options = Arc::new(bybit::MockOptions::default());
-                let lose = Arc::clone(&options);
+                let levers = levers!(options, stop_answer_lost, order_answer_lost, order_delay_ms);
                 (
                     "bybit",
                     Server::Bybit(bybit::MockServer::start(options).await),
-                    Box::new(move |on| lose.stop_answer_lost.store(on, Ordering::SeqCst)),
+                    levers,
                 )
             }
             other => return Err(PyValueError::new_err(format!("no imitation of {other:?}"))),
@@ -105,9 +151,23 @@ pub fn start_mock(
         Ok(NativeMock {
             broker: kind,
             server: Mutex::new(Some(server)),
-            lose_stop_answers: lose,
+            levers,
         })
     })
+}
+
+impl NativeMock {
+    fn running(&self) -> PyResult<()> {
+        match self
+            .server
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            Some(_) => Ok(()),
+            None => Err(gone()),
+        }
+    }
 }
 
 fn gone() -> PyErr {
@@ -224,15 +284,44 @@ impl NativeMock {
     /// With `lose == true` the broker takes the next stop orders and the answer is lost: the stop order is at the
     /// broker, the client gets a failure of the connection. `false` returns the usual answers.
     fn lose_stop_answers(&self, lose: bool) -> PyResult<()> {
-        if self
-            .server
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_none()
-        {
-            return Err(gone());
+        self.running()?;
+        (self.levers.lose_stop_answers)(lose);
+        Ok(())
+    }
+
+    /// With `lose == true` the broker takes the next new orders (not stop orders) and the answer is lost.
+    fn lose_order_answers(&self, lose: bool) -> PyResult<()> {
+        self.running()?;
+        (self.levers.lose_order_answers)(lose);
+        Ok(())
+    }
+
+    /// The broker holds every new order `ms` milliseconds before it answers (0: at once).
+    fn delay_orders(&self, ms: u64) -> PyResult<()> {
+        self.running()?;
+        (self.levers.delay_orders)(ms);
+        Ok(())
+    }
+
+    /// The market of `ticker` moves to `price`: the order book, the last deals and the bars follow it.
+    fn set_price(&self, ticker: &str, price: &str) -> PyResult<()> {
+        self.running()?;
+        let price: Price = dec(Some(price), "price")?;
+        (self.levers.set_price)(ticker, price.decimal());
+        Ok(())
+    }
+
+    /// Cuts the streams of the orders and fills of every account from the broker side. The connector sees the end and
+    /// opens them again.
+    fn cut_streams(&self) -> PyResult<()> {
+        let guard = self.server.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref().ok_or_else(gone)? {
+            Server::Bcs(s) => s.cut_event_sockets(),
+            Server::Tbank(s) => s.cut_user_streams(),
+            Server::Finam(s) => s.state.cut_user_streams(),
+            Server::Alor(s) => s.cut_event_sockets(),
+            Server::Bybit(s) => s.cut_event_sockets(),
         }
-        (self.lose_stop_answers)(lose);
         Ok(())
     }
 
@@ -267,7 +356,7 @@ impl NativeMock {
     }
 }
 
-/// Finam has no fill hook: push the new state of the order and a trade, as the test of the connector does.
+/// Finam names an order by its comment, where the connector writes the cid.
 fn fill_finam(
     s: &finam::MockServer,
     account: &str,
@@ -275,39 +364,14 @@ fn fill_finam(
     qty: Qty,
     price: Price,
 ) -> PyResult<()> {
-    use brokapi_mocks::finam::d;
     let comment = brokapi::finam::cid::FinamCidCodec
         .encode(cid)
         .map_err(|e| PyValueError::new_err(e.to_string()))?
         .as_str()
         .to_string();
-    let mut order = s
-        .state
-        .orders_of(account)
-        .into_iter()
-        .find(|o| o.order.as_ref().is_some_and(|x| x.comment == comment))
-        .ok_or_else(|| PyValueError::new_err("the mock has no such order"))?;
-    let proto =
-        brokapi::finam::protocol::pb::grpc::tradeapi::v1::orders::OrderStatus::Filled as i32;
-    let left = d("0");
-    order.status = proto;
-    order.executed_quantity = d(&qty.to_string());
-    order.remaining_quantity = left;
-    let inner = order.order.clone().unwrap_or_default();
-    let trade = brokapi::finam::protocol::pb::grpc::tradeapi::v1::AccountTrade {
-        trade_id: format!("TR-{}", order.order_id),
-        symbol: inner.symbol.clone(),
-        price: d(&price.to_string()),
-        size: d(&qty.to_string()),
-        side: inner.side,
-        order_id: order.order_id.clone(),
-        comment,
-        account_id: account.into(),
-        ..Default::default()
-    };
-    s.state.push_order(account, order);
-    s.state.push_trade(account, trade);
-    Ok(())
+    s.state
+        .fill(account, &comment, qty.decimal(), price.decimal())
+        .map_err(|e| PyValueError::new_err(format!("the Finam imitation cannot execute it: {e}")))
 }
 
 async fn start_gateway(
