@@ -167,10 +167,10 @@ cargo add brokapi-gateway --no-default-features
 нет: адрес из `gateway.addr`, ключ, два заголовка на каждом вызове, ожидание готовности гейтвея и ошибка библиотеки из ответа. `protoc` и плагины не нужны:
 
 ```sh
-go get github.com/runinfra/brokapi/go@main
+go get github.com/runinfra/brokapi/go@v{{brokapi_version}}
 ```
 
-Модуль пока берется из `main`, своих тегов у него еще нет. Он работает с программой `brokapi` с версии 0.1.0-alpha.6: раньше файлы `.proto` не собирались `protoc`. Нужен Go 1.25
+Номер модуля тот же, что у выпуска (тег `go/v{{brokapi_version}}`), `@main` берет самое новое. Он работает с программой `brokapi` с версии 0.1.0-alpha.6: раньше файлы `.proto` не собирались `protoc`. Нужен Go 1.25
 или новее, его требует grpc-go.
 
 `brokapi.Connect` читает адрес и ключ из каталога гейтвея и ждет, пока гейтвей ответит `Health = READY`. `conn.Gateway` - сгенерированный клиент, заголовки он шлет сам:
