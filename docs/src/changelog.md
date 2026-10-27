@@ -4,6 +4,11 @@
 
 ## Следующая версия
 
+- **Потолки заявок и режим только чтения.** `read_only`, `max_order_qty` и `max_order_value` в `brokapi.connect(...)`, в `[gateway.settings]` и в окружении
+  (`BROKAPI_READ_ONLY`, `BROKAPI_MAX_ORDER_QTY`, `BROKAPI_MAX_ORDER_VALUE`). Проверка до отправки: отказ `Rejected` с кодом `read_only`, `max_order_qty` или
+  `max_order_value`, квота и `cid` не тратятся. Из настройки и окружения действует более строгое, так код бота не снимет предел, который поставил человек.
+  Гейтвей ставит свои потолки всем ботам, `brokapi check` их показывает. В Rust - `brokapi_client::OrderGuard` и `Client::start_with`. Страница
+  [Потолки заявок и режим только чтения](guard.md). `mock.start_gateway(..., read_only=True)` поднимает такой гейтвей в тесте.
 - **Рычаги Python-имитаций.** Сбои, которые бот обязан пережить, вызываются из теста на любом из пяти брокеров: `mock.set_price("SBER", "250")` двигает
   рынок (стакан вокруг цены, сделки и бары по ней, новое сообщение в открытые подписки), `mock.lose_order_answers()` теряет ответ на принятую заявку
   (`Unknown`), `mock.delay_orders(1)` с `request_timeout` дает поздний ответ, `mock.cut_streams()` рвет потоки счета (`Reconnected`), `brokapi.Limiter.from_toml`

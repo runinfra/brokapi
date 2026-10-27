@@ -45,12 +45,15 @@ from .models import (
 
 __all__ = ["CandlePager", "Client", "EventStream", "Limiter", "connect", "connect_gateway", "merge", "new_cid"]
 
+# The limits on the orders, the same at every broker (brokapi_client::OrderGuard).
+_GUARD = ("read_only", "max_order_qty", "max_order_value")
+
 _BROKERS = {
-    "bcs": {"refresh_token", "write", "endpoint", "request_timeout"},
-    "tbank": {"token", "sandbox", "account_id", "endpoint", "app_name", "root_certificate", "request_timeout"},
-    "finam": {"secret", "account_id", "endpoint", "request_timeout"},
-    "alor": {"refresh_token", "portfolio", "exchange", "test", "endpoint", "request_timeout"},
-    "bybit": {"api_key", "api_secret", "env", "category", "settle_coin", "recv_window_ms", "endpoint", "request_timeout"},
+    "bcs": {"refresh_token", "write", "endpoint", "request_timeout", *_GUARD},
+    "tbank": {"token", "sandbox", "account_id", "endpoint", "app_name", "root_certificate", "request_timeout", *_GUARD},
+    "finam": {"secret", "account_id", "endpoint", "request_timeout", *_GUARD},
+    "alor": {"refresh_token", "portfolio", "exchange", "test", "endpoint", "request_timeout", *_GUARD},
+    "bybit": {"api_key", "api_secret", "env", "category", "settle_coin", "recv_window_ms", "endpoint", "request_timeout", *_GUARD},
 }
 
 
@@ -740,6 +743,11 @@ async def connect(
       (``BYBIT_SETTLE_COIN``, ``"USDT"``), ``recv_window_ms`` and ``endpoint``.
     - every broker: ``request_timeout``, how long a call waits for the broker, in seconds (default 30, Finam 10). A
       command that gets no answer in time raises :class:`~brokapi.Unknown`, a read :class:`~brokapi.Transport`.
+    - every broker, the limits on the orders, checked before anything is sent: ``read_only`` (``True``: no command
+      reaches the broker), ``max_order_qty`` and ``max_order_value`` (the largest quantity and quantity times price of
+      one order). The variables ``BROKAPI_READ_ONLY``, ``BROKAPI_MAX_ORDER_QTY``, ``BROKAPI_MAX_ORDER_VALUE`` set them
+      too, and the stricter of the two holds. A refusal is :class:`~brokapi.Rejected` with the code ``read_only``,
+      ``max_order_qty`` or ``max_order_value``.
 
     ``name`` labels the events (``<name>-md``, ``<name>-ud``) and defaults to the broker. Give each client of a
     process its own name. ``limiter`` puts this client on the rate limit counter of another one (see

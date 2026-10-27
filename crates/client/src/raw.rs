@@ -243,6 +243,23 @@ pub(crate) async fn finam(
     reply_json(&reply)
 }
 
+// ---------------------------------------------------------------------------------------------------- reads
+
+/// Whether a `raw` call is a read by its name alone: a gRPC method whose name starts with `Get` (T-Bank, Finam), an
+/// HTTP `GET` (BCS by the verb of its named operation or of the path, ALOR, Bybit). The read-only mode lets only these
+/// through. A read under another name (Finam `Bars`, a BCS search by `POST`) is refused there: safe, not complete.
+pub(crate) fn is_plain_read(broker: crate::Broker, method: &str, args: &Value) -> bool {
+    use crate::Broker;
+    match broker {
+        Broker::Tbank | Broker::Finam => method
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.starts_with("Get")),
+        Broker::Bcs => matches!(bcs_target(method, args), Ok((Verb::Get, _))),
+        Broker::Alor | Broker::Bybit => method.starts_with("GET "),
+    }
+}
+
 // ---------------------------------------------------------------------------------------------------- BCS
 
 #[derive(Clone, Copy, PartialEq)]

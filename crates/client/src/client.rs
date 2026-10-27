@@ -18,6 +18,7 @@ use tokio::sync::{Mutex, RwLock, RwLockReadGuard, mpsc};
 use crate::Account;
 use crate::conn::{Conn, start};
 use crate::error::{ClientError, config_error};
+use crate::guard::OrderGuard;
 use crate::settings::Settings;
 
 /// The brokers of the library.
@@ -196,6 +197,7 @@ pub(crate) struct Inner {
     /// `None` once taken with [`Client::take_events`].
     events: Mutex<Option<mpsc::Receiver<Envelope>>>,
     limiter: Limiter,
+    pub(crate) guard: OrderGuard,
 }
 
 /// One account at one broker: both connectors, the event channel, the rate limiter.
@@ -247,6 +249,18 @@ impl Client {
         limiter: Option<Limiter>,
         event_buffer: usize,
     ) -> Result<Self, Error> {
+        Self::start_with(config, OrderGuard::default(), name, limiter, event_buffer).await
+    }
+
+    /// [`Client::start`] with limits of your own on the orders ([`OrderGuard`]): a read-only mode, caps on one order.
+    /// They are checked before anything is sent.
+    pub async fn start_with(
+        config: BrokerConfig,
+        guard: OrderGuard,
+        name: impl Into<String>,
+        limiter: Option<Limiter>,
+        event_buffer: usize,
+    ) -> Result<Self, Error> {
         let broker = config.broker();
         let name = name.into();
         let limiter = match limiter {
@@ -269,12 +283,15 @@ impl Client {
                 closed: AtomicBool::new(false),
                 events: Mutex::new(Some(rx)),
                 limiter,
+                guard,
             }),
         })
     }
 
     /// [`Client::start`] for a broker named by text and settings in the form of [`Settings`]. A `.env` file in the
-    /// working directory (never a parent) is read first, like `from_env` of the library does.
+    /// working directory (never a parent) is read first, like `from_env` of the library does. The limits on the
+    /// orders (`read_only`, `max_order_qty`, `max_order_value`) are read from the same settings and the environment:
+    /// [`OrderGuard::from_settings`].
     pub async fn connect(
         broker: &str,
         name: impl Into<String>,
@@ -285,7 +302,13 @@ impl Client {
         let broker: Broker = broker.parse()?;
         dotenvy::from_path(".env").ok();
         let config = BrokerConfig::from_settings(broker, settings)?;
-        Ok(Self::start(config, name, limiter, event_buffer).await?)
+        let guard = OrderGuard::from_settings(settings)?;
+        Ok(Self::start_with(config, guard, name, limiter, event_buffer).await?)
+    }
+
+    /// The limits on the orders of this client.
+    pub fn guard(&self) -> &OrderGuard {
+        &self.inner.guard
     }
 
     /// The broker.
@@ -371,6 +394,19 @@ impl Client {
         args: &Value,
         command: bool,
     ) -> Result<Value, ClientError> {
+        // In the read-only mode only a call that is a read by its name passes: the flag `command` is the caller's
+        // word, and a method that changes something must not get through by a wrong flag.
+        if self.inner.guard.read_only
+            && (command || !crate::raw::is_plain_read(self.inner.broker, method, args))
+        {
+            return Err(ClientError::Broker(Error::Rejected {
+                code: crate::guard::READ_ONLY.into(),
+                message: format!(
+                    "raw {method:?} refused: the client is read-only (read_only), and only a read by its name passes \
+                     (a gRPC method Get..., an HTTP GET), nothing was sent"
+                ),
+            }));
+        }
         let guard = self.inner.conn.read().await;
         let conn = guard.as_ref().ok_or(ClientError::Closed)?;
         conn.raw(method, args, command).await

@@ -28,7 +28,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from . import _codec, _native
-from .client import Client, connect, connect_gateway
+from .client import Client, _settings_json, connect, connect_gateway
 
 __all__ = ["MockBroker", "MockGateway", "mock_alor", "mock_bcs", "mock_bybit", "mock_finam", "mock_tbank"]
 
@@ -112,9 +112,14 @@ class MockBroker:
         self._clients.append(client)
         return client
 
-    async def start_gateway(self, name: str = "mock-gateway") -> MockGateway:
-        """Starts a gateway on this imitation, ready for bots. The gateway stops when the imitation does."""
-        gateway = MockGateway(await self._native.start_gateway(name))
+    async def start_gateway(self, name: str = "mock-gateway", **settings: Any) -> MockGateway:
+        """Starts a gateway on this imitation, ready for bots. The gateway stops when the imitation does.
+
+        ``settings`` are more keys of ``[gateway.settings]``: the limits on the orders of every bot (``read_only=True``,
+        ``max_order_qty``, ``max_order_value``), as in :func:`brokapi.connect`.
+        """
+        extra = _settings_json(settings) if settings else None
+        gateway = MockGateway(await self._native.start_gateway(name, extra))
         self._gateways.append(gateway)
         return gateway
 

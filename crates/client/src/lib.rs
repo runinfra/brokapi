@@ -28,6 +28,7 @@ mod call;
 mod client;
 mod conn;
 mod error;
+mod guard;
 mod raw;
 mod settings;
 mod traits;
@@ -39,4 +40,5 @@ pub use client::{
     Limiter,
 };
 pub use error::{ClientError, config_error};
+pub use guard::{MAX_ORDER_QTY, MAX_ORDER_VALUE, OrderGuard, READ_ONLY};
 pub use settings::Settings;

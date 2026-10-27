@@ -50,6 +50,9 @@ pub struct GatewayConfig {
     /// How long a bot may be away before its subscriptions are let go. A bot whose stream broke and comes back within
     /// this time keeps them.
     pub bot_grace: Duration,
+    /// The limits of your own on the orders of every bot: a read-only mode, caps on one order. Checked in the
+    /// gateway before anything is sent to the broker. None by default.
+    pub guard: brokapi_client::OrderGuard,
 }
 
 impl GatewayConfig {
@@ -63,6 +66,7 @@ impl GatewayConfig {
             bot_buffer: 1024,
             event_buffer: 8192,
             bot_grace: Duration::from_secs(30),
+            guard: brokapi_client::OrderGuard::default(),
         }
     }
 }
@@ -425,8 +429,14 @@ impl Gateway {
         if !crate::access::valid_bot_name(&config.name) {
             return Err(GatewayError::BadName(config.name));
         }
-        let client =
-            Client::start(broker, config.name.clone(), limiter, config.event_buffer).await?;
+        let client = Client::start_with(
+            broker,
+            config.guard.clone(),
+            config.name.clone(),
+            limiter,
+            config.event_buffer,
+        )
+        .await?;
         Self::start_with_client(config, client).await
     }
 

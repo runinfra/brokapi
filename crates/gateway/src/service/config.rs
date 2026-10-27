@@ -393,6 +393,14 @@ impl GatewaySpec {
             .map_err(|e| format!("gateway {}: {e}", self.name))
     }
 
+    /// The limits of your own on the orders (`read_only`, `max_order_qty`, `max_order_value` of `[gateway.settings]`,
+    /// and the variables `BROKAPI_*` of the environment of the service).
+    pub fn order_guard(&self) -> Result<brokapi_client::OrderGuard, String> {
+        let settings = Settings(self.settings_json()?);
+        brokapi_client::OrderGuard::from_settings(&settings)
+            .map_err(|e| format!("gateway {}: {e}", self.name))
+    }
+
     /// The ring of the gateway.
     pub fn ring_config(&self) -> RingConfig {
         RingConfig {
@@ -732,6 +740,40 @@ mod tests {
         assert_eq!(c.state_dir, Path::new("/etc/brokapi/prod.state"));
         let c = parse("state_dir = \"/var/lib/b\"").unwrap();
         assert_eq!(c.state_dir, Path::new("/var/lib/b"));
+    }
+
+    #[test]
+    fn the_limits_on_the_orders_come_from_the_settings_of_the_gateway() {
+        let dir = std::env::temp_dir().join(format!("brokapi-guard-config-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("token"), "the-token\n").unwrap();
+        let spec = |settings: &str| {
+            parse(&format!(
+                "[[gateway]]\nname = \"a\"\nbroker = \"bcs\"\ntoken_file = {:?}\n[gateway.settings]\n{settings}",
+                dir.join("token").display().to_string()
+            ))
+            .unwrap()
+            .gateways
+            .remove(0)
+        };
+        let guard = spec("read_only = true\nmax_order_qty = 100\nmax_order_value = \"50000\"\n")
+            .order_guard()
+            .unwrap();
+        assert!(guard.read_only);
+        assert_eq!(
+            guard.max_order_qty.map(|q| q.to_string()),
+            Some("100".into())
+        );
+        assert_eq!(
+            guard.max_order_value.map(|v| v.to_string()),
+            Some("50000".into())
+        );
+        assert!(spec("").order_guard().unwrap().is_empty());
+        let err = spec("max_order_qty = 0\n").order_guard().unwrap_err();
+        assert!(
+            err.contains("gateway a") && err.contains("max_order_qty"),
+            "{err}"
+        );
     }
 
     #[test]

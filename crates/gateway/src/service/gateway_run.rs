@@ -96,6 +96,7 @@ async fn run(config: &Config, name: &str) -> Result<(), GatewayRunError> {
     })?;
     let broker = spec.broker_config().map_err(GatewayRunError::Config)?;
     let limiter = spec.limiter().map_err(GatewayRunError::Config)?;
+    let guard = spec.order_guard().map_err(GatewayRunError::Config)?;
 
     let layout = config.layout();
     let dir = layout.gateway_dir(name);
@@ -116,6 +117,7 @@ async fn run(config: &Config, name: &str) -> Result<(), GatewayRunError> {
 
     let mut gw = GatewayConfig::new(name, &dir);
     gw.ring = spec.ring_config();
+    gw.guard = guard;
     if let Some(n) = spec.bot_buffer {
         gw.bot_buffer = n;
     }

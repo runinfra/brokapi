@@ -326,23 +326,38 @@ impl NativeMock {
     }
 
     /// Starts a gateway on this imitation: an awaitable of a [`NativeMockGateway`]. It is ready when this returns.
-    fn start_gateway<'py>(&self, py: Python<'py>, name: String) -> PyResult<Bound<'py, PyAny>> {
+    /// `extra` is JSON of more settings of `[gateway.settings]` (the limits on the orders: `read_only`, ...).
+    #[pyo3(signature = (name, extra=None))]
+    fn start_gateway<'py>(
+        &self,
+        py: Python<'py>,
+        name: String,
+        extra: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let settings = self.settings()?;
         let broker = self.broker;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let settings =
+            let mut settings =
                 Settings::parse(&settings).map_err(|e| PyValueError::new_err(e.to_string()))?;
+            if let Some(extra) = extra {
+                let extra =
+                    Settings::parse(&extra).map_err(|e| PyValueError::new_err(e.to_string()))?;
+                settings.0.extend(extra.0);
+            }
+            let guard = brokapi_client::OrderGuard::from_settings(&settings)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
             let kind: Broker = broker
                 .parse()
                 .map_err(|e: brokapi::core::Error| PyValueError::new_err(e.to_string()))?;
             let config = BrokerConfig::from_settings(kind, &settings)
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
             let dir = tempfile::tempdir().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-            let gateway = start_gateway(&name, dir.path(), &config).await?;
+            let gateway = start_gateway(&name, dir.path(), &config, &guard).await?;
             Ok(NativeMockGateway {
                 inner: Arc::new(MockGateway {
                     name,
                     config,
+                    guard,
                     dir,
                     gateway: tokio::sync::Mutex::new(Some(gateway)),
                 }),
@@ -378,8 +393,11 @@ async fn start_gateway(
     name: &str,
     dir: &std::path::Path,
     config: &BrokerConfig,
+    guard: &brokapi_client::OrderGuard,
 ) -> PyResult<Gateway> {
-    let gateway = Gateway::start(GatewayConfig::new(name, dir), config.clone(), None)
+    let mut gw = GatewayConfig::new(name, dir);
+    gw.guard = guard.clone();
+    let gateway = Gateway::start(gw, config.clone(), None)
         .await
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     gateway.ready().await;
@@ -395,6 +413,7 @@ pub struct NativeMockGateway {
 struct MockGateway {
     name: String,
     config: BrokerConfig,
+    guard: brokapi_client::OrderGuard,
     dir: tempfile::TempDir,
     gateway: tokio::sync::Mutex<Option<Gateway>>,
 }
@@ -421,7 +440,9 @@ impl NativeMockGateway {
             if let Some(old) = guard.take() {
                 old.kill().await;
             }
-            *guard = Some(start_gateway(&inner.name, inner.dir.path(), &inner.config).await?);
+            *guard = Some(
+                start_gateway(&inner.name, inner.dir.path(), &inner.config, &inner.guard).await?,
+            );
             Ok(())
         })
     }

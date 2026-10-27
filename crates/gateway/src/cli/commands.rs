@@ -304,8 +304,14 @@ async fn check(ctx: &Ctx, offline: bool, names: &[String]) -> Res {
                 ));
             }
         }
+        // The limits on the orders are part of the configuration: a wrong number is a problem of it.
+        match spec.order_guard() {
+            Ok(guard) if !guard.is_empty() => notes.push(guard_note(&guard)),
+            _ => {}
+        }
         let built = spec
             .broker_config()
+            .and_then(|c| spec.order_guard().map(|_| c))
             .and_then(|c| spec.limiter().map(|l| (c, l)));
         let (config_result, access_result) = match built {
             Err(e) => (Err(e), None),
@@ -413,6 +419,21 @@ fn shared_tokens(gateways: &[GatewaySpec]) -> std::collections::HashMap<String, 
         }
     }
     out
+}
+
+/// The limits on the orders of a gateway, as `check` shows them.
+fn guard_note(guard: &brokapi_client::OrderGuard) -> String {
+    let mut parts = Vec::new();
+    if guard.read_only {
+        parts.push("read_only (no command reaches the broker)".to_owned());
+    }
+    if let Some(q) = guard.max_order_qty {
+        parts.push(format!("max_order_qty {q}"));
+    }
+    if let Some(v) = guard.max_order_value {
+        parts.push(format!("max_order_value {v}"));
+    }
+    format!("limits on orders: {}", parts.join(", "))
 }
 
 /// Connects to the broker and reads the account: nothing is placed.

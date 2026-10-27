@@ -117,15 +117,31 @@ impl InstrumentSource for Client {
 #[async_trait]
 impl OrderExecutor for Client {
     async fn place(&self, req: PlaceOrderRequest) -> Result<OrderAck, Error> {
+        self.inner.guard.place(&req)?;
         self.conn().await?.ud().place(req).await
     }
 
     async fn cancel(&self, cid: ClientOrderId) -> Result<(), Error> {
+        self.inner.guard.command("cancel")?;
         self.conn().await?.ud().cancel(cid).await
     }
 
     async fn replace(&self, req: ReplaceOrderRequest) -> Result<OrderAck, Error> {
-        self.conn().await?.ud().replace(req).await
+        let guard = &self.inner.guard;
+        guard.command("replace")?;
+        let conn = self.conn().await?;
+        if guard.max_order_qty.is_some() || guard.max_order_value.is_some() {
+            // What the new order will be: the given quantity and price, the rest from the order it replaces.
+            let (qty, price) = match (req.qty, req.price) {
+                (Some(qty), Some(price)) => (qty, Some(price)),
+                (qty, price) => {
+                    let old = conn.ud().order_state(req.original_cid).await?;
+                    (qty.unwrap_or(old.qty), price.or(old.price))
+                }
+            };
+            guard.caps(qty, price)?;
+        }
+        conn.ud().replace(req).await
     }
 
     async fn order_state(&self, cid: ClientOrderId) -> Result<OrderSnapshot, Error> {
@@ -178,10 +194,12 @@ impl PortfolioSource for Client {
 #[async_trait]
 impl StopOrderExecutor for Client {
     async fn place_stop(&self, req: PlaceStopOrderRequest) -> Result<OrderAck, Error> {
+        self.inner.guard.place_stop(&req)?;
         self.conn().await?.ud().place_stop(req).await
     }
 
     async fn cancel_stop(&self, stop: StopOrderRef) -> Result<(), Error> {
+        self.inner.guard.command("cancel_stop")?;
         self.conn().await?.ud().cancel_stop(stop).await
     }
 

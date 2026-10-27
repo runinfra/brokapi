@@ -20,6 +20,7 @@ import bybit_first_day  # noqa: E402
 import emergency_stop  # noqa: E402
 import finam_first_day  # noqa: E402
 import from_tinkoff  # noqa: E402
+import guard  # noqa: E402
 import levers  # noqa: E402
 import quickstart_tbank  # noqa: E402
 import stop_restart  # noqa: E402
@@ -224,3 +225,7 @@ async def test_the_levers_move_the_price_and_lose_an_answer() -> None:
         Decimal("248.99"),
     ]
     assert await levers.a_lost_answer_is_asked_about_not_sent_again() is brokapi.OrderStateKind.ACKED
+
+
+async def test_the_limits_on_the_orders_refuse_before_anything_is_sent() -> None:
+    assert await guard.look_but_do_not_trade() == ["bid 244.30", "refused: read_only", "refused: max_order_value"]
