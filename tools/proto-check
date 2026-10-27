@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# The .proto files of the gateway work with the tools of other languages, not only with the Rust build.
+# The .proto files of the gateway work with the tools of other languages, not only with the Rust build, and the Go client in
+# go/ is made from them.
 #
 # The Rust build compiles them with protox, which forgives what protoc and buf refuse (a call named like the type it
-# returns once hid that type from protoc). So this compiles them with protoc, makes a Go client with the command the book
-# gives (docs/src/gateway/bots.md, "Бот на другом языке") and builds it.
+# returns once hid that type from protoc). So this compiles them with protoc, makes the Go code from them, compares it with
+# go/gateway/v1, and builds the module go/ with its example.
+#
+#   tools/proto-check            check: the code in go/gateway/v1 is what the .proto files give, and go/ builds
+#   tools/proto-check --write    write the code made from the .proto files into go/gateway/v1 (after a change of a .proto)
 #
 # Needs protoc, protoc-gen-go, protoc-gen-go-grpc and go in PATH. The CI (.github/workflows/gateway.yml) installs them.
-# Writes only into a temporary directory.
 set -euo pipefail
-proto="$(cd "$(dirname "$0")/../crates/gateway/proto" && pwd)"
+root="$(cd "$(dirname "$0")/.." && pwd)"
+proto="$root/crates/gateway/proto"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -16,25 +20,41 @@ files=(brokapi/gateway/v1/gateway.proto brokapi/gateway/v1/types.proto brokapi/s
 protoc -I "$proto" --descriptor_set_out=/dev/null "${files[@]}"
 echo "protoc: the .proto files compile"
 
-cd "$work"
-go mod init example.com/bot >/dev/null 2>&1
-mkdir gen
+# The package of the Go code: the module of go/go.mod, the directory gateway/v1, the name gatewayv1.
 m=brokapi/gateway/v1
-pkg=example.com/bot/gen/$m
+pkg="github.com/runinfra/brokapi/go/gateway/v1;gatewayv1"
 protoc -I "$proto" \
-  --go_out=gen --go_opt=paths=source_relative --go_opt=M$m/gateway.proto=$pkg --go_opt=M$m/types.proto=$pkg \
-  --go-grpc_out=gen --go-grpc_opt=paths=source_relative --go-grpc_opt=M$m/gateway.proto=$pkg --go-grpc_opt=M$m/types.proto=$pkg \
+  --go_out="$work" --go_opt=paths=source_relative --go_opt="M$m/gateway.proto=$pkg" --go_opt="M$m/types.proto=$pkg" \
+  --go-grpc_out="$work" --go-grpc_opt=paths=source_relative --go-grpc_opt="M$m/gateway.proto=$pkg" --go-grpc_opt="M$m/types.proto=$pkg" \
   $m/gateway.proto $m/types.proto
-cat >main.go <<'EOF'
-package main
 
-import gw "example.com/bot/gen/brokapi/gateway/v1"
+out="$root/go/gateway/v1"
+if [ "${1:-}" = "--write" ]; then
+  mkdir -p "$out"
+  rm -f "$out"/*.pb.go
+  cp "$work/$m"/*.pb.go "$out/"
+  echo "go: the code is written into go/gateway/v1"
+else
+  # The version of protoc is written into the header of the files: another version on another machine is not a change.
+  strip() { grep -v -E '^// (	| - )protoc ' "$1"; }
+  for f in "$work/$m"/*.pb.go; do
+    name="$(basename "$f")"
+    if ! diff -u <(strip "$out/$name" 2>/dev/null || true) <(strip "$f") >"$work/diff"; then
+      head -40 "$work/diff"
+      echo "go/gateway/v1/$name is not what the .proto files give: run tools/proto-check --write and commit it" >&2
+      exit 1
+    fi
+  done
+  extra="$(comm -23 <(cd "$out" && ls ./*.pb.go) <(cd "$work/$m" && ls ./*.pb.go))"
+  if [ -n "$extra" ]; then
+    echo "go/gateway/v1 has files the .proto files do not give: $extra" >&2
+    exit 1
+  fi
+  echo "go: the code in go/gateway/v1 is what the .proto files give"
+fi
 
-func main() {
-	var _ gw.GatewayClient
-	_ = &gw.Portfolio{}
-}
-EOF
-go mod tidy >/dev/null
+cd "$root/go"
+test -z "$(gofmt -l .)" || { gofmt -l . >&2; echo "go: run gofmt -w on the files above" >&2; exit 1; }
+go vet ./...
 go build ./...
-echo "go: the client made from the .proto files builds"
+echo "go: the module go/ and its example build"

@@ -44,7 +44,7 @@ INTRO = """Как пользоваться этим набором. Книга �
 Python, оба работают сейчас (альфа); Gateway - программа brokapi, раздел gateway/. Если пользователь пишет на Python, берите отдельный индекс для Python: \
 %s/python/llms.txt, в нем только то, что нужно для Python, и справочник пакета одним файлом. Если боты на нескольких языках или несколько ботов на одном счете, берите Gateway: он запускается \
 командами brokapi (gateway/quickstart.md), бот подключается к нему по gRPC (gateway/bots.md): для Rust есть клиент RemoteClient, \
-для Python бот берет тот же brokapi.Client через brokapi.connect_gateway (gateway/bots.md), для Go готового клиента пока нет, контракт - файлы .proto (api-gateway.md). Если код пойдет на боевой счет, \
+для Python бот берет тот же brokapi.Client через brokapi.connect_gateway (gateway/bots.md), для Go есть модуль github.com/runinfra/brokapi/go (gateway/bots.md), для других языков контракт - файлы .proto (api-gateway.md). Если код пойдет на боевой счет, \
 сначала before-live.md и agents/unverified.md (допущения по документации брокеров, как их обойти). Если нужно написать код: \
 прочитайте "Контракт для агентов" (все обязательные правила на одной странице, они одни для любого языка), затем инструкцию \
 из раздела нужного языка, ближайшую к задаче (торговый бот, несколько брокеров и счетов, история или исследовательский \
@@ -100,7 +100,7 @@ DESCRIPTIONS = {
     "python/design.md": "Объяснение: как пакет Python связан с ядром, мост tokio и asyncio, Decimal, ошибки, отличия от Rust",
     "gateway/index.md": "Gateway, программа brokapi (служба и команды, один продукт): когда нужен, схема служба - гейтвеи - боты - брокеры, что гарантирует, чего пока нет",
     "gateway/quickstart.md": "Gateway: быстрый старт на песочнице Т-Банка: brokapi init, check, up -d, ps, quote, down, без заявок",
-    "gateway/bots.md": "Gateway: подключить бота: доступ (gateway.addr, access.key, заголовки authorization и x-brokapi-bot), Rust через RemoteClient, любой язык по .proto, ошибки",
+    "gateway/bots.md": "Gateway: подключить бота: доступ (gateway.addr, access.key, заголовки authorization и x-brokapi-bot), Rust через RemoteClient, Python через connect_gateway, Go через модуль github.com/runinfra/brokapi/go, любой язык по .proto, ошибки",
     "gateway/operations.md": "Gateway: запуск и обслуживание: юнит systemd, несколько служб, сбои и перезапуск, остановка и снятие заявок, файлы состояния, что значат сообщения",
     "gateway/events.md": "Gateway: поток событий Events (epoch, seq, Ready, Gap, Lagged), кольцо, что бот делает после обрыва и перезапуска гейтвея, сверка",
     "gateway/differences.md": "Gateway: чем гейтвей отличается от прямого подключения (потерянный ответ, события, подписки, лимиты, остановка) и чего он пока не делает",

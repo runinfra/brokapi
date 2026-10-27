@@ -16,6 +16,7 @@ on:
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "go/**"
       - ".github/workflows/gateway.yml"
       - "tools/proto-check"
 
@@ -46,21 +47,30 @@ jobs:
       - name: Test the gateway, the service and the commands
         run: cargo test --locked -p brokapi-gateway --no-fail-fast
 
-  # The .proto files with the tools of other languages: protoc and a Go client made by the command of the book.
+  # The .proto files with the tools of other languages: protoc makes the Go client of go/ the same as the one in the
+  # repository, the module builds, and the Go bot of the book runs against a gateway on the imitation of BCS.
   proto:
     name: proto with protoc and Go
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version: stable
+          cache-dependency-path: go/go.sum
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Install protoc and the Go plugins
         run: |
           sudo apt-get update -q && sudo apt-get install -yq protobuf-compiler
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - name: Compile the .proto files and build a Go client
+      - name: Compile the .proto files, compare the Go client, build it
         run: tools/proto-check
+      # BROKAPI_GO=1: without go the test would pass by saying so, here a missing go is a failure.
+      - name: Run the Go bot against a gateway
+        run: cargo test --locked -p brokapi-gateway --test go
+        env:
+          BROKAPI_GO: "1"
