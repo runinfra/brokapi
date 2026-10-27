@@ -8,7 +8,7 @@
 
 /// The Russian Trusted Root CA, PEM.
 pub const RUSSIAN_TRUSTED_ROOT_CA_PEM: &[u8] =
-    include_bytes!("../certs/russian_trusted_root_ca.pem");
+    include_bytes!("../certs/russian_trusted_root_ca.crt");
 
 /// Whether a connection to `endpoint` trusts [`RUSSIAN_TRUSTED_ROOT_CA_PEM`]: an `https://` address whose host is
 /// `tbank.ru` or ends with `.tbank.ru`.
