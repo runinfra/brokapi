@@ -101,10 +101,22 @@ class Infra:
                 for snapshot in report.confirmed:
                     self.journal.set(name, snapshot.cid, "working")
                 for cid in report.closed_offline:
-                    self.journal.set(name, cid, "done", "closed while away or never sent")
+                    # Not alive at the broker: it ended while the process was down, or never reached the broker. How it
+                    # ended (a fill or a cancel) only order_state says.
+                    self.journal.set(name, cid, "done", await self.ended(name, cid))
                 self.degraded.discard(name)
                 return report
         raise AssertionError("unreachable")
+
+    async def ended(self, name: str, cid: uuid.UUID) -> str:
+        """How an order closed offline ended, for the journal."""
+        try:
+            snapshot = await self.clients[name].order_state(cid)
+        except brokapi.Rejected as error:
+            if error.code != "not_found":
+                raise
+            return "never reached the broker"  # a crash between the journal line and the call
+        return snapshot.state.kind.value
 
     async def place(
         self, name: str, instrument: brokapi.InstrumentId, qty: Decimal, price: Decimal

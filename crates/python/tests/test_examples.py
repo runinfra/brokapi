@@ -98,6 +98,68 @@ async def test_trading_bot_asks_the_broker_after_unknown_and_never_sends_again()
         assert len(sent) == 1
 
 
+async def test_trading_bot_counts_an_order_filled_while_it_was_away_and_buys_no_more(tmp_path: Path) -> None:
+    journal = tmp_path / "j.jsonl"
+    async with await testing.mock_bcs() as mock:
+        # The first life: the order stands, then the bot stops without cancelling it (a crash, a restart).
+        first = await mock.connect()
+        bot = trading_bot.TradingBot(first, "SBER", trading_bot.Journal(journal), Decimal(1))
+        await bot.start()
+        bot.top_bid = Decimal("200.00")
+        await bot.try_buy()
+        cid = bot.working
+        assert cid is not None
+        await first.close()
+        # While nobody watches, the order is filled.
+        mock.fill(cid, qty=bot.params.min_qty, price=Decimal("198.00"))
+
+        # The second life over the same journal: the reconcile says closed_offline, the bot asks how it ended.
+        second = await mock.connect()
+        sent: list[object] = []
+        real_place = second.place
+
+        async def counted(**kwargs: object) -> brokapi.OrderAck:
+            sent.append(kwargs["cid"])
+            return await real_place(**kwargs)  # type: ignore[arg-type]
+
+        second.place = counted  # type: ignore[method-assign]
+        again = trading_bot.TradingBot(second, "SBER", trading_bot.Journal(journal), Decimal(1))
+        await again.start()
+        assert again.filled == again.params.min_qty
+        assert again.done
+        assert again.journal.orders[cid] == ("done", "Filled")
+        again.top_bid = Decimal("200.00")
+        await again.try_buy()
+        assert sent == []  # the budget is bought: no second order
+        await second.close()
+        # A third life knows it from the journal alone.
+        assert trading_bot.Journal(journal).bought() == again.params.min_qty
+
+
+async def test_trading_bot_treats_transport_on_place_as_unknown() -> None:
+    async with await testing.mock_bcs() as mock:
+        client = await mock.connect()
+        bot = trading_bot.TradingBot(client, "SBER", trading_bot.Journal(), Decimal(1))
+        await bot.start()
+        bot.top_bid = Decimal("200.00")
+        real_place = client.place
+        sent: list[object] = []
+
+        async def cut(**kwargs: object) -> brokapi.OrderAck:
+            sent.append(kwargs["cid"])
+            raise brokapi.Transport("request timed out after 30s")  # nothing says whether the order stands
+
+        client.place = cut  # type: ignore[method-assign]
+        await bot.try_buy()
+        first = sent[0]
+        # Not a crash, and not "sending" for ever: the bot asked the broker, which has no such order.
+        assert bot.journal.orders[first] == ("done", "unknown, not found at the broker")
+        client.place = real_place  # type: ignore[method-assign]
+        await bot.try_buy()  # the next signal uses a new cid
+        assert bot.working is not None and bot.working != first
+        await client.cancel(bot.working)
+
+
 async def test_trading_bot_handles_a_refusal_and_a_closed_gate() -> None:
     async with await testing.mock_bcs() as mock:
         client = await mock.connect()
@@ -190,6 +252,10 @@ async def test_infrastructure_two_lives_of_the_process(tmp_path: Path) -> None:
             assert again.clients["tbank-a"].limiter.broker == "tbank"
             filled = await again.clients["tbank-a"].order_state(placed["tbank-a"])
             assert filled.state.kind is brokapi.OrderStateKind.FILLED
+            # The reconcile asked how the orders closed offline ended, and the journal says it.
+            lines = journal.read_text().splitlines()
+            assert f"tbank-a\t{placed['tbank-a']}\tdone\tFilled" in lines
+            assert f"bcs\t{ghost}\tdone\tnever reached the broker" in lines
         finally:
             await again.close()
 
@@ -380,6 +446,26 @@ async def test_the_gateway_bot_survives_a_new_gateway_process() -> None:
         mock.fill(cid, qty=Decimal(1), price=Decimal("100.00"))
         await asyncio.wait_for(task, 10)
         assert bot.ended is brokapi.OrderStateKind.FILLED and bot.ledger == set()
+
+
+async def test_the_gateway_bot_learns_how_an_order_closed_while_it_was_away_ended() -> None:
+    async with await testing.mock_bcs() as mock:
+        first = await mock.connect()
+        bot = gateway_bot.Bot(first)
+        await bot.setup()
+        await bot.place()
+        assert bot.cid is not None
+        await first.close()
+        mock.fill(bot.cid, qty=Decimal(1), price=Decimal("100.00"))
+
+        # A new life with the same ledger: closed_offline, and order_state tells it was filled, not cancelled.
+        second = await mock.connect()
+        again = gateway_bot.Bot(second)
+        again.ledger = {bot.cid}
+        await again.setup()
+        assert again.ended is brokapi.OrderStateKind.FILLED
+        assert again.ledger == set()
+        await second.close()
 
 
 async def test_the_gateway_bot_runs_unchanged_at_the_broker() -> None:

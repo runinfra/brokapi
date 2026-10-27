@@ -56,9 +56,15 @@ class Bot:
         for snapshot in report.confirmed:
             self.on_order(snapshot)
         for cid in report.closed_offline:
-            # The broker has no such order: it ended while the bot was away, or it was never sent.
-            self.ledger.discard(cid)
-            self.ended = self.ended or brokapi.OrderStateKind.CANCELLED
+            # Not alive at the broker: it ended while the bot was away, or it never reached the broker. Ask how: a fill
+            # taken for a cancel makes the bot trade the same money again.
+            try:
+                self.on_order(await self.client.order_state(cid))
+            except brokapi.Rejected as error:
+                if error.code != "not_found":
+                    raise
+                self.ledger.discard(cid)  # never reached the broker
+                self.ended = self.ended or brokapi.OrderStateKind.CANCELLED
 
     def on_order(self, snapshot: brokapi.OrderSnapshot) -> None:
         if snapshot.cid in self.ledger and snapshot.state.is_final:

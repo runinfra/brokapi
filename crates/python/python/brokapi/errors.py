@@ -98,7 +98,9 @@ class Transport(BrokapiError):
     """The network or the broker's endpoint failed in a way that is not an answer (connect, TLS, timeout, a cut stream).
 
     For a reading call, repeat it later. A command that might have reached the broker raises :class:`Unknown`
-    instead, so this error on a command means the connector has no sign that it did.
+    instead, so this error on a command means the connector has no sign that it did. It cannot always prove it did
+    not: treat it as :class:`Unknown`, ask ``order_state(cid)``. The ``cid`` is used up, the same ``cid`` again is
+    ``Rejected`` with code ``duplicate_place``. Place a new order under a new ``cid``.
     """
 
     error_class = ErrorClass.RETRYABLE

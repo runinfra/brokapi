@@ -25,28 +25,38 @@ class Journal:
     """The memory of the bot. The library writes nothing to disk, so the bot does.
 
     One JSON line per change, flushed to disk BEFORE the call that needs it: a journal written after `place` loses
-    the order that a crash cuts in between. The last line of a cid wins.
+    the order that a crash cuts in between. The last line of a cid wins. A finished order keeps how much was filled:
+    after a restart the bot knows what it has bought already.
     """
 
     def __init__(self, path: Optional[Path] = None) -> None:
         self.path = path
         self.orders: dict[uuid.UUID, tuple[str, str]] = {}
+        self.filled: dict[uuid.UUID, Decimal] = {}
         if path is not None and path.exists():
             for line in path.read_text().splitlines():
                 try:
                     row = json.loads(line)
                 except json.JSONDecodeError:
                     continue  # a line cut by a crash carries no complete change
-                self.orders[uuid.UUID(row["cid"])] = (row["state"], row.get("detail", ""))
+                cid = uuid.UUID(row["cid"])
+                self.orders[cid] = (row["state"], row.get("detail", ""))
+                self.filled[cid] = Decimal(row.get("filled", "0"))
 
-    def set(self, cid: uuid.UUID, state: str, detail: str = "") -> None:
-        """`state`: sending, working, unknown or done."""
+    def set(self, cid: uuid.UUID, state: str, detail: str = "", filled: Decimal = Decimal(0)) -> None:
+        """`state`: sending, working, unknown or done. `filled`: how much a finished order bought."""
         self.orders[cid] = (state, detail)
+        self.filled[cid] = filled
         if self.path is not None:
+            row = {"cid": str(cid), "state": state, "detail": detail, "filled": str(filled)}
             with self.path.open("a") as file:
-                file.write(json.dumps({"cid": str(cid), "state": state, "detail": detail}) + "\n")
+                file.write(json.dumps(row) + "\n")
                 file.flush()
                 os.fsync(file.fileno())
+
+    def bought(self) -> Decimal:
+        """How much the finished orders bought, in all the lives of the bot."""
+        return sum((self.filled[cid] for cid, (state, _) in self.orders.items() if state == "done"), Decimal(0))
 
     def alive(self) -> list[uuid.UUID]:
         """The ledger for `reconcile`: the orders the bot believes are alive."""
@@ -61,7 +71,7 @@ class TradingBot:
         self.ticker = ticker
         self.journal = journal
         self.budget = budget  # how much to buy in all
-        self.filled = Decimal(0)
+        self.filled = journal.bought()  # what earlier lives of the bot have bought
         self.working: Optional[uuid.UUID] = None
         self.top_bid: Optional[Decimal] = None
         self.book_sub: Optional[int] = None
@@ -87,8 +97,10 @@ class TradingBot:
         for snapshot in report.confirmed:
             self.on_order(snapshot)
         for cid in report.closed_offline:
-            # The broker has no such order and it is not alive: it ended while the bot was away, or was never sent.
-            self.journal.set(cid, "done", "closed while the bot was away")
+            # Not alive at the broker: it ended while the bot was away (filled, cancelled), or never reached the broker.
+            # Which of these, and how much was filled, only `order_state` says. Writing "done" without asking loses a
+            # fill, and the bot buys a second time.
+            await self.resolve(cid, "never reached the broker")
         self.need_reconcile = False
 
     async def on_event(self, envelope: brokapi.Envelope) -> None:
@@ -118,8 +130,10 @@ class TradingBot:
         """The state of an order comes from the events, not from the answer of `place` (it only means "accepted")."""
         if snapshot.cid not in self.journal.orders:
             return  # an order placed by hand: the bot does not enter it into its journal
+        if self.journal.orders[snapshot.cid][0] == "done":
+            return  # counted already: an event and the reconcile can both bring the end of an order
         if snapshot.state.is_final:
-            self.journal.set(snapshot.cid, "done", snapshot.state.kind.value)
+            self.journal.set(snapshot.cid, "done", snapshot.state.kind.value, snapshot.filled)
             # The filled quantity is taken from the snapshot, not summed from `Execution` events: after an
             # overflow the reconcile returns the right number by itself.
             self.filled += snapshot.filled
@@ -157,17 +171,18 @@ class TradingBot:
         except brokapi.RateLimited as error:
             self.journal.set(cid, "done", "not sent: rate limit")
             await asyncio.sleep(error.retry_after.total_seconds())  # then the next book tries again with a new cid
-        except brokapi.Unknown:
-            # Nobody knows whether the order exists. NEVER send it again: ask the broker.
+        except (brokapi.Unknown, brokapi.Transport):
+            # Nobody knows whether the order exists. NEVER send it again: ask the broker. `Transport` on a command is
+            # read the same way: the connector has no sign that it arrived, but cannot always prove it did not.
             self.journal.set(cid, "unknown")
-            await self.resolve_unknown(cid)
+            await self.resolve(cid, "unknown, not found at the broker")
         else:
             self.working = cid
             self.journal.set(cid, "working")
             self.placed.set()
 
-    async def resolve_unknown(self, cid: uuid.UUID) -> None:
-        """The way out of `Unknown`: `order_state` by the same cid."""
+    async def resolve(self, cid: uuid.UUID, missing: str) -> None:
+        """The way out of `Unknown` and of `closed_offline`: `order_state` by the same cid."""
         try:
             snapshot = await self.client.order_state(cid)
         except brokapi.Rejected as error:
@@ -175,7 +190,7 @@ class TradingBot:
                 raise
             # The broker has no such order. A broker can be late: a real bot asks again after a pause, and only then
             # writes "not placed". Here it is written at once and the next signal uses a new cid.
-            self.journal.set(cid, "done", "unknown, not found at the broker")
+            self.journal.set(cid, "done", missing)
             return
         self.on_order(snapshot)
         self.placed.set()
