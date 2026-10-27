@@ -130,7 +130,7 @@ impl TbankClient {
     /// Builds the channel without touching the network (connects on first use, reconnects on failure).
     ///
     /// An `https://` endpoint gets TLS with the bundled web PKI roots, the Russian Trusted Root CA when the host is
-    /// one of `tbank.ru` ([`trusts_russian_root`](crate::trusts_russian_root)), and the extra root certificate of
+    /// one of `tbank.ru` ([`trusts_russian_root`]), and the extra root certificate of
     /// [`TbankConfig::root_certificate_pem`] if there is one. An `http://` endpoint is plain text and meant
     /// for a local mock. HTTP/2 keep-alive pings run every 5 minutes and only while a call or a stream is
     /// open: a server counts pings on an idle connection as abuse and closes it (`too_many_pings`), so none
