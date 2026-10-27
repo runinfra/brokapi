@@ -46,7 +46,7 @@ __all__ = ["CandlePager", "Client", "EventStream", "Limiter", "connect", "connec
 
 _BROKERS = {
     "bcs": {"refresh_token", "write", "endpoint"},
-    "tbank": {"token", "sandbox", "account_id", "endpoint", "app_name"},
+    "tbank": {"token", "sandbox", "account_id", "endpoint", "app_name", "root_certificate"},
     "finam": {"secret", "account_id", "endpoint"},
     "alor": {"refresh_token", "portfolio", "exchange", "test", "endpoint"},
     "bybit": {"api_key", "api_secret", "env", "category", "settle_coin", "recv_window_ms", "endpoint"},
@@ -703,7 +703,8 @@ async def connect(
       trade).
     - ``tbank``: ``token`` (``TBANK_TOKEN``, required), ``sandbox`` (``TBANK_SANDBOX``, without it the address is the real
       one), ``account_id`` (``TBANK_ACCOUNT_ID``, needed when the token has several), ``endpoint`` and ``app_name``
-      (``TBANK_ENDPOINT``, ``TBANK_APP_NAME``).
+      (``TBANK_ENDPOINT``, ``TBANK_APP_NAME``), ``root_certificate`` (``TBANK_ROOT_CERT``: the path of a PEM file with
+      the Russian Trusted Root CA, when the connection fails with ``UnknownIssuer``).
     - ``finam``: ``secret`` (``FINAM_SECRET``, required), ``account_id`` (``FINAM_ACCOUNT_ID``, required), ``endpoint``
       (``FINAM_API_URL``).
     - ``alor``: ``refresh_token`` (``ALOR_REFRESH_TOKEN``, required), ``portfolio`` (``ALOR_PORTFOLIO``, required when

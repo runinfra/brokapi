@@ -94,7 +94,12 @@ the price stands still: bid 273.9
 Т-Банка, как это сделать - в разделе «Вход» страницы [Т-Банк](../brokers/tbank.md#вход). Счет песочницы сам не появляется: его открывает метод
 `OpenSandboxAccount` и пополняет `SandboxPayIn` (по документации Т-Банка). Без счета `connect` ответит `Config`: у токена нет открытого счета.
 
+Адреса Т-Банка подписаны корнем Минцифры, которого нет среди встроенных корней библиотеки. Без него первый запрос падает с
+`UnknownIssuer`. Корень скачивается один раз, отпечаток для сверки - на странице [Т-Банк](../brokers/tbank.md#корневой-сертификат-минцифры):
+
 ```bash
+curl -o russian_trusted_root_ca.pem https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt
+export TBANK_ROOT_CERT=$PWD/russian_trusted_root_ca.pem
 export TBANK_TOKEN=...        # токен песочницы
 python quickstart_tbank.py sandbox
 ```
@@ -117,7 +122,7 @@ python quickstart_tbank.py sandbox
 | Брокер | Подключение | Переменные |
 |---|---|---|
 | БКС | `await brokapi.connect("bcs")` | `BCS_REFRESH_TOKEN` (обязательно), `BCS_IS_WRITE` (`true` - токен на запись). Песочницы нет |
-| Т-Банк | `await brokapi.connect("tbank")` | `TBANK_TOKEN`, `TBANK_ACCOUNT_ID` (если у токена несколько счетов), `TBANK_ENDPOINT`, `TBANK_APP_NAME`. Без `TBANK_SANDBOX` адрес боевой |
+| Т-Банк | `await brokapi.connect("tbank")` | `TBANK_TOKEN`, `TBANK_ROOT_CERT` (корень Минцифры, нужен), `TBANK_ACCOUNT_ID` (если у токена несколько счетов), `TBANK_ENDPOINT`, `TBANK_APP_NAME`. Без `TBANK_SANDBOX` адрес боевой |
 | Финам | `await brokapi.connect("finam")` | `FINAM_SECRET`, `FINAM_ACCOUNT_ID` (обязательно), `FINAM_API_URL`. Песочницы нет |
 | АЛОР | `await brokapi.connect("alor")` | `ALOR_REFRESH_TOKEN` (обязательно), `ALOR_PORTFOLIO` (обязательно, если токен называет несколько портфелей), `ALOR_EXCHANGE` (`MOEX` или `SPBX`), `ALOR_TEST` (`true` - тестовый контур) |
 | Bybit | `await brokapi.connect("bybit")` | `BYBIT_API_KEY` и `BYBIT_API_SECRET` (обязательно), `BYBIT_ENV` (`mainnet` по умолчанию, `demo` - демо-счет с виртуальными деньгами, у него свои `BYBIT_DEMO_API_KEY` и `BYBIT_DEMO_API_SECRET`) |

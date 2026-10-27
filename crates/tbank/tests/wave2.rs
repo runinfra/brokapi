@@ -367,9 +367,14 @@ fn a_plain_text_endpoint_in_the_environment_is_refused_and_the_file_is_read_from
     let dir = std::env::temp_dir().join(format!("brokapi-tbank-env-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("t.env");
+    let root = dir.join("root.pem");
+    std::fs::write(&root, SOME_PEM).unwrap();
     std::fs::write(
         &file,
-        "TBANK_TOKEN=t.from-file\nTBANK_SANDBOX=yes\nTBANK_ENDPOINT=https://example.test:443\nTBANK_ACCOUNT_ID=acc-1\n",
+        format!(
+            "TBANK_TOKEN=t.from-file\nTBANK_SANDBOX=yes\nTBANK_ENDPOINT=https://example.test:443\nTBANK_ACCOUNT_ID=acc-1\nTBANK_ROOT_CERT={}\n",
+            root.display()
+        ),
     )
     .unwrap();
     unsafe {
@@ -379,11 +384,14 @@ fn a_plain_text_endpoint_in_the_environment_is_refused_and_the_file_is_read_from
             "TBANK_ENDPOINT",
             "TBANK_ACCOUNT_ID",
             "TBANK_APP_NAME",
+            "TBANK_ROOT_CERT",
         ] {
             std::env::remove_var(k);
         }
     }
     let cfg = TbankConfig::from_env_file(&file).unwrap();
+    assert_eq!(cfg.root_certificate_pem.as_deref(), Some(SOME_PEM));
+    unsafe { std::env::remove_var("TBANK_ROOT_CERT") };
     assert_eq!(cfg.token, "t.from-file");
     assert_eq!(cfg.endpoint, "https://example.test:443");
     assert_eq!(cfg.account_id.as_deref(), Some("acc-1"));

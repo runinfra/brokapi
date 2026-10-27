@@ -173,7 +173,9 @@ impl TbankConfig {
     ///
     /// Variables: `TBANK_TOKEN` (required), `TBANK_SANDBOX` (`true`, `1` or `yes`, default `false`, so
     /// production), `TBANK_ENDPOINT` (overrides the endpoint when not empty, must start with
-    /// `https://`), `TBANK_ACCOUNT_ID` and `TBANK_APP_NAME` (both optional, empty means not set).
+    /// `https://`), `TBANK_ACCOUNT_ID` and `TBANK_APP_NAME` (both optional, empty means not set),
+    /// `TBANK_ROOT_CERT` (optional: the path of a PEM file for
+    /// [`with_root_certificate_pem`](Self::with_root_certificate_pem)).
     ///
     /// Note the default: without `TBANK_SANDBOX` the config points at production.
     ///
@@ -261,6 +263,15 @@ impl TbankConfig {
         cfg.app_name = std::env::var("TBANK_APP_NAME")
             .ok()
             .filter(|s| !s.trim().is_empty());
+        if let Some(path) = std::env::var("TBANK_ROOT_CERT")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+        {
+            let pem = std::fs::read(path.trim()).map_err(|e| {
+                ProtocolError::Config(format!("TBANK_ROOT_CERT {}: {e}", path.trim()))
+            })?;
+            cfg.root_certificate_pem = Some(pem);
+        }
         Ok(cfg)
     }
 

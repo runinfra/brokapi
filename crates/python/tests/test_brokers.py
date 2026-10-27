@@ -153,3 +153,9 @@ async def test_the_same_cid_is_not_resent_by_the_library(pair: tuple[testing.Moc
 def test_the_cids_of_two_orders_differ() -> None:
     assert brokapi.new_cid() != brokapi.new_cid()
     assert isinstance(brokapi.new_cid(), uuid.UUID)
+
+
+async def test_the_root_certificate_of_tbank_is_a_setting_and_a_bad_path_is_named() -> None:
+    # The endpoints of T-Bank are signed by the root of the Ministry of Digital Development: without it UnknownIssuer.
+    with pytest.raises(brokapi.Config, match="/no/such/root.pem"):
+        await brokapi.connect("tbank", token="t.token", account_id="x", root_certificate="/no/such/root.pem")

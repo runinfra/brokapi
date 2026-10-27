@@ -158,7 +158,12 @@ impl Settings {
         Ok(cfg)
     }
 
-    /// The T-Bank connector configuration: `token`, `sandbox`, `account_id`, `app_name`, `endpoint`.
+    /// The T-Bank connector configuration: `token`, `sandbox`, `account_id`, `app_name`, `endpoint`,
+    /// `root_certificate`.
+    ///
+    /// `root_certificate` (`TBANK_ROOT_CERT`) is the path of a PEM file with a root certificate the TLS connection
+    /// trusts besides the bundled roots: the Russian Trusted Root CA, when the endpoint is served with it and the
+    /// bundled roots do not know it (the connection then fails with `UnknownIssuer`).
     pub fn tbank(&self) -> Result<TbankConfig, Error> {
         let token = self
             .text("token", "TBANK_TOKEN")
@@ -169,6 +174,14 @@ impl Settings {
         }
         cfg.account_id = self.text("account_id", "TBANK_ACCOUNT_ID");
         cfg.app_name = self.text("app_name", "TBANK_APP_NAME");
+        if let Some(path) = self.text("root_certificate", "TBANK_ROOT_CERT") {
+            let pem = std::fs::read(&path).map_err(|e| {
+                config(format!(
+                    "the root certificate {path} (root_certificate, TBANK_ROOT_CERT): {e}"
+                ))
+            })?;
+            cfg = cfg.with_root_certificate_pem(pem);
+        }
         Ok(cfg)
     }
 
@@ -185,5 +198,38 @@ impl Settings {
             cfg = cfg.with_endpoint(url);
         }
         Ok((cfg, account))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
+
+    fn tbank(extra: serde_json::Value) -> Result<TbankConfig, Error> {
+        let mut map = Map::new();
+        map.insert("token".into(), "t.token".into());
+        if let Value::Object(more) = extra {
+            map.extend(more);
+        }
+        Settings(map).tbank()
+    }
+
+    #[test]
+    fn the_root_certificate_of_tbank_is_read_from_the_file_it_names() {
+        let path = std::env::temp_dir().join(format!("brokapi-root-{}.pem", std::process::id()));
+        std::fs::write(&path, PEM).unwrap();
+        let cfg = tbank(serde_json::json!({ "root_certificate": path })).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(cfg.root_certificate_pem.as_deref(), Some(PEM.as_bytes()));
+    }
+
+    #[test]
+    fn a_root_certificate_that_cannot_be_read_is_a_config_error_with_the_path() {
+        let err =
+            tbank(serde_json::json!({ "root_certificate": "/no/such/dir/root.pem" })).unwrap_err();
+        assert!(matches!(err, Error::Config(_)), "{err:?}");
+        assert!(err.to_string().contains("/no/such/dir/root.pem"), "{err}");
     }
 }
