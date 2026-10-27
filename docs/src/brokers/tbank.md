@@ -11,39 +11,35 @@
 | Счет | `account_id` в настройке (`TBANK_ACCOUNT_ID`). Не задан: берется единственный открытый счет токена, а при нескольких счетах коннектор не запустится |
 | Песочница | да. `TBANK_SANDBOX=true` выбирает адрес песочницы, `caps().sandbox` показывает это |
 | Адрес | боевой и песочницы заданы, можно подменить `TBANK_ENDPOINT` (только `https://`, адрес имитации задается в коде). HTTP/2 keep-alive идет раз в 5 минут и только пока открыт вызов или поток |
-| Корневой сертификат | **нужен**: оба адреса Т-Банка подписаны корнем Минцифры, без него `UnknownIssuer`. `TBANK_ROOT_CERT` или `root_certificate` - путь к файлу PEM, см. ниже |
+| Корневой сертификат | оба адреса Т-Банка подписаны корнем Минцифры. Он встроен и действует только для `tbank.ru`, см. ниже |
 | Имя приложения | `TBANK_APP_NAME` (заголовок `x-app-name`, по соглашению Т-Банка `<ник>.<репозиторий>`) |
 | Лимиты | `brokapi::tbank::limits::default_limits()`, один счетчик на пользователя |
 
 ### Корневой сертификат Минцифры
 
-Боевой адрес и песочница Т-Банка отдают цепочку сертификатов от Russian Trusted Root CA, корня Минцифры (проверено 27.10.2026). Встроенные в
-библиотеку корни его не знают, поэтому без него первый же запрос падает:
+Боевой адрес и песочница Т-Банка отдают цепочку сертификатов от Russian Trusted Root CA, корня Минцифры (проверено 27.10.2026). Среди
+общих корней, которые знает библиотека, его нет. Поэтому он **встроен** в библиотеку (в `main`, в реестрах со следующим выпуском) и действует только для адресов `tbank.ru`:
+соединение с любым другим адресом ему не доверяет. Настраивать ничего не нужно.
 
-```text
-transport error: Unavailable: invalid peer certificate: UnknownIssuer
-```
+Встроенный корень - тот, что раздают Госуслуги, отпечаток SHA-256
+`D2:6D:2D:02:31:B7:C3:9F:92:CC:73:85:12:BA:54:10:35:19:E4:40:5D:68:B5:BD:70:3E:97:88:CA:8E:CF:31`, срок до 27.02.2032. Тест сверяет этот
+отпечаток на каждой сборке. Файл лежит в `crates/tbank-protocol/certs`.
 
-`SSL_CERT_FILE` и `SSL_CERT_DIR` не помогают: библиотека не читает системные корни. Корень скачивается с Госуслуг и передается путем к файлу,
-встроенные корни остаются:
-
-```bash
-curl -o russian_trusted_root_ca.pem https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt
-openssl x509 -in russian_trusted_root_ca.pem -noout -fingerprint -sha256
-# SHA256 Fingerprint=D2:6D:2D:02:31:B7:C3:9F:92:CC:73:85:12:BA:54:10:35:19:E4:40:5D:68:B5:BD:70:3E:97:88:CA:8E:CF:31
-```
-
-Отпечаток должен совпасть со строкой выше: так вы знаете, что скачали тот корень, а не подмену. Дальше путь к файлу:
+Свой корень сверх встроенных (например, если Т-Банк сменит цепочку раньше, чем выйдет новая версия, или для своего адреса) передается путем к файлу PEM:
 
 | Где | Как |
 |---|---|
-| Переменная (Python, Rust, программа `brokapi`) | `TBANK_ROOT_CERT=/path/russian_trusted_root_ca.pem` |
-| Python | `brokapi.connect("tbank", root_certificate="/path/russian_trusted_root_ca.pem")` |
-| `brokapi.toml` | `root_certificate = "/path/russian_trusted_root_ca.pem"` в `[gateway.settings]` гейтвея Т-Банка |
+| Переменная (Python, Rust, программа `brokapi`) | `TBANK_ROOT_CERT=/path/root.pem` |
+| Python | `brokapi.connect("tbank", root_certificate="/path/root.pem")` |
+| `brokapi.toml` | `root_certificate = "/path/root.pem"` в `[gateway.settings]` гейтвея Т-Банка |
 | Rust | `TbankConfig::from_env()` читает `TBANK_ROOT_CERT`, или `TbankConfig::with_root_certificate_pem(pem)` |
 
-Файла по пути нет или он не читается: `Config` с этим путем. Файл без сертификата PEM: `Config` при запуске коннектора. С корнем ненастоящий
-токен получает от Т-Банка ответ `40003` (токен не подошел): значит, соединение установлено и дальше дело в токене.
+Файла по пути нет или он не читается: `Config` с этим путем. Файл без сертификата PEM: `Config` при запуске коннектора.
+
+В уже выпущенных версиях корня в библиотеке нет, и первый запрос падает с `invalid peer certificate: UnknownIssuer`. Там нужен
+Rust и `TbankConfig::with_root_certificate_pem`: настройки `TBANK_ROOT_CERT` в них тоже нет. Сам корень скачивается с Госуслуг:
+`curl -o russian_trusted_root_ca.pem https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt`, отпечаток сверяется командой
+`openssl x509 -in russian_trusted_root_ca.pem -noout -fingerprint -sha256`.
 
 ### Где взять токен и счет
 

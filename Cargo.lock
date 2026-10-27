@@ -623,12 +623,14 @@ dependencies = [
 name = "brokapi-tbank-protocol"
 version = "0.1.0-alpha.6"
 dependencies = [
+ "base64",
  "brokapi-mocks",
  "dotenvy",
  "proptest",
  "prost",
  "prost-types",
  "protox",
+ "ring",
  "rust_decimal",
  "thiserror",
  "tokio",

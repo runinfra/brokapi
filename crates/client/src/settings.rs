@@ -188,8 +188,8 @@ impl Settings {
     /// `root_certificate`.
     ///
     /// `root_certificate` (`TBANK_ROOT_CERT`) is the path of a PEM file with a root certificate the TLS connection
-    /// trusts besides the bundled roots: the Russian Trusted Root CA, when the endpoint is served with it and the
-    /// bundled roots do not know it (the connection then fails with `UnknownIssuer`).
+    /// trusts besides the bundled roots. The Russian Trusted Root CA that signs the endpoints of T-Bank is bundled
+    /// already (for the hosts of `tbank.ru`), this is for another root.
     pub fn tbank(&self) -> Result<TbankConfig, Error> {
         let token = self
             .text("token", "TBANK_TOKEN")

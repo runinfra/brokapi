@@ -40,6 +40,9 @@ path = "src/lib.rs"
 # so they do not produce Rust doctests.
 
 [dev-dependencies]
+# The fingerprint test of the bundled root certificate.
+base64 = "0.22"
+ring = "0.17"
 proptest.workspace = true
 # Doctests run against the in-process T-Bank mock (a dev-dependency cycle is fine for doctests).
 brokapi-mocks.workspace = true

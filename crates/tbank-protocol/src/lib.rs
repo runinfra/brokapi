@@ -46,6 +46,7 @@ pub mod client;
 pub mod config;
 pub mod error;
 pub mod money;
+pub mod root_ca;
 
 /// Messages, enums and gRPC clients generated from the official T-Bank `.proto` files.
 ///
@@ -67,3 +68,4 @@ pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "
 pub use client::{AuthInterceptor, Authed, TbankClient};
 pub use config::{PROD_ENDPOINT, SANDBOX_ENDPOINT, TbankConfig};
 pub use error::ProtocolError;
+pub use root_ca::{RUSSIAN_TRUSTED_ROOT_CA_PEM, trusts_russian_root};

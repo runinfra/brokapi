@@ -78,9 +78,10 @@ pub struct TbankConfig {
     /// An extra root certificate (PEM) the TLS connection trusts besides the bundled web PKI roots. `None`
     /// by default.
     ///
-    /// Set it when the broker's endpoint is served with a certificate of a national root (the Russian
-    /// Ministry of Digital Development one) that the bundled roots do not know. Not verified against the live
-    /// endpoint which certificate it presents. See [`with_root_certificate_pem`](Self::with_root_certificate_pem).
+    /// The Russian Trusted Root CA that signs both endpoints of T-Bank is bundled and trusted for the hosts of
+    /// `tbank.ru` without this ([`trusts_russian_root`](crate::trusts_russian_root)). Set it for another root: a
+    /// chain T-Bank changed before a new release, or an endpoint of your own. See
+    /// [`with_root_certificate_pem`](Self::with_root_certificate_pem).
     pub root_certificate_pem: Option<Vec<u8>>,
 }
 

@@ -10,6 +10,7 @@ use tonic::{Request, Status};
 
 use crate::config::TbankConfig;
 use crate::error::ProtocolError;
+use crate::root_ca::{RUSSIAN_TRUSTED_ROOT_CA_PEM, trusts_russian_root};
 use crate::v1::{
     instruments_service_client::InstrumentsServiceClient,
     market_data_service_client::MarketDataServiceClient,
@@ -128,7 +129,8 @@ pub struct TbankClient {
 impl TbankClient {
     /// Builds the channel without touching the network (connects on first use, reconnects on failure).
     ///
-    /// An `https://` endpoint gets TLS with the bundled web PKI roots, and the extra root certificate of
+    /// An `https://` endpoint gets TLS with the bundled web PKI roots, the Russian Trusted Root CA when the host is
+    /// one of `tbank.ru` ([`trusts_russian_root`](crate::trusts_russian_root)), and the extra root certificate of
     /// [`TbankConfig::root_certificate_pem`] if there is one. An `http://` endpoint is plain text and meant
     /// for a local mock. HTTP/2 keep-alive pings run every 5 minutes and only while a call or a stream is
     /// open: a server counts pings on an idle connection as abuse and closes it (`too_many_pings`), so none
@@ -167,6 +169,13 @@ impl TbankClient {
             .keep_alive_while_idle(false);
         if cfg.endpoint.starts_with("https://") {
             let mut tls = ClientTlsConfig::new().with_webpki_roots();
+            // The endpoints of T-Bank are signed by the root of the Ministry of Digital Development, unknown to the web
+            // PKI roots. It is trusted for the hosts of tbank.ru only, see `root_ca`.
+            if trusts_russian_root(&cfg.endpoint) {
+                tls = tls.ca_certificate(tonic::transport::Certificate::from_pem(
+                    RUSSIAN_TRUSTED_ROOT_CA_PEM,
+                ));
+            }
             if let Some(pem) = &cfg.root_certificate_pem {
                 if !pem.windows(11).any(|w| w == b"-----BEGIN ") {
                     return Err(ProtocolError::Config(

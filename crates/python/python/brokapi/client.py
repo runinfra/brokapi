@@ -704,7 +704,8 @@ async def connect(
     - ``tbank``: ``token`` (``TBANK_TOKEN``, required), ``sandbox`` (``TBANK_SANDBOX``, without it the address is the real
       one), ``account_id`` (``TBANK_ACCOUNT_ID``, needed when the token has several), ``endpoint`` and ``app_name``
       (``TBANK_ENDPOINT``, ``TBANK_APP_NAME``), ``root_certificate`` (``TBANK_ROOT_CERT``: the path of a PEM file with
-      the Russian Trusted Root CA, when the connection fails with ``UnknownIssuer``).
+      a root to trust besides the bundled ones. The root of the Ministry of Digital Development that signs the endpoints of
+      T-Bank is bundled already, for the hosts of ``tbank.ru`` only).
     - ``finam``: ``secret`` (``FINAM_SECRET``, required), ``account_id`` (``FINAM_ACCOUNT_ID``, required), ``endpoint``
       (``FINAM_API_URL``).
     - ``alor``: ``refresh_token`` (``ALOR_REFRESH_TOKEN``, required), ``portfolio`` (``ALOR_PORTFOLIO``, required when
