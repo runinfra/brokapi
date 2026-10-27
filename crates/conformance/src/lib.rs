@@ -1782,6 +1782,8 @@ pub async fn active_orders_lifecycle<U: OrderExecutor + ?Sized>(
 ///
 /// With `supports_replace == true`:
 /// - the ack carries the new cid;
+/// - the same replace again (the same new cid) is `Rejected(duplicate_place)`: a cid is used once, for a
+///   replace as for a place;
 /// - `active_orders()` lists the new cid with four lots and price `new_price`, and no longer lists the
 ///   old one;
 /// - `order_state(new cid)` is not `Rejected` or `Cancelled`.
@@ -1897,6 +1899,13 @@ pub async fn replace_order<U: OrderExecutor + ?Sized>(
         .unwrap_or_else(|e| fail(S, format!("replace failed: {e:?}")));
     if ack.cid != new {
         fail(S, format!("ack cid {} != new cid {new}", ack.cid));
+    }
+    match ud.replace(req).await {
+        Err(Error::Rejected { code, .. }) if code == "duplicate_place" => {}
+        other => fail(
+            S,
+            format!("the same new cid twice must be Rejected(duplicate_place), got {other:?}"),
+        ),
     }
     let active = ud
         .active_orders()
@@ -2459,6 +2468,117 @@ pub async fn duplicate_place<U: OrderExecutor + ?Sized>(ud: &U, id: &InstrumentI
         );
     }
     cancel_patient(ud, S, cid).await;
+}
+
+/// A place that ends in [`Error::Transport`] uses up its cid, as after [`Error::Unknown`].
+///
+/// The book tells a bot to treat `Transport` on a command as "the order may stand": ask, never send again. The
+/// library keeps the same promise on its side, so that a bot that sends the cid again anyway gets
+/// `duplicate_place`, not a second order. Some connectors read the instrument before the first order on it (the
+/// lot size, the rules of the symbol). When that read fails, the place is `Transport` before anything is sent.
+///
+/// `break_reads` makes the read of the instrument fail with a network error at the mock (`true`) and heals it
+/// (`false`). `id` must be an instrument the connector has not read yet. Steps and checks:
+/// 1. With the reads broken, `place` is [`Error::Transport`].
+/// 2. With the reads healed, the same cid again is `Rejected(duplicate_place)`.
+/// 3. A new cid goes through, the broker holds one order (the new one), and it is cancelled.
+///
+/// # Panics
+///
+/// With `[conformance:transport_uses_up_the_cid] <reason>`.
+pub async fn transport_uses_up_the_cid<U: OrderExecutor + ?Sized>(
+    ud: &U,
+    id: &InstrumentId,
+    price: Price,
+    break_reads: impl Fn(bool),
+) {
+    const S: &str = "transport_uses_up_the_cid";
+    let req = order(id, price, lots(1));
+    let cid = req.cid;
+    break_reads(true);
+    let first = ud.place(req.clone()).await;
+    break_reads(false);
+    match first {
+        Err(Error::Transport(_)) => {}
+        other => fail(
+            S,
+            format!("a place whose read of the instrument fails must be Transport, got {other:?}"),
+        ),
+    }
+    match ud.place(req).await {
+        Err(Error::Rejected { code, .. }) if code == "duplicate_place" => {}
+        other => fail(
+            S,
+            format!(
+                "after Transport the same cid must be Rejected(duplicate_place), got {other:?}"
+            ),
+        ),
+    }
+    let fresh = order(id, price, lots(1));
+    let fresh_cid = fresh.cid;
+    ud.place(fresh)
+        .await
+        .unwrap_or_else(|e| fail(S, format!("a place with a new cid failed: {e:?}")));
+    let live = active_among(ud, S, &[cid, fresh_cid]).await;
+    if live != 1 {
+        fail(
+            S,
+            format!("the broker must hold the one order of the new cid, holds {live}"),
+        );
+    }
+    cancel_patient(ud, S, fresh_cid).await;
+}
+
+/// [`transport_uses_up_the_cid`] for stop orders: a `place_stop` that ends in [`Error::Transport`] uses up its cid.
+///
+/// `break_reads` and `id` as there. Steps and checks:
+/// 1. With the reads broken, `place_stop` is [`Error::Transport`].
+/// 2. With the reads healed, the same cid again is `Rejected(duplicate_place)`.
+/// 3. `active_stop_orders` holds no stop order of that cid.
+///
+/// # Panics
+///
+/// With `[conformance:stop_transport_uses_up_the_cid] <reason>`.
+pub async fn stop_transport_uses_up_the_cid<U: StopOrderExecutor + ?Sized>(
+    ud: &U,
+    id: &InstrumentId,
+    stop_price: Price,
+    break_reads: impl Fn(bool),
+) {
+    const S: &str = "stop_transport_uses_up_the_cid";
+    let req = stop_request(id, StopOrderKind::StopLoss, stop_price, None);
+    let cid = req.cid;
+    break_reads(true);
+    let first = ud.place_stop(req.clone()).await;
+    break_reads(false);
+    match first {
+        Err(Error::Transport(_)) => {}
+        other => fail(
+            S,
+            format!(
+                "a place_stop whose read of the instrument fails must be Transport, got {other:?}"
+            ),
+        ),
+    }
+    match ud.place_stop(req).await {
+        Err(Error::Rejected { code, .. }) if code == "duplicate_place" => {}
+        other => fail(
+            S,
+            format!(
+                "after Transport the same cid must be Rejected(duplicate_place), got {other:?}"
+            ),
+        ),
+    }
+    let active = ud
+        .active_stop_orders()
+        .await
+        .unwrap_or_else(|e| fail(S, format!("active_stop_orders failed: {e:?}")));
+    if active.iter().any(|s| s.cid == Some(cid)) {
+        fail(
+            S,
+            format!("no stop order of {cid} may stand, found {active:?}"),
+        );
+    }
 }
 
 /// A quantity the broker cannot take is refused before anything is sent, and the cid stays usable.

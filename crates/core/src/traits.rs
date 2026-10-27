@@ -937,9 +937,11 @@ pub trait OrderExecutor: Send + Sync {
     ///   (timeout, cut connection, HTTP 5xx). Do NOT place again. Ask the broker with
     ///   [`order_state`](Self::order_state) or [`active_orders`](Self::active_orders).
     /// - [`Error::Transport`] when the failure happened before the request left, for example
-    ///   authentication. It is **not** a sign that a repeat is safe: ask
+    ///   authentication, or a read the connector needs first (T-Bank and ALOR: the lot size, Bybit: the rules
+    ///   of the symbol). It is **not** a sign that a repeat is safe: ask
     ///   [`Error::retryable_for_command`](crate::Error::retryable_for_command), which says `true` for
     ///   [`Error::RateLimited`] only, and not [`Error::class`](crate::Error::class), which is the class of a read.
+    ///   The cid is used up, as after `Unknown`: the same cid again is `Rejected(duplicate_place)`.
     ///
     /// # Examples
     ///

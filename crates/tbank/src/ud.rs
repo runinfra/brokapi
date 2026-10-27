@@ -1188,6 +1188,24 @@ impl UserDataConnector {
         self.inner.lot_of(id).await
     }
 
+    /// A read that a place or replace needs before sending (the lot size, the original order) failed. On
+    /// `Transport` the cid is used up all the same: the book tells a bot to treat `Transport` on a command as
+    /// "the order may stand", and the same cid again must be `duplicate_place`, never a second order.
+    fn used_up(&self, cid: ClientOrderId, e: Error) -> Error {
+        if matches!(e, Error::Transport(_)) {
+            self.core(|c, _| c.use_up(cid));
+        }
+        e
+    }
+
+    /// [`used_up`](Self::used_up) for a stop order, whose cids are kept in the book of stop orders.
+    fn stop_used_up(&self, cid: ClientOrderId, e: Error) -> Error {
+        if matches!(e, Error::Transport(_)) {
+            let _ = self.inner.stops.lock().expect("stops poisoned").begin(cid);
+        }
+        e
+    }
+
     /// The lot size of an instrument named by the fields of a message.
     async fn lot_of_parts(
         &self,
@@ -1329,6 +1347,8 @@ impl OrderExecutor for UserDataConnector {
     /// - [`Error::RateLimited`] from the local limiter: refused before the `cid` is registered, so the
     ///   same `cid` can be used again. If the broker itself says `ResourceExhausted`, the `cid` is used up.
     /// - [`Error::Config`] when the broker does not accept the token (`Unauthenticated`).
+    /// - [`Error::Transport`] when the lot size of the instrument, read before its first order, could not be
+    ///   read. Nothing was sent, and the `cid` is used up all the same: place again under a new `cid`.
     /// - [`Error::Unknown`] on a timeout (`request_timeout`), a broken connection or a server fault.
     ///   The order may or may not exist.
     ///
@@ -1450,7 +1470,10 @@ impl OrderExecutor for UserDataConnector {
         self.check_command()?;
         // Units to lots. A quantity that is not a whole number of lots is refused here, before the
         // quota and the cid are spent. The first order on an instrument reads its lot size.
-        let lot = self.lot_of(&req.instrument).await?;
+        let lot = self
+            .lot_of(&req.instrument)
+            .await
+            .map_err(|e| self.used_up(req.cid, e))?;
         let lots = pieces_to_lots(req.qty, lot)?;
         let price = match (req.order_type, req.price) {
             (OrderType::Limit, Some(p)) if p.is_positive() => {
@@ -1685,19 +1708,21 @@ impl OrderExecutor for UserDataConnector {
         // The request has no instrument: it is the original order's. Not in the registry - one
         // GetOrderState teaches it (before the lock: the exchange id is read only under the lock,
         // a replace queued before this one changes it).
+        let used_up = |e| self.used_up(req.cid, e);
         let mut instrument = self.core(|c, _| c.instrument_of(original));
         if instrument.is_none() {
             let st = self
                 .get_state(original.hyphenated().to_string(), true)
-                .await?;
-            let parts = self.parts_of(&st).await?;
+                .await
+                .map_err(used_up)?;
+            let parts = self.parts_of(&st).await.map_err(used_up)?;
             self.core(|c, _| c.note_order(&parts));
             instrument = self.core(|c, _| c.instrument_of(original));
         }
         let instrument =
             instrument.ok_or_else(|| Error::not_found("the original order is not known"))?;
         // Input is checked before anything is sent or any quota is spent: units to lots.
-        let lot = self.lot_of(&instrument).await?;
+        let lot = self.lot_of(&instrument).await.map_err(used_up)?;
         let requested_lots = req.qty.map(|q| pieces_to_lots(q, lot)).transpose()?;
         if let Some(p) = req.price {
             self.inner.price_grid.check(&instrument.key, p)?;
@@ -1713,8 +1738,9 @@ impl OrderExecutor for UserDataConnector {
             _ => {
                 let st = self
                     .get_state(original.hyphenated().to_string(), true)
-                    .await?;
-                let parts = self.parts_of(&st).await?;
+                    .await
+                    .map_err(used_up)?;
+                let parts = self.parts_of(&st).await.map_err(used_up)?;
                 self.core(|c, _| c.note_order(&parts));
                 (st.order_id, parts.qty_requested(), parts.unit_price)
             }
@@ -2475,7 +2501,10 @@ impl StopOrderExecutor for UserDataConnector {
     /// ```
     async fn place_stop(&self, req: PlaceStopOrderRequest) -> Result<OrderAck, Error> {
         self.check_command()?;
-        let lot = self.lot_of(&req.instrument).await?;
+        let lot = self
+            .lot_of(&req.instrument)
+            .await
+            .map_err(|e| self.stop_used_up(req.cid, e))?;
         let lots = pieces_to_lots(req.qty, lot)?;
         let wire = map_stop::build_post(&self.account(), &req, lots)?;
         self.inner

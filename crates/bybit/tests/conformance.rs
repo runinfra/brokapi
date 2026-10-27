@@ -121,6 +121,33 @@ async fn stop_orders() {
 }
 
 #[tokio::test]
+async fn a_place_that_ends_in_transport_uses_up_its_cid() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (ud, _rx) = ud(&server).await;
+    conf::reconcile(&ud).await;
+    // The first order on the instrument reads its rules: that read fails.
+    conf::transport_uses_up_the_cid(&ud, &mock(), Price::new(dec!(100.0)), |broken| {
+        opts.instrument_fail.store(broken, Ordering::SeqCst)
+    })
+    .await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn a_stop_order_that_ends_in_transport_uses_up_its_cid() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (ud, _rx) = ud(&server).await;
+    conf::reconcile(&ud).await;
+    conf::stop_transport_uses_up_the_cid(&ud, &mock(), Price::new(dec!(200.0)), |broken| {
+        opts.instrument_fail.store(broken, Ordering::SeqCst)
+    })
+    .await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
 async fn a_stop_order_without_an_answer_keeps_its_cid() {
     let opts = Arc::new(MockOptions::default());
     let server = MockServer::start(Arc::clone(&opts)).await;

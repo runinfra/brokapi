@@ -74,6 +74,9 @@ pub struct MockOptions {
     /// The exchange takes a conditional order, then the answer is lost: the order is in the book and the client gets
     /// HTTP 503.
     pub stop_answer_lost: AtomicBool,
+    /// The read of the instruments (`/v5/market/instruments-info`, where the connector takes the rules of a symbol)
+    /// answers HTTP 503.
+    pub instrument_fail: AtomicBool,
     /// Every `"METHOD /path"` of the order methods served, in order.
     pub served: std::sync::Mutex<Vec<String>>,
     /// Every candle request, as (`interval`, `start`, `end`, `limit`).
@@ -762,6 +765,12 @@ async fn handle_http(
                 );
             }
             "/v5/market/instruments-info" => {
+                if opts.instrument_fail.load(Ordering::SeqCst) {
+                    return json_response(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        r#"{"retCode":10016,"retMsg":"unavailable"}"#,
+                    );
+                }
                 if let Some(symbol) = param(&q, "symbol") {
                     return match instrument_row(symbol) {
                         Some(i) => ok(

@@ -524,6 +524,16 @@ impl UserDataConnector {
         Ok(order_ack(cid, number, brokapi_runtime::now()))
     }
 
+    /// A read that a place or replace needs before sending (the lot size, the original order) failed. On `Transport` the cid is used up
+    /// all the same: the book tells a bot to treat `Transport` on a command as "the order may stand", and the
+    /// same cid again must be `duplicate_place`, never a second order.
+    async fn used_up<T>(&self, cid: ClientOrderId, read: Result<T, Error>) -> Result<T, Error> {
+        if let Err(Error::Transport(_)) = &read {
+            let _ = self.inner.orders.lock().await.try_place_once(cid);
+        }
+        read
+    }
+
     /// Marks the start of a place command for `cid`: once, with the clock of the order runtime.
     async fn begin_place(&self, cid: ClientOrderId, what: &str) -> Result<(), Error> {
         let now = brokapi_runtime::now();
@@ -594,7 +604,9 @@ impl OrderExecutor for UserDataConnector {
                 Some(price)
             }
         };
-        let lot = self.lot_of(&ticker, &board, &req.instrument).await?;
+        let lot = self
+            .used_up(req.cid, self.lot_of(&ticker, &board, &req.instrument).await)
+            .await?;
         let lots = pieces_to_lots(req.qty, lot)?;
         self.acquire("PlaceOrder")?;
 
@@ -689,21 +701,26 @@ impl OrderExecutor for UserDataConnector {
     async fn replace(&self, req: ReplaceOrderRequest) -> Result<OrderAck, Error> {
         self.check_command().await?;
         // The broker changes an order by its number, with the whole new body: read the order first.
-        let t = self.find_order(req.original_cid, false).await?;
+        let t = self
+            .used_up(req.cid, self.find_order(req.original_cid, false).await)
+            .await?;
         self.acquire("GetOrder")?;
         let cur = self
             .inner
             .http
             .get_order(&self.inner.exchange, &self.inner.portfolio, &t.order_id)
             .await
-            .map_err(map_err)?;
+            .map_err(map_err);
+        let cur = self.used_up(req.cid, cur).await?;
         if cur.kind.as_deref() == Some("market") {
             return Err(Error::Rejected {
                 code: "not_replaceable".into(),
                 message: "a market order cannot be replaced".into(),
             });
         }
-        let snap = self.snapshot_of(req.original_cid, &cur).await?;
+        let snap = self
+            .used_up(req.cid, self.snapshot_of(req.original_cid, &cur).await)
+            .await?;
         if req.qty.is_none() && snap.filled.is_positive() {
             return Err(Error::Rejected {
                 code: "qty_required".into(),
@@ -718,13 +735,26 @@ impl OrderExecutor for UserDataConnector {
         self.inner.price_grid.check(&snap.instrument.key, price)?;
         let qty = req.qty.unwrap_or(snap.qty);
         self.inner.price_grid.check_qty(&snap.instrument.key, qty)?;
-        let lot = self.lot_of(&ticker, &board, &snap.instrument).await?;
+        let lot = self
+            .used_up(
+                req.cid,
+                self.lot_of(&ticker, &board, &snap.instrument).await,
+            )
+            .await?;
         let lots = pieces_to_lots(qty, lot)?;
 
         self.acquire("ReplaceOrder")?;
         let _instrument = self.inner.instrument_locks.lock_cid(req.original_cid).await;
         // The gate may have closed while this command stood in the queue.
         self.check_command().await?;
+        // The new cid is used once, as for a place: a replace repeated after `Unknown` must not move the
+        // order a second time.
+        if !self.inner.orders.lock().await.try_place_once(req.cid) {
+            return Err(Error::Rejected {
+                code: "duplicate_place".into(),
+                message: "auto-retry of replace is forbidden".into(),
+            });
+        }
         self.inner.instrument_locks.bind(req.cid, &snap.instrument);
         let body = LimitOrderRequest {
             side: side_word(snap.side),
@@ -1053,7 +1083,9 @@ impl StopOrderExecutor for UserDataConnector {
         if let Some(p) = req.limit_price {
             self.inner.price_grid.check(&req.instrument.key, p)?;
         }
-        let lot = self.lot_of(&ticker, &board, &req.instrument).await?;
+        let lot = self
+            .used_up(req.cid, self.lot_of(&ticker, &board, &req.instrument).await)
+            .await?;
         let now_secs = chrono::Utc::now().timestamp();
         let (wire, limit) = map_stop::build(
             &req,

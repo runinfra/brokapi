@@ -108,6 +108,33 @@ async fn a_stop_order_without_an_answer_keeps_its_cid() {
 }
 
 #[tokio::test]
+async fn a_place_that_ends_in_transport_uses_up_its_cid() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (ud, _rx) = ud(&server).await;
+    conf::reconcile(&ud).await;
+    // The first order on SBER reads its lot size: that read fails.
+    conf::transport_uses_up_the_cid(&ud, &sber(), Price::from(100), |broken| {
+        opts.instrument_by_fail.store(broken, Ordering::SeqCst)
+    })
+    .await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
+async fn a_stop_order_that_ends_in_transport_uses_up_its_cid() {
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (ud, _rx) = ud(&server).await;
+    conf::reconcile(&ud).await;
+    conf::stop_transport_uses_up_the_cid(&ud, &sber(), Price::from(1), |broken| {
+        opts.instrument_by_fail.store(broken, Ordering::SeqCst)
+    })
+    .await;
+    ud.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
 async fn portfolio() {
     let server = MockServer::start(Arc::new(MockOptions::default())).await;
     let (ud, mut rx) = ud(&server).await;

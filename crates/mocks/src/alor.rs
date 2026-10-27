@@ -69,6 +69,9 @@ pub struct MockOptions {
     /// The broker takes a stop order (`actions/stop`, `actions/stopLimit`), then the answer is lost: the stop order
     /// is in the book and the client gets HTTP 503.
     pub stop_answer_lost: AtomicBool,
+    /// The read of one instrument (`GET /md/v2/Securities/{exchange}/{symbol}`, where the connectors take the lot
+    /// size) answers HTTP 503.
+    pub instrument_fail: AtomicBool,
     /// Every `"METHOD /path"` the order command methods served, in order.
     pub served: std::sync::Mutex<Vec<String>>,
     /// Every `X-REQID` of an order command, in order.
@@ -682,6 +685,12 @@ async fn handle_http(
                 return json_response(StatusCode::OK, &Value::Array(list).to_string());
             }
             ["md", "v2", "Securities", ex, symbol] if *ex == "MOEX" || *ex == "SPBX" => {
+                if opts.instrument_fail.load(Ordering::SeqCst) {
+                    return json_response(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        r#"{"message":"unavailable"}"#,
+                    );
+                }
                 return match security(symbol, param(&q, "instrumentGroup")) {
                     Some(v) => json_response(StatusCode::OK, &v.to_string()),
                     None => not_found("instrument"),

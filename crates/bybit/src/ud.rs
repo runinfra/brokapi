@@ -490,6 +490,16 @@ impl UserDataConnector {
         Ok(order_ack(cid, order_id, brokapi_runtime::now()))
     }
 
+    /// A read that a place needs before sending (the rules of the symbol) failed. On `Transport` the cid is used up
+    /// all the same: the book tells a bot to treat `Transport` on a command as "the order may stand", and the
+    /// same cid again must be `duplicate_place`, never a second order.
+    async fn used_up<T>(&self, cid: ClientOrderId, read: Result<T, Error>) -> Result<T, Error> {
+        if let Err(Error::Transport(_)) = &read {
+            let _ = self.inner.orders.lock().await.try_place_once(cid);
+        }
+        read
+    }
+
     /// Marks the start of a place command for `cid`: once, with the clock of the order runtime.
     async fn begin_place(&self, cid: ClientOrderId, what: &str) -> Result<(), Error> {
         let now = brokapi_runtime::now();
@@ -678,7 +688,7 @@ impl OrderExecutor for UserDataConnector {
                 Some(price)
             }
         };
-        let rules = self.rules_of(&symbol).await?;
+        let rules = self.used_up(req.cid, self.rules_of(&symbol).await).await?;
         rules.check_qty(req.qty)?;
         if let Some(p) = price {
             rules.check_price(p)?;
@@ -1033,7 +1043,7 @@ impl StopOrderExecutor for UserDataConnector {
             self.inner.price_grid.check(&req.instrument.key, p)?;
         }
         let body = map_stop::build(&req, &symbol, &self.inner.category, req.cid)?;
-        let rules = self.rules_of(&symbol).await?;
+        let rules = self.used_up(req.cid, self.rules_of(&symbol).await).await?;
         rules.check_qty(req.qty)?;
         rules.check_price(req.stop_price)?;
         if let Some(p) = req.limit_price {

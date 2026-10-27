@@ -558,6 +558,16 @@ fn order_ref(id: &str) -> (&'static str, String) {
 }
 
 impl UserDataConnector {
+    /// A read that a replace needs before sending (the original order) failed. On `Transport` the cid is used up
+    /// all the same: the book tells a bot to treat `Transport` on a command as "the order may stand", and the
+    /// same cid again must be `duplicate_place`, never a second move of the order.
+    async fn used_up<T>(&self, cid: ClientOrderId, read: Result<T, Error>) -> Result<T, Error> {
+        if let Err(Error::Transport(_)) = &read {
+            let _ = self.inner.orders.lock().await.try_place_once(cid);
+        }
+        read
+    }
+
     /// Orders of the account from `POST /orders/search`, all pages.
     async fn list_orders(
         &self,
@@ -843,7 +853,8 @@ impl OrderExecutor for UserDataConnector {
                     .http
                     .get_order("1", &req.original_cid.hyphenated().to_string())
                     .await
-                    .map_err(map_err)?;
+                    .map_err(map_err);
+                let cur = self.used_up(req.cid, cur).await?;
                 let snap = map_state_list(Some(req.original_cid), &cur, brokapi_runtime::now())
                     .ok_or(Error::Unknown)?;
                 if q.is_none() && snap.filled.is_positive() {
@@ -870,6 +881,14 @@ impl OrderExecutor for UserDataConnector {
         let _instrument = self.inner.instrument_locks.lock_cid(req.original_cid).await;
         // The gate may have closed while this command stood in the queue.
         self.check_command().await?;
+        // The new cid is used once, as for a place: an edit repeated after `Unknown` must not move the order a
+        // second time.
+        if !self.inner.orders.lock().await.try_place_once(req.cid) {
+            return Err(Error::Rejected {
+                code: "duplicate_place".into(),
+                message: "auto-retry of replace is forbidden".into(),
+            });
+        }
         if let Some(i) = self.inner.instrument_locks.instrument_of(req.original_cid) {
             self.inner.instrument_locks.bind(req.cid, &i);
         }

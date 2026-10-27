@@ -298,6 +298,12 @@ impl UdCore {
         Ok(())
     }
 
+    /// Uses up a cid that was never sent: a read the place or replace needed first failed on the network, and
+    /// the command ends in `Transport`. The same cid again is `duplicate_place`, as after `Unknown`.
+    pub fn use_up(&mut self, cid: ClientOrderId) {
+        let _ = self.orders.try_place_once(cid);
+    }
+
     /// The placement response arrived.
     pub fn place_response(
         &mut self,
