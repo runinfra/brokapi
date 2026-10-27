@@ -1269,7 +1269,7 @@ fn first_frames(prices: &crate::market::Prices, topic: &str) -> Vec<Value> {
         ["publicTrade", symbol] => vec![
             json!({"topic": topic, "type": "snapshot", "ts": now_ms(), "data": [
             {"T": now_ms(), "s": symbol, "S": "Buy", "v": "0.074", "p": mid(prices, symbol).to_string(), "L": "PlusTick",
-             "i": format!("t{}", now_ms()), "BT": false, "RPI": false, "seq": 1}]}),
+             "i": format!("t{}", crate::market::deal_id()), "BT": false, "RPI": false, "seq": 1}]}),
         ],
         ["kline", interval, symbol] => {
             let step: i64 = match *interval {
@@ -1498,4 +1498,18 @@ async fn handle_ws(socket: WebSocket, state: MockState, private: bool) {
     b.subs.retain(|s| s.socket != socket_id);
     b.private_sockets.retain(|(id, _)| *id != socket_id);
     b.public_sockets.retain(|(id, _)| *id != socket_id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_deals_of_a_price_a_test_set_have_two_ids_in_the_same_millisecond() {
+        // The connector drops a deal whose id it has seen: an id made of the clock repeats on a coarse clock.
+        let prices = crate::market::Prices::default();
+        prices.set("BTCUSDT", Decimal::new(110, 0));
+        let id = || first_frames(&prices, "publicTrade.BTCUSDT")[0]["data"][0]["i"].clone();
+        assert_ne!(id(), id());
+    }
 }

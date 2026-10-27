@@ -18,9 +18,17 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use rust_decimal::Decimal;
 use tokio::sync::watch;
+
+/// The id of a new deal of a mock, never the same twice in a process. Connectors drop a deal whose id they have seen, and
+/// an id made of the clock repeats within one tick of it (on Windows a tick is about 15 ms).
+pub(crate) fn deal_id() -> i64 {
+    static NEXT: AtomicI64 = AtomicI64::new(1_000_000_000);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
 
 /// The step between two levels of a book the mocks build around a price.
 pub const STEP: Decimal = Decimal::from_parts(1, 0, 0, false, 2);

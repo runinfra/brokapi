@@ -981,7 +981,7 @@ fn market_frames(opcode: &str, symbol: &str, depth: usize, price: Option<Decimal
         }],
         // A deal at a price a test set is a new deal, with an id of its own.
         "AllTradesGetAndSubscribe" => vec![json!({
-            "id": if price.is_some() { json!(now_ms()) } else { json!(9001) }, "orderno": "1", "symbol": symbol, "board": "TQBR", "qty": 100, "price": p(300.15),
+            "id": if price.is_some() { json!(crate::market::deal_id()) } else { json!(9001) }, "orderno": "1", "symbol": symbol, "board": "TQBR", "qty": 100, "price": p(300.15),
             "time": now_text(), "timestamp": now_ms(), "side": "buy", "oi": 0, "existing": false})],
         "BarsGetAndSubscribe" => vec![json!({
             "time": chrono::Utc::now().timestamp() / 60 * 60, "open": p(300.0), "close": p(300.5),
@@ -1453,5 +1453,25 @@ async fn handle_cws(socket: WebSocket, state: MockState) {
                 let _ = write.send(reply(400, "unknown opcode", json!({}))).await;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_deals_of_a_price_a_test_set_have_two_ids_in_the_same_millisecond() {
+        // The connector drops a deal whose id it has seen: an id made of the clock repeats on a coarse clock.
+        let id = || {
+            market_frames(
+                "AllTradesGetAndSubscribe",
+                "SBER",
+                1,
+                Some(Decimal::new(110, 0)),
+            )[0]["id"]
+                .clone()
+        };
+        assert_ne!(id(), id());
     }
 }
