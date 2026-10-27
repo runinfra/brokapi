@@ -1340,8 +1340,9 @@ impl OrderExecutor for UserDataConnector {
     /// - [`Error::Rejected`] with code `invalid_qty` (zero, a fraction, or not a whole number of lots), `missing_price`
     ///   (limit order without a positive price) or `duplicate_place` (this `cid` was placed before).
     ///   Nothing was sent.
-    /// - [`Error::Rejected`] when the broker refuses. The code is the gRPC status name (for example
-    ///   `InvalidArgument`) and the message is the broker's error code. The same code `REJECTED` is
+    /// - [`Error::Rejected`] when the broker refuses. The code is the five-digit number of the broker (for
+    ///   example `30042`, not enough assets for a margin trade), or the gRPC status name when the broker gave no
+    ///   number. The table of the numbers is on the T-Bank page of the book. The same code `REJECTED` is
     ///   used when the broker accepted the call but reports the order as rejected. The broker did
     ///   nothing, and the `cid` stays used.
     /// - [`Error::RateLimited`] from the local limiter: refused before the `cid` is registered, so the

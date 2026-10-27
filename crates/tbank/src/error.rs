@@ -52,9 +52,12 @@ fn retry_after(status: &Status) -> Duration {
 }
 
 fn rejected(status: &Status) -> Error {
-    let code = match status.code() {
-        Code::NotFound => brokapi_core::NOT_FOUND.to_string(),
-        other => format!("{other:?}"),
+    // The number of T-Invest tells the reasons apart (30042 no money for a margin trade, 30014 a too long range of
+    // candles): both are INVALID_ARGUMENT. NOT_FOUND has the code every broker uses.
+    let code = match (status.code(), broker_code(status)) {
+        (Code::NotFound, _) => brokapi_core::NOT_FOUND.to_string(),
+        (_, Some(number)) => number.to_string(),
+        (other, None) => format!("{other:?}"),
     };
     Error::Rejected {
         code,
@@ -138,8 +141,9 @@ fn exhausted_wait(status: &Status) -> Duration {
 /// - `NotFound` gives [`Error::Rejected`] with the code `not_found` ([`brokapi_core::NOT_FOUND`], the
 ///   same at every broker).
 /// - `InvalidArgument`, `PermissionDenied`, `FailedPrecondition`, `Unimplemented`,
-///   `AlreadyExists`, `OutOfRange` gives [`Error::Rejected`], with the status code name as `code` (for
-///   example `"InvalidArgument"`) and the status message as `message`.
+///   `AlreadyExists`, `OutOfRange` gives [`Error::Rejected`]. Its `code` is the five-digit number of the
+///   broker when the status carries one (for example `"30042"`, not enough assets for a margin trade), else the
+///   status code name (for example `"InvalidArgument"`). The status message is the `message`.
 /// - `Unauthenticated` gives [`Error::Config`]: the token is wrong or expired, fix it.
 /// - everything else (`Unavailable`, `DeadlineExceeded`, `Internal`, ...) gives [`Error::Transport`].
 ///
@@ -362,11 +366,25 @@ mod tests {
             refusal_code(&Status::invalid_argument("30261")),
             STOP_ORDERS_RESPONSE_LIMIT
         );
-        // Other InvalidArgument codes keep the status name.
+    }
+
+    #[test]
+    fn a_refusal_with_a_number_of_the_broker_has_the_number_as_its_code() {
+        // 30042 and 30014 are both INVALID_ARGUMENT: only the number tells them apart.
+        assert_eq!(refusal_code(&Status::invalid_argument("30042")), "30042");
+        assert_eq!(refusal_code(&Status::invalid_argument("30014")), "30014");
+        assert_eq!(refusal_code(&Status::permission_denied("40002")), "40002");
+        // Without a number the status name stays, and NOT_FOUND is the same code at every broker.
         assert_eq!(
-            refusal_code(&Status::invalid_argument("30042")),
+            refusal_code(&Status::invalid_argument("bad request")),
             "InvalidArgument"
         );
+        assert_eq!(
+            refusal_code(&Status::not_found("50002")),
+            brokapi_core::NOT_FOUND
+        );
+        // A refused stream stays fatal with the number in the code.
+        assert!(crate::stream::fatal_open(&Status::permission_denied("40002")).is_some());
     }
 
     #[test]

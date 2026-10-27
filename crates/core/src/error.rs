@@ -197,7 +197,9 @@ pub enum Error {
     ///
     /// Never turned into [`Error::Transport`] or [`Error::Rejected`]: those would say "nothing
     /// happened", and here that is not known.
-    #[error("command outcome unknown: do not send it again, ask the broker with order_state(cid) (a stop order: active_stop_orders())")]
+    #[error(
+        "command outcome unknown: do not send it again, ask the broker with order_state(cid) (a stop order: active_stop_orders())"
+    )]
     Unknown,
 
     /// This connector or this broker does not have the capability, so the call was not made.

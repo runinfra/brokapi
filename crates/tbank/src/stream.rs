@@ -60,7 +60,7 @@ pub fn fatal_open(status: &Status) -> Option<String> {
     match map_status(status) {
         Error::Config(e) => Some(format!("unauthenticated: {e}")),
         Error::Rejected { code, message }
-            if code == "streams_limit" || code == "PermissionDenied" =>
+            if code == "streams_limit" || status.code() == tonic::Code::PermissionDenied =>
         {
             Some(format!("{code}: {message}"))
         }

@@ -223,7 +223,8 @@ impl TbankRaw {
     ///   Wait `retry_after` and call again.
     /// - [`Error::Transport`] on a timeout or a network status. A read may be repeated.
     /// - [`Error::Rejected`] when the broker refuses the request (`InvalidArgument`,
-    ///   `NotFound`, which is the code `not_found`, `PermissionDenied`, ...).
+    ///   `NotFound`, which is the code `not_found`, `PermissionDenied`, ...). The code is the number of the
+    ///   broker when it gives one (`30014`), else the status name.
     /// - [`Error::Config`] when the token is not accepted (`Unauthenticated`).
     ///
     /// # Examples
@@ -288,7 +289,8 @@ impl TbankRaw {
     ///
     /// - [`Error::RateLimited`] when the limiter has no quota. Nothing was sent.
     /// - [`Error::Rejected`] when the broker refuses (`InvalidArgument`, `NotFound`,
-    ///   `PermissionDenied`, `FailedPrecondition`, ...). The broker did not act.
+    ///   `PermissionDenied`, `FailedPrecondition`, ...). The code is the number of the broker when it gives one,
+    ///   else the status name. The broker did not act.
     /// - [`Error::Config`] when the token is not accepted. The broker did not act.
     /// - [`Error::Unknown`] on a timeout, a broken connection or a server fault (`Unavailable`,
     ///   `Internal`, ...). The command may or may not have been done. Do not repeat it. Ask the
