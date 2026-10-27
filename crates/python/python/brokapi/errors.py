@@ -163,7 +163,7 @@ class Unknown(BrokapiError):
     error_class = ErrorClass.UNKNOWN
 
     def __init__(self) -> None:
-        super().__init__("command outcome unknown: do not send it again, ask the broker with order_state(cid)")
+        super().__init__("command outcome unknown: do not send it again, ask the broker with order_state(cid) (a stop order: active_stop_orders())")
 
 
 class Unsupported(BrokapiError):

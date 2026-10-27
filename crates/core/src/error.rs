@@ -197,7 +197,7 @@ pub enum Error {
     ///
     /// Never turned into [`Error::Transport`] or [`Error::Rejected`]: those would say "nothing
     /// happened", and here that is not known.
-    #[error("command outcome unknown: do not send it again, ask the broker with order_state(cid)")]
+    #[error("command outcome unknown: do not send it again, ask the broker with order_state(cid) (a stop order: active_stop_orders())")]
     Unknown,
 
     /// This connector or this broker does not have the capability, so the call was not made.
@@ -351,6 +351,14 @@ mod tests {
         }
         assert!(!Error::Unknown.is_not_found());
         assert!(!Error::Degraded.is_not_found());
+    }
+
+    #[test]
+    fn the_text_of_unknown_says_how_to_ask_for_a_stop_order_too() {
+        // A stop order is not found by order_state: the text must not send a bot there alone.
+        let text = Error::Unknown.to_string();
+        assert!(text.contains("order_state(cid)"), "{text}");
+        assert!(text.contains("active_stop_orders()"), "{text}");
     }
 
     #[test]

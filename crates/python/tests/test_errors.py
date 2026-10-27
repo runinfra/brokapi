@@ -68,3 +68,10 @@ def test_all_errors_share_a_base() -> None:
     for cls in (errors.Config, errors.Transport, errors.Unknown, errors.Degraded):
         assert issubclass(cls, errors.BrokapiError)
         assert issubclass(cls, Exception)
+
+
+def test_the_text_of_unknown_says_how_to_ask_for_a_stop_order_too() -> None:
+    # The same text as the Rust core: a stop order is not found by order_state.
+    text = str(errors.Unknown())
+    assert "order_state(cid)" in text
+    assert "active_stop_orders()" in text
