@@ -491,16 +491,20 @@ class OrderAck:
 
 @dataclass(frozen=True, slots=True)
 class OrderState:
-    """Where an order is. The fields that do not apply to ``kind`` are ``None``."""
+    """Where an order is. The fields that do not apply to ``kind`` are ``None``.
+
+    How much an order has filled, in any state (``FILLED`` too), is :attr:`OrderSnapshot.filled`. The average price of
+    the fills is in no snapshot: count it from :meth:`Client.executions` by the ``cid``.
+    """
 
     kind: OrderStateKind
     cid: uuid.UUID
     broker_id: Optional[str] = None
     """Set when ``kind`` is ``ACKED``."""
     filled: Optional[Decimal] = None
-    """Set when ``kind`` is ``PARTIALLY_FILLED``: how much is done."""
+    """Set only when ``kind`` is ``PARTIALLY_FILLED``: how much is done. In every state: ``OrderSnapshot.filled``."""
     left: Optional[Decimal] = None
-    """Set when ``kind`` is ``PARTIALLY_FILLED``: how much is left."""
+    """Set only when ``kind`` is ``PARTIALLY_FILLED``: how much is left."""
     reason: Optional[str] = None
     """Set when ``kind`` is ``REJECTED``."""
 

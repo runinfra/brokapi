@@ -159,3 +159,8 @@ async def test_the_root_certificate_of_tbank_is_a_setting_and_a_bad_path_is_name
     # The endpoints of T-Bank are signed by the root of the Ministry of Digital Development: without it UnknownIssuer.
     with pytest.raises(brokapi.Config, match="/no/such/root.pem"):
         await brokapi.connect("tbank", token="t.token", account_id="x", root_certificate="/no/such/root.pem")
+
+
+async def test_request_timeout_is_a_setting_and_a_bad_one_is_named() -> None:
+    with pytest.raises(brokapi.Config, match="request_timeout"):
+        await brokapi.connect("tbank", token="t.token", account_id="x", request_timeout=-1)

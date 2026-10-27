@@ -45,11 +45,11 @@ from .models import (
 __all__ = ["CandlePager", "Client", "EventStream", "Limiter", "connect", "connect_gateway", "merge", "new_cid"]
 
 _BROKERS = {
-    "bcs": {"refresh_token", "write", "endpoint"},
-    "tbank": {"token", "sandbox", "account_id", "endpoint", "app_name", "root_certificate"},
-    "finam": {"secret", "account_id", "endpoint"},
-    "alor": {"refresh_token", "portfolio", "exchange", "test", "endpoint"},
-    "bybit": {"api_key", "api_secret", "env", "category", "settle_coin", "recv_window_ms", "endpoint"},
+    "bcs": {"refresh_token", "write", "endpoint", "request_timeout"},
+    "tbank": {"token", "sandbox", "account_id", "endpoint", "app_name", "root_certificate", "request_timeout"},
+    "finam": {"secret", "account_id", "endpoint", "request_timeout"},
+    "alor": {"refresh_token", "portfolio", "exchange", "test", "endpoint", "request_timeout"},
+    "bybit": {"api_key", "api_secret", "env", "category", "settle_coin", "recv_window_ms", "endpoint", "request_timeout"},
 }
 
 
@@ -715,6 +715,8 @@ async def connect(
       demo account has a key pair of its own, read from ``BYBIT_DEMO_API_KEY`` and ``BYBIT_DEMO_API_SECRET``. Also
       ``category`` (``BYBIT_CATEGORY``, only ``"linear"``: USDT perpetuals and futures), ``settle_coin``
       (``BYBIT_SETTLE_COIN``, ``"USDT"``), ``recv_window_ms`` and ``endpoint``.
+    - every broker: ``request_timeout``, how long a call waits for the broker, in seconds (default 30, Finam 10). A
+      command that gets no answer in time raises :class:`~brokapi.Unknown`, a read :class:`~brokapi.Transport`.
 
     ``name`` labels the events (``<name>-md``, ``<name>-ud``) and defaults to the broker. Give each client of a
     process its own name. ``limiter`` puts this client on the rate limit counter of another one (see

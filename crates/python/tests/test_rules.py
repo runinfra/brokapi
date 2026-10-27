@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import uuid
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -56,3 +57,25 @@ async def test_rule_two_before_the_reconcile_the_gate_is_closed() -> None:
         sber = await client.instrument("SBER")
         with pytest.raises(brokapi.NotReconciled):
             await client.place(cid=brokapi.new_cid(), instrument=sber, side=brokapi.Side.BUY, qty=1, price=Decimal("1"))
+
+
+async def test_the_average_price_of_an_order_comes_from_its_fills() -> None:
+    # ALOR: its imitation keeps every fill in the history, with the cid.
+    async with await testing.mock_alor() as mock:
+        client = await mock.connect()
+        sber = await client.instrument("SBER")
+        lot = (await client.trading_params(sber)).min_qty
+        await client.subscribe_order_state()
+        await client.reconcile([])
+        cid = brokapi.new_cid()
+        await client.place(cid=cid, instrument=sber, side=brokapi.Side.BUY, qty=lot * 3, price=Decimal("101.00"))
+        start = datetime.now(timezone.utc) - timedelta(hours=1)
+        end = start + timedelta(hours=2)
+        assert await rules.average_price(client, cid, start, end) is None
+        # Two fills at two prices: one lot at 100 and two at 101, the average is (100 + 2 * 101) / 3.
+        mock.fill(cid, qty=lot, price=Decimal("100.00"))
+        mock.fill(cid, qty=lot * 2, price=Decimal("101.00"))
+        assert await rules.average_price(client, cid, start, end) == Decimal(302) / Decimal(3)
+        snapshot = await client.order_state(cid)
+        assert snapshot.filled == lot * 3
+        assert snapshot.state.filled is None  # FILLED carries no quantity: read snapshot.filled

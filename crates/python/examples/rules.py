@@ -3,8 +3,9 @@
 """
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
-from typing import Protocol
+from typing import Optional, Protocol
 
 import brokapi
 
@@ -73,3 +74,16 @@ async def after_restart(client: brokapi.Client, ledger: list[uuid.UUID]) -> brok
         print(f"foreign {order.cid}: shown to a person")
     # ANCHOR_END: reconcile
     return report
+
+
+async def average_price(client: brokapi.Client, cid: uuid.UUID, start: datetime, end: datetime) -> Optional[Decimal]:
+    """How much an order bought, and at what average price: from the fills, the snapshot has no average price.
+
+    A fill without a cid is not counted: the history of BCS gives none, there this returns ``None``."""
+    # ANCHOR: average_price
+    fills = [e for e in await client.executions(start, end) if e.cid == cid]
+    done = sum((e.qty for e in fills), Decimal(0))  # the same number as OrderSnapshot.filled
+    if not done:
+        return None  # nothing filled yet
+    return sum((e.price * e.qty for e in fills), Decimal(0)) / done
+    # ANCHOR_END: average_price

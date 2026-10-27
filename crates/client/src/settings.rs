@@ -42,6 +42,22 @@ impl Settings {
         }
     }
 
+    /// `request_timeout`: how long a call waits for the broker, in seconds (`2.5` is fine). Every broker has it;
+    /// `None` keeps the default of the broker (30 s, Finam 10 s). Zero, a negative number or text is refused.
+    fn request_timeout(&self) -> Result<Option<std::time::Duration>, Error> {
+        let Some(value) = self.0.get("request_timeout") else {
+            return Ok(None);
+        };
+        match value.as_f64() {
+            Some(secs) if secs > 0.0 && secs.is_finite() => {
+                Ok(Some(std::time::Duration::from_secs_f64(secs)))
+            }
+            _ => Err(config(format!(
+                "request_timeout must be a positive number of seconds, got {value}"
+            ))),
+        }
+    }
+
     /// The endpoint: the argument, else the variable of the broker (BCS has none).
     fn endpoint(&self, env: Option<&str>) -> Option<String> {
         let from_arg = self
@@ -79,11 +95,15 @@ impl Settings {
                 config("BCS_REFRESH_TOKEN is not set (pass refresh_token=... or set the variable)")
             })?;
         let write = self.flag("write", "BCS_IS_WRITE");
-        let cfg = match self.endpoint(None) {
+        let mut cfg = match self.endpoint(None) {
             Some(url) => BcsConfig::for_mock(token, url),
             None => BcsConfig::new(token),
-        };
-        Ok(cfg.with_write(write))
+        }
+        .with_write(write);
+        if let Some(t) = self.request_timeout()? {
+            cfg.request_timeout = t;
+        }
+        Ok(cfg)
     }
 
     /// The ALOR connector configuration: `refresh_token`, `portfolio`, `exchange`, `test`, `endpoint`.
@@ -108,6 +128,9 @@ impl Settings {
         }
         if let Some(exchange) = self.text("exchange", "ALOR_EXCHANGE") {
             cfg = cfg.with_exchange(exchange);
+        }
+        if let Some(t) = self.request_timeout()? {
+            cfg.request_timeout = t;
         }
         Ok(cfg)
     }
@@ -155,6 +178,9 @@ impl Settings {
         if let Some(ms) = self.0.get("recv_window_ms").and_then(Value::as_u64) {
             cfg = cfg.with_recv_window_ms(ms);
         }
+        if let Some(t) = self.request_timeout()? {
+            cfg.request_timeout = t;
+        }
         Ok(cfg)
     }
 
@@ -182,6 +208,9 @@ impl Settings {
             })?;
             cfg = cfg.with_root_certificate_pem(pem);
         }
+        if let Some(t) = self.request_timeout()? {
+            cfg.request_timeout = t;
+        }
         Ok(cfg)
     }
 
@@ -196,6 +225,9 @@ impl Settings {
         let mut cfg = FinamApiConfig::new(secret);
         if let Some(url) = self.checked_endpoint("FINAM_API_URL")? {
             cfg = cfg.with_endpoint(url);
+        }
+        if let Some(t) = self.request_timeout()? {
+            cfg.request_timeout = t;
         }
         Ok((cfg, account))
     }
@@ -214,6 +246,48 @@ mod tests {
             map.extend(more);
         }
         Settings(map).tbank()
+    }
+
+    fn with(pairs: serde_json::Value) -> Settings {
+        let Value::Object(map) = pairs else {
+            unreachable!()
+        };
+        Settings(map)
+    }
+
+    #[test]
+    fn request_timeout_is_a_setting_of_every_broker() {
+        use std::time::Duration;
+        let s = with(serde_json::json!({
+            "request_timeout": 2.5,
+            "refresh_token": "r", "token": "t", "secret": "s", "account_id": "a", "api_key": "k", "api_secret": "x",
+        }));
+        let want = Duration::from_millis(2500);
+        assert_eq!(s.bcs().unwrap().request_timeout, want);
+        assert_eq!(s.tbank().unwrap().request_timeout, want);
+        assert_eq!(s.finam().unwrap().0.request_timeout, want);
+        assert_eq!(s.alor().unwrap().request_timeout, want);
+        assert_eq!(s.bybit().unwrap().request_timeout, want);
+        // Not set: the default of the broker stays.
+        let plain = with(serde_json::json!({ "token": "t" }));
+        assert_eq!(
+            plain.tbank().unwrap().request_timeout,
+            Duration::from_secs(30)
+        );
+        // Zero, a negative number or text is a configuration error that names the setting.
+        for bad in [
+            serde_json::json!(0),
+            serde_json::json!(-1),
+            serde_json::json!("30"),
+        ] {
+            let err = with(serde_json::json!({ "token": "t", "request_timeout": bad }))
+                .tbank()
+                .unwrap_err();
+            assert!(
+                matches!(err, Error::Config(_)) && err.to_string().contains("request_timeout"),
+                "{err}"
+            );
+        }
     }
 
     #[test]
