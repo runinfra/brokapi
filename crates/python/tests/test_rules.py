@@ -79,3 +79,29 @@ async def test_the_average_price_of_an_order_comes_from_its_fills() -> None:
         snapshot = await client.order_state(cid)
         assert snapshot.filled == lot * 3
         assert snapshot.state.filled is None  # FILLED carries no quantity: read snapshot.filled
+
+
+def bar(minute: int, close: str) -> brokapi.Candle:
+    start = datetime(2026, 10, 27, 10, minute, tzinfo=timezone.utc)
+    sber = brokapi.InstrumentId(key=brokapi.InstrumentKey(symbol="SBER", mic="TQBR"), native=brokapi.NativeId("TickerClass", (("ticker", "SBER"), ("class_code", "TQBR"))))
+    price = Decimal(close)
+    return brokapi.Candle(
+        instrument=sber, timeframe=brokapi.Timeframe.M1, open=price, high=price, low=price, close=price,
+        volume=Decimal(1), open_ts=start, close_ts=start + timedelta(minutes=1), ts=brokapi.Timestamps(rx_ns=0),
+    )
+
+
+def test_a_bar_of_a_subscription_is_passed_on_once_it_is_closed() -> None:
+    bars = rules.ClosedBars()
+    assert bars.push(bar(0, "100")) is None
+    assert bars.push(bar(0, "101")) is None  # the same bar, still forming
+    closed = bars.push(bar(1, "102"))  # the next bar began: the first one is final, with its last close
+    assert closed is not None and closed.close == Decimal("101")
+    assert bars.push(bar(0, "99")) is None  # a late update of a closed bar changes nothing
+    assert bars.push(bar(2, "103")).close == Decimal("102")  # type: ignore[union-attr]
+
+
+def test_the_forming_bar_of_the_history_is_left_out() -> None:
+    history = [bar(0, "100"), bar(1, "101"), bar(2, "102")]
+    now = datetime(2026, 10, 27, 10, 2, 30, tzinfo=timezone.utc)  # the bar of 10:02 is still forming
+    assert [b.close for b in rules.closed_history(history, now)] == [Decimal("100"), Decimal("101")]

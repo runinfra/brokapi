@@ -87,3 +87,30 @@ async def average_price(client: brokapi.Client, cid: uuid.UUID, start: datetime,
         return None  # nothing filled yet
     return sum((e.price * e.qty for e in fills), Decimal(0)) / done
     # ANCHOR_END: average_price
+
+
+# ANCHOR: closed_bars
+class ClosedBars:
+    """Passes on a bar of a subscription once it is closed.
+
+    A subscription sends the bar that is forming again and again (the same ``open_ts``, a new ``close``). The bar is
+    closed when a bar with a later ``open_ts`` arrives: then the previous one is final.
+    """
+
+    def __init__(self) -> None:
+        self.forming: Optional[brokapi.Candle] = None
+
+    def push(self, bar: brokapi.Candle) -> Optional[brokapi.Candle]:
+        """The bar that has just closed, or ``None``."""
+        closed = None
+        if self.forming is not None and bar.open_ts > self.forming.open_ts:
+            closed = self.forming
+        if self.forming is None or bar.open_ts >= self.forming.open_ts:
+            self.forming = bar  # an older bar arriving late changes nothing
+        return closed
+
+
+def closed_history(bars: list[brokapi.Candle], now: datetime) -> list[brokapi.Candle]:
+    """The bars of ``candles()`` without the last one when it is still forming: its end is after ``now``."""
+    return [bar for bar in bars if bar.close_ts <= now]
+# ANCHOR_END: closed_bars

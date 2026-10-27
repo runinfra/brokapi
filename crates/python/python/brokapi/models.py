@@ -433,7 +433,12 @@ class Quote:
 
 @dataclass(frozen=True, slots=True)
 class Candle:
-    """One bar."""
+    """One bar.
+
+    No field says whether the bar is closed. A subscription sends the forming bar again and again (the same
+    ``open_ts``): it is closed when a bar with a later ``open_ts`` arrives. In ``candles()`` the last bar is still
+    forming when its ``close_ts`` is after now. The page "События" of the book has a recipe for both.
+    """
 
     instrument: InstrumentId
     timeframe: Timeframe
