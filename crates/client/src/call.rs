@@ -105,8 +105,19 @@ pub fn candle_pages_from_json<A: Account>(
     args: &Value,
 ) -> Result<CandlePager<A>, ClientError> {
     let mut opts = HistoryOpts::default();
-    if let Some(w) = args.get("window_secs").and_then(Value::as_f64) {
-        opts.window = Some(Duration::from_secs_f64(w));
+    match args.get("window_secs") {
+        None | Some(Value::Null) => {}
+        Some(w) => match w.as_f64() {
+            Some(secs) if secs >= 1.0 && secs.is_finite() => {
+                opts.window = Some(Duration::from_secs_f64(secs))
+            }
+            // A window that is silently ignored would read with the span of the broker instead of the caller's.
+            _ => {
+                return Err(ClientError::Arg(format!(
+                    "window_secs must be a number of seconds, at least one, got {w}"
+                )));
+            }
+        },
     }
     if let Some(n) = args.get("max_rate_waits").and_then(Value::as_u64) {
         opts.max_rate_waits = n as u32;

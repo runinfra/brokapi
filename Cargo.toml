@@ -94,7 +94,9 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 # The book, the tools and the Python extension have their own place; the crate is the library, its examples and tests.
-exclude = ["docs/", "tools/", "/crates/python/"]
+# examples/ and tests/ need brokapi-mocks and the book, which a package from crates.io does not carry: they run in
+# the repository.
+exclude = ["docs/", "tools/", "/crates/python/", "/examples/", "/tests/"]
 
 [dependencies]
 brokapi-core.workspace = true

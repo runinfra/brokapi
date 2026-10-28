@@ -364,10 +364,14 @@ class Client:
         max_rate_waits: Optional[int] = None,
         transport_retries: Optional[int] = None,
     ) -> CandlePager:
-        """A long history, one window per step. ``window`` overrides the span the broker accepts per request."""
+        """A long history, one window per step. ``window`` overrides the span the broker accepts per request: whole
+        seconds, at least one (``ValueError`` otherwise, before anything is read)."""
         args: dict[str, Any] = {"instrument": instrument, "timeframe": timeframe, "start": start, "end": end}
         if window is not None:
-            args["window_secs"] = window.total_seconds()
+            seconds = window // timedelta(seconds=1)
+            if seconds < 1:
+                raise ValueError(f"window must be at least one second, got {window}")
+            args["window_secs"] = seconds
         if max_rate_waits is not None:
             args["max_rate_waits"] = max_rate_waits
         if transport_retries is not None:

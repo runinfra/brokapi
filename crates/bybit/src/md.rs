@@ -445,7 +445,9 @@ impl MarketDataSource for MarketDataConnector {
                 &symbol,
                 interval,
                 Some(nanos_to_ms(range.from)),
-                Some(nanos_to_ms(range.to)),
+                // The exchange counts both ends: asked to `to` itself, a full window is one bar over the limit, and
+                // the limit cuts the oldest one (the answer is newest first).
+                Some(nanos_to_ms(range.to) - 1),
                 KLINE_LIMIT,
             )
             .await

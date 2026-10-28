@@ -1,6 +1,6 @@
 [package]
 name = "brokapi-mocks"
-description = "In-process broker imitations (BCS, T-Bank, Finam, ALOR, Bybit) for tests and examples. Not part of the library's public promise."
+description = "In-process imitations of the brokers of brokapi (BCS, T-Bank, Finam, ALOR, Bybit) for your own tests: servers on 127.0.0.1 that speak the protocol of each broker. Their API may change between versions."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,13 +12,14 @@ rust-version.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-publish = false
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
 brokapi-bcs-protocol.workspace = true
 brokapi-bybit-protocol.workspace = true
-brokapi-conformance.workspace = true
+# A normal dependency of a published crate needs a version. The others take brokapi-conformance by path, as a
+# dev-dependency that publishing drops. Moves with the version of the workspace (tests/version_sync.rs).
+brokapi-conformance = { path = "../conformance", version = "0.1.0-alpha.8" }
 brokapi-core.workspace = true
 chrono.workspace = true
 brokapi-finam-protocol.workspace = true

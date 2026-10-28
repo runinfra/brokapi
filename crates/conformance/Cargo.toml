@@ -1,6 +1,6 @@
 [package]
 name = "brokapi-conformance"
-description = "Shared behaviour scenarios every broker adapter must pass (run against its mock)"
+description = "The behaviour scenarios every broker connector of brokapi passes, against its imitation: run them on a connector of your own"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,7 +12,6 @@ rust-version.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-publish = false
 
 [dependencies]
 brokapi-core.workspace = true

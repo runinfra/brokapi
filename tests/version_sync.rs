@@ -78,7 +78,8 @@ fn internal_crates_are_pinned_to_the_workspace_version() {
     let manifest = read(&root().join("Cargo.toml"));
     let mut seen = 0;
     for line in table(&manifest, "workspace.dependencies").lines() {
-        // brokapi-conformance and brokapi-mocks are not published and carry no version. `brokapi` is the root crate.
+        // brokapi-conformance and brokapi-mocks carry no version here: the crates take them as dev-dependencies by path,
+        // which publishing drops (the version of brokapi-mocks is checked below). `brokapi` is the root crate.
         if (line.starts_with("brokapi-") || line.starts_with("brokapi ="))
             && line.contains("version")
         {
@@ -88,6 +89,17 @@ fn internal_crates_are_pinned_to_the_workspace_version() {
         }
     }
     assert!(seen >= 14, "the published crates are pinned, saw {seen}");
+}
+
+#[test]
+fn the_imitations_take_the_scenarios_of_the_same_version() {
+    // brokapi-mocks is published and depends on brokapi-conformance by a version written in its own manifest.
+    let text = read(&root().join("crates/mocks/Cargo.toml"));
+    let line = text
+        .lines()
+        .find(|l| l.starts_with("brokapi-conformance"))
+        .expect("brokapi-mocks depends on brokapi-conformance");
+    assert_eq!(quoted_version(line), Some(workspace_version().as_str()), "{line}");
 }
 
 #[test]

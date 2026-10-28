@@ -273,6 +273,25 @@ async fn candles_over_the_cap_are_refused_and_the_cap_is_told() {
 }
 
 #[tokio::test]
+async fn a_full_window_keeps_its_first_bar() {
+    // The exchange counts both ends of a range and answers the newest bars first, at most the limit: a range of
+    // exactly 1000 bars asked to its end gave 1001, the limit cut the oldest, and the history lost a bar per window.
+    let opts = Arc::new(MockOptions::default());
+    let server = MockServer::start(Arc::clone(&opts)).await;
+    let (md, _rx) = md(&server).await;
+    let from = 1_792_368_000_000_000_000_i64;
+    let span = md.candles_max_span(Timeframe::H1).unwrap();
+    let window = TimeRange::new(
+        UnixNanos::from_nanos(from),
+        UnixNanos::from_nanos(from + span.as_nanos() as i64),
+    );
+    let bars = md.candles(&mock(), Timeframe::H1, window).await.unwrap();
+    assert_eq!(bars.len(), 1000);
+    assert_eq!(bars[0].open_ts, UnixNanos::from_nanos(from));
+    md.shutdown(ShutdownMode::Immediate).await;
+}
+
+#[tokio::test]
 async fn a_lost_delta_asks_the_exchange_for_a_new_snapshot() {
     let opts = Arc::new(MockOptions::default());
     let server = MockServer::start(Arc::clone(&opts)).await;
