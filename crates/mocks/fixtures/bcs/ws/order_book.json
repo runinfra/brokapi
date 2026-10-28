@@ -1,0 +1,15 @@
+{
+  "responseType": "OrderBook",
+  "ticker": "SBER",
+  "classCode": "TQBR",
+  "depth": 20,
+  "dateTime": "2024-10-30T09:01:00.000Z",
+  "bids": [
+    { "price": 244.30, "quantity": 100 },
+    { "price": 244.25, "quantity": 90 }
+  ],
+  "asks": [
+    { "price": 244.35, "quantity": 120 },
+    { "price": 244.40, "quantity": 50 }
+  ]
+}

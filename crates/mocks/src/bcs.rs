@@ -1579,25 +1579,57 @@ fn json_response(status: StatusCode, body: &str) -> Response {
 fn fixture(name: &str) -> String {
     match name {
         "rest/instrument_info.json" => {
-            include_str!("../../bcs-protocol/tests/fixtures/rest/instrument_info.json")
+            include_str!("../fixtures/bcs/rest/instrument_info.json")
         }
         "rest/last_trades_records.json" => {
-            include_str!("../../bcs-protocol/tests/fixtures/rest/last_trades_records.json")
+            include_str!("../fixtures/bcs/rest/last_trades_records.json")
         }
         "rest/order_book.json" => {
-            include_str!("../../bcs-protocol/tests/fixtures/rest/order_book.json")
+            include_str!("../fixtures/bcs/rest/order_book.json")
         }
         "ws/order_book.json" => {
-            include_str!("../../bcs-protocol/tests/fixtures/ws/order_book.json")
+            include_str!("../fixtures/bcs/ws/order_book.json")
         }
         "ws/order_book_error.json" => {
-            include_str!("../../bcs-protocol/tests/fixtures/ws/order_book_error.json")
+            include_str!("../fixtures/bcs/ws/order_book_error.json")
         }
         "ws/order_book_success.json" => {
-            include_str!("../../bcs-protocol/tests/fixtures/ws/order_book_success.json")
+            include_str!("../fixtures/bcs/ws/order_book_success.json")
         }
-        "ws/portfolio.json" => include_str!("../../bcs-protocol/tests/fixtures/ws/portfolio.json"),
+        "ws/portfolio.json" => include_str!("../fixtures/bcs/ws/portfolio.json"),
         other => panic!("no fixture {other}"),
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod fixture_tests {
+    /// The answers the imitation of BCS serves are copies of the recorded answers of BCS (`bcs-protocol/tests/fixtures`),
+    /// kept in this crate because a published crate carries only its own files. The copies must not drift from the
+    /// recordings the protocol is tested on.
+    #[test]
+    fn the_copied_answers_are_the_recorded_ones() {
+        let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let recorded = here.join("../bcs-protocol/tests/fixtures");
+        assert!(
+            recorded.is_dir(),
+            "the recordings of bcs-protocol are next to this crate in the repository"
+        );
+        for f in [
+            "rest/instrument_info.json",
+            "rest/last_trades_records.json",
+            "rest/order_book.json",
+            "ws/order_book.json",
+            "ws/order_book_error.json",
+            "ws/order_book_success.json",
+            "ws/portfolio.json",
+        ] {
+            let copy = std::fs::read(here.join("fixtures/bcs").join(f)).unwrap();
+            let original = std::fs::read(recorded.join(f)).unwrap();
+            assert!(
+                copy == original,
+                "fixtures/bcs/{f} differs from bcs-protocol/tests/fixtures/{f}: copy it again"
+            );
+        }
+    }
 }

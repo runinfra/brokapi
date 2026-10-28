@@ -1,0 +1,6 @@
+{
+  "records": [
+    { "dateTime": "2026-10-19T07:05:01.000Z", "side": "2", "price": 300.2, "volume": 30020, "quantity": 100 },
+    { "dateTime": "2026-10-19T07:05:00.000Z", "side": "1", "price": 300.1, "volume": 60020, "quantity": 200 }
+  ]
+}
