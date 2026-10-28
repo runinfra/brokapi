@@ -93,8 +93,9 @@ pub enum BrokerConfig {
     Finam {
         /// The API: the secret, the endpoint.
         api: brokapi::finam::FinamApiConfig,
-        /// The account id.
-        account: String,
+        /// The account id. `None`: the only account of the secret (`TokenDetails`), and a configuration error that
+        /// lists them when the secret sees several or none.
+        account: Option<String>,
     },
     /// ALOR.
     Alor(brokapi::alor::protocol::config::AlorConfig),

@@ -35,6 +35,7 @@ use brokapi_tbank_protocol::v1::{
     order_state_stream_response as osr,
     orders_service_server::{OrdersService, OrdersServiceServer},
     orders_stream_service_server::{OrdersStreamService, OrdersStreamServiceServer},
+    sandbox_service_server::{SandboxService, SandboxServiceServer},
     stop_orders_service_server::{StopOrdersService, StopOrdersServiceServer},
     users_service_server::{UsersService, UsersServiceServer},
 };
@@ -136,6 +137,12 @@ pub struct MockOptions {
     /// The price a test set for a ticker: the order book, the last deals and the bars follow it, and the open market
     /// data streams of the ticker get a new message when it changes.
     pub prices: crate::market::Prices,
+    /// The token of a new sandbox: `GetAccounts` lists only the accounts opened with `OpenSandboxAccount`. The first
+    /// one opened is `acc-a` and the second `acc-b`, so the rest of the imitation works on them as on its usual
+    /// accounts.
+    pub new_sandbox: AtomicBool,
+    /// The sandbox accounts opened with `OpenSandboxAccount` and the roubles paid in with `SandboxPayIn`.
+    pub sandbox_accounts: Mutex<Vec<(String, Decimal)>>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -1393,9 +1400,200 @@ impl UsersService for Mock {
             status: pb::AccountStatus::Open as i32,
             ..Default::default()
         };
-        Ok(Response::new(pb::GetAccountsResponse {
-            accounts: vec![acc(ACCOUNT_A), acc(ACCOUNT_B)],
+        let accounts = if self.0.opts.new_sandbox.load(Ordering::Relaxed) {
+            let opened = self.0.opts.sandbox_accounts.lock().unwrap();
+            opened.iter().map(|(id, _)| acc(id)).collect()
+        } else {
+            vec![acc(ACCOUNT_A), acc(ACCOUNT_B)]
+        };
+        Ok(Response::new(pb::GetAccountsResponse { accounts }))
+    }
+}
+
+/// What the sandbox of the imitation does not keep: its own orders, positions and operations. A sandbox account
+/// trades through the usual services of the imitation.
+fn not_in_the_sandbox<T>() -> Result<Response<T>, Status> {
+    Err(Status::unimplemented(
+        "the imitation keeps no sandbox orders: trade through the usual services",
+    ))
+}
+
+#[tonic::async_trait]
+impl SandboxService for Mock {
+    async fn open_sandbox_account(
+        &self,
+        _: Request<pb::OpenSandboxAccountRequest>,
+    ) -> Result<Response<pb::OpenSandboxAccountResponse>, Status> {
+        let mut opened = self.0.opts.sandbox_accounts.lock().unwrap();
+        let account_id = match opened.len() {
+            0 => ACCOUNT_A.to_owned(),
+            1 => ACCOUNT_B.to_owned(),
+            n => format!("sandbox-{}", n + 1),
+        };
+        opened.push((account_id.clone(), Decimal::ZERO));
+        Ok(Response::new(pb::OpenSandboxAccountResponse { account_id }))
+    }
+
+    async fn get_sandbox_accounts(
+        &self,
+        _: Request<pb::GetAccountsRequest>,
+    ) -> Result<Response<pb::GetAccountsResponse>, Status> {
+        let opened = self.0.opts.sandbox_accounts.lock().unwrap();
+        let accounts = opened
+            .iter()
+            .map(|(id, _)| pb::Account {
+                id: id.clone(),
+                name: id.clone(),
+                status: pb::AccountStatus::Open as i32,
+                ..Default::default()
+            })
+            .collect();
+        Ok(Response::new(pb::GetAccountsResponse { accounts }))
+    }
+
+    async fn close_sandbox_account(
+        &self,
+        req: Request<pb::CloseSandboxAccountRequest>,
+    ) -> Result<Response<pb::CloseSandboxAccountResponse>, Status> {
+        let id = req.into_inner().account_id;
+        let mut opened = self.0.opts.sandbox_accounts.lock().unwrap();
+        let before = opened.len();
+        opened.retain(|(a, _)| a != &id);
+        if opened.len() == before {
+            return Err(Status::not_found("50004"));
+        }
+        Ok(Response::new(pb::CloseSandboxAccountResponse {}))
+    }
+
+    async fn sandbox_pay_in(
+        &self,
+        req: Request<pb::SandboxPayInRequest>,
+    ) -> Result<Response<pb::SandboxPayInResponse>, Status> {
+        let req = req.into_inner();
+        let amount = req
+            .amount
+            .map(|m| brokapi_tbank_protocol::money::money_to_decimal(&m))
+            .unwrap_or_default();
+        let mut opened = self.0.opts.sandbox_accounts.lock().unwrap();
+        let Some((_, balance)) = opened.iter_mut().find(|(a, _)| a == &req.account_id) else {
+            return Err(Status::not_found("50004"));
+        };
+        *balance += amount;
+        Ok(Response::new(pb::SandboxPayInResponse {
+            balance: Some(money(*balance)),
         }))
+    }
+
+    async fn post_sandbox_order(
+        &self,
+        _: Request<pb::PostOrderRequest>,
+    ) -> Result<Response<pb::PostOrderResponse>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn post_sandbox_order_async(
+        &self,
+        _: Request<pb::PostOrderAsyncRequest>,
+    ) -> Result<Response<pb::PostOrderAsyncResponse>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn replace_sandbox_order(
+        &self,
+        _: Request<pb::ReplaceOrderRequest>,
+    ) -> Result<Response<pb::PostOrderResponse>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn get_sandbox_orders(
+        &self,
+        _: Request<pb::GetOrdersRequest>,
+    ) -> Result<Response<pb::GetOrdersResponse>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn cancel_sandbox_order(
+        &self,
+        _: Request<pb::CancelOrderRequest>,
+    ) -> Result<Response<pb::CancelOrderResponse>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn get_sandbox_order_state(
+        &self,
+        _: Request<pb::GetOrderStateRequest>,
+    ) -> Result<Response<pb::OrderState>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn get_sandbox_order_price(
+        &self,
+        _: Request<pb::GetOrderPriceRequest>,
+    ) -> Result<Response<pb::GetOrderPriceResponse>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn get_sandbox_positions(
+        &self,
+        _: Request<pb::PositionsRequest>,
+    ) -> Result<Response<pb::PositionsResponse>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn get_sandbox_operations(
+        &self,
+        _: Request<pb::OperationsRequest>,
+    ) -> Result<Response<pb::OperationsResponse>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn get_sandbox_operations_by_cursor(
+        &self,
+        _: Request<pb::GetOperationsByCursorRequest>,
+    ) -> Result<Response<pb::GetOperationsByCursorResponse>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn get_sandbox_portfolio(
+        &self,
+        _: Request<pb::PortfolioRequest>,
+    ) -> Result<Response<pb::PortfolioResponse>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn get_sandbox_withdraw_limits(
+        &self,
+        _: Request<pb::WithdrawLimitsRequest>,
+    ) -> Result<Response<pb::WithdrawLimitsResponse>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn get_sandbox_max_lots(
+        &self,
+        _: Request<pb::GetMaxLotsRequest>,
+    ) -> Result<Response<pb::GetMaxLotsResponse>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn post_sandbox_stop_order(
+        &self,
+        _: Request<pb::PostStopOrderRequest>,
+    ) -> Result<Response<pb::PostStopOrderResponse>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn get_sandbox_stop_orders(
+        &self,
+        _: Request<pb::GetStopOrdersRequest>,
+    ) -> Result<Response<pb::GetStopOrdersResponse>, Status> {
+        not_in_the_sandbox()
+    }
+
+    async fn cancel_sandbox_stop_order(
+        &self,
+        _: Request<pb::CancelStopOrderRequest>,
+    ) -> Result<Response<pb::CancelStopOrderResponse>, Status> {
+        not_in_the_sandbox()
     }
 }
 
@@ -1799,6 +1997,10 @@ impl MockServer {
                 auth.clone(),
             ))
             .add_service(StopOrdersServiceServer::with_interceptor(
+                mock.clone(),
+                auth.clone(),
+            ))
+            .add_service(SandboxServiceServer::with_interceptor(
                 mock.clone(),
                 auth.clone(),
             ))

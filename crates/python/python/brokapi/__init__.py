@@ -32,7 +32,17 @@ from __future__ import annotations
 from importlib import metadata as _metadata
 
 from . import errors, models, numbers, record, testing
-from .client import CandlePager, Client, EventStream, Limiter, connect, connect_gateway, merge, new_cid
+from .client import (
+    CandlePager,
+    Client,
+    EventStream,
+    Limiter,
+    connect,
+    connect_gateway,
+    merge,
+    new_cid,
+    open_tbank_sandbox_account,
+)
 from .errors import (
     BrokapiError,
     Config,
@@ -186,6 +196,7 @@ __all__ = [
     "Unsupported",
     "UserDataCaps",
     "connect",
+    "open_tbank_sandbox_account",
     "connect_gateway",
     "errors",
     "merge",

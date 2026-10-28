@@ -4,9 +4,12 @@ tinkoff-investments."""
 
 from __future__ import annotations
 
+import asyncio
 import sys
+import uuid
 from decimal import Decimal
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -23,6 +26,7 @@ import from_tinkoff  # noqa: E402
 import guard  # noqa: E402
 import levers  # noqa: E402
 import quickstart_tbank  # noqa: E402
+import signal_stop_bot  # noqa: E402
 import stop_restart  # noqa: E402
 
 
@@ -56,6 +60,25 @@ async def test_the_sandbox_run_connects_to_the_sandbox_by_the_environment(monkey
         monkeypatch.setattr(quickstart_tbank.brokapi, "connect", connect)
         await quickstart_tbank.on_the_sandbox()
         assert seen == {"sandbox": True}
+
+
+async def test_a_new_sandbox_token_opens_its_account_then_the_sandbox_run_goes(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with await testing.mock_tbank(new_sandbox=True) as mock:
+        real_open, real_connect = brokapi.open_tbank_sandbox_account, brokapi.connect
+        seen: dict[str, object] = {}
+
+        async def open_account(**kw: object) -> str:
+            seen.update(kw)
+            return await real_open(**{**mock.settings, **kw})  # type: ignore[arg-type]
+
+        async def connect(broker: str, **kw: object) -> brokapi.Client:
+            return await real_connect(broker, **{**mock.settings, **kw})  # type: ignore[arg-type]
+
+        monkeypatch.setattr(quickstart_tbank.brokapi, "open_tbank_sandbox_account", open_account)
+        monkeypatch.setattr(quickstart_tbank.brokapi, "connect", connect)
+        assert await quickstart_tbank.open_the_sandbox_account() == "acc-a"
+        assert seen == {"money": "100000", "sandbox": True}
+        await quickstart_tbank.on_the_sandbox()  # one account: connect needs no account_id
 
 
 async def test_the_first_day_on_bybit_reads_places_watches_cancels_and_stops(capsys: pytest.CaptureFixture[str]) -> None:
@@ -229,3 +252,50 @@ async def test_the_levers_move_the_price_and_lose_an_answer() -> None:
 
 async def test_the_limits_on_the_orders_refuse_before_anything_is_sent() -> None:
     assert await guard.look_but_do_not_trade() == ["bid 244.30", "refused: read_only", "refused: max_order_value"]
+
+
+async def until(condition: "Callable[[], bool]", seconds: float = 10) -> None:
+    async def poll() -> None:
+        while not condition():
+            await asyncio.sleep(0)  # yield to the bot, no wait by the clock
+
+    await asyncio.wait_for(poll(), seconds)
+
+
+async def test_the_signal_stop_bot_buys_on_the_rise_puts_the_stop_and_keeps_it_over_restarts(tmp_path: Path) -> None:
+    async with await testing.mock_finam() as mock:
+        mock.set_price("GAZP", "150")
+        path = tmp_path / "signal_stop.jsonl"
+
+        # First life: the price rises 1% - one buy at the ask, the fill, the stop 0.5% below.
+        bot = signal_stop_bot.SignalStopBot(await mock.connect(name="life-1"), "GAZP", signal_stop_bot.Journal(path))
+        life = asyncio.create_task(signal_stop_bot.run(bot))
+        await until(lambda: bool(bot.window))
+        mock.set_price("GAZP", "151.6")
+        await until(lambda: (bot.journal.buy() or {}).get("state") == "working")
+        buy = bot.journal.buy()
+        assert buy is not None and buy["price"] == "151.61"
+        mock.fill(uuid.UUID(buy["cid"]), qty=bot.params.lot_size, price="151.61")
+        await asyncio.wait_for(bot.protected.wait(), 10)
+        (stop,) = await bot.client.active_stop_orders()
+        assert stop.stop_price == Decimal("150.85") and stop.qty == bot.params.lot_size  # 151.61 * 0.995, down to the step
+        life.cancel()
+
+        # Second life, same journal: the stop is there, no second stop; the price rises again, no second buy.
+        bot = signal_stop_bot.SignalStopBot(await mock.connect(name="life-2"), "GAZP", signal_stop_bot.Journal(path))
+        life = asyncio.create_task(signal_stop_bot.run(bot))
+        await asyncio.wait_for(bot.protected.wait(), 10)
+        mock.set_price("GAZP", "160")
+        await until(lambda: any(price == Decimal("160.01") for _, price in bot.window))
+        assert len(await bot.client.active_stop_orders()) == 1
+        assert await bot.client.active_orders() == []
+        life.cancel()
+
+        # A person takes the stop off. Third life: the position has no stop, the bot puts it at start.
+        await bot.client.cancel_stop(brokapi.StopOrderRef.broker(stop.broker_id))
+        bot = signal_stop_bot.SignalStopBot(await mock.connect(name="life-3"), "GAZP", signal_stop_bot.Journal(path))
+        life = asyncio.create_task(signal_stop_bot.run(bot))
+        await asyncio.wait_for(bot.protected.wait(), 10)
+        active = [s for s in await bot.client.active_stop_orders() if s.state.kind is brokapi.StopOrderStateKind.ACTIVE]
+        assert [s.stop_price for s in active] == [Decimal("150.85")]
+        life.cancel()

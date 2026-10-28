@@ -251,6 +251,9 @@ pub enum Command {
         what: DirectCommand,
     },
     /// Emergency: cancel every active order and stop order of the account behind a gateway.
+    ///
+    /// Every one of them: the protective stops of your bots too, and the orders of other programs and of a person on
+    /// this account. A position stays open and without a stop. To stop one bot and keep its stops, stop that bot.
     CancelAll {
         /// The gateway.
         gateway: String,

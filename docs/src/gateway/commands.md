@@ -768,18 +768,30 @@ Options:
 
 ```text
 $ brokapi cancel-all --help
-Emergency: cancel every active order and stop order of the account behind a gateway
+Emergency: cancel every active order and stop order of the account behind a gateway.
+
+Every one of them: the protective stops of your bots too, and the orders of other programs and of a
+person on this account. A position stays open and without a stop. To stop one bot and keep its
+stops, stop that bot.
 
 Usage: brokapi cancel-all [OPTIONS] <GATEWAY>
 
 Arguments:
-  <GATEWAY>  The gateway
+  <GATEWAY>
+          The gateway
 
 Options:
-  -c, --config <FILE>  The config file (default: $BROKAPI_CONFIG, ./brokapi.toml, then the config
-                       directory of the user) [env: BROKAPI_CONFIG=]
-      --json           Print JSON instead of text (every command that prints something)
-  -h, --help           Print help
+  -c, --config <FILE>
+          The config file (default: $BROKAPI_CONFIG, ./brokapi.toml, then the config directory of
+          the user)
+          
+          [env: BROKAPI_CONFIG=]
+
+      --json
+          Print JSON instead of text (every command that prints something)
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 <!-- help:end -->

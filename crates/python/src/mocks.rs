@@ -67,11 +67,12 @@ pub struct NativeMock {
 
 /// Starts the imitation of `broker` (`"bcs"`, `"tbank"`, `"finam"` or `"alor"`) on a free port.
 #[pyfunction]
-#[pyo3(signature = (broker, synthetic_candles=false))]
+#[pyo3(signature = (broker, synthetic_candles=false, new_sandbox=false))]
 pub fn start_mock(
     py: Python<'_>,
     broker: String,
     synthetic_candles: bool,
+    new_sandbox: bool,
 ) -> PyResult<Bound<'_, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let (kind, server, levers) = match broker.as_str() {
@@ -94,6 +95,7 @@ pub fn start_mock(
                     .store(synthetic_candles, Ordering::Relaxed);
                 // A stop order gets the time of the real clock, as the broker writes it.
                 options.stop_create_now.store(true, Ordering::Relaxed);
+                options.new_sandbox.store(new_sandbox, Ordering::Relaxed);
                 let levers = levers!(options, stop_answer_lost, order_answer_lost, post_delay_ms);
                 (
                     "tbank",
@@ -195,6 +197,12 @@ impl NativeMock {
                 "endpoint": s.http_base,
                 "refresh_token": "mock-refresh-token",
                 "write": true,
+            }),
+            // A new sandbox token has no account yet: the client finds the one it opens.
+            Server::Tbank(s) if s.opts.new_sandbox.load(Ordering::Relaxed) => json!({
+                "endpoint": s.endpoint,
+                "token": tbank::TOKEN,
+                "sandbox": true,
             }),
             Server::Tbank(s) => json!({
                 "endpoint": s.endpoint,

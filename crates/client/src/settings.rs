@@ -214,14 +214,13 @@ impl Settings {
         Ok(cfg)
     }
 
-    /// The Finam connector configuration and the account id: `secret`, `account_id`, `endpoint`.
-    pub fn finam(&self) -> Result<(FinamApiConfig, String), Error> {
+    /// The Finam connector configuration and the account id: `secret`, `account_id`, `endpoint`. Without `account_id`
+    /// the connection takes the only account of the secret.
+    pub fn finam(&self) -> Result<(FinamApiConfig, Option<String>), Error> {
         let secret = self.text("secret", "FINAM_SECRET").ok_or_else(|| {
             config("FINAM_SECRET is not set (pass secret=... or set the variable)")
         })?;
-        let account = self.text("account_id", "FINAM_ACCOUNT_ID").ok_or_else(|| {
-            config("FINAM_ACCOUNT_ID is not set (pass account_id=... or set the variable)")
-        })?;
+        let account = self.text("account_id", "FINAM_ACCOUNT_ID");
         let mut cfg = FinamApiConfig::new(secret);
         if let Some(url) = self.checked_endpoint("FINAM_API_URL")? {
             cfg = cfg.with_endpoint(url);

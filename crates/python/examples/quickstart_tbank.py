@@ -7,8 +7,9 @@ Without a token (the imitation of T-Bank in your own process; no account, no net
 
     python quickstart_tbank.py
 
-On the sandbox of T-Bank (a token of the sandbox and an account of the sandbox are needed)::
+On the sandbox of T-Bank (a token of the sandbox is needed). A new sandbox token has no account: open one first, once::
 
+    TBANK_TOKEN=... python quickstart_tbank.py sandbox-open
     TBANK_TOKEN=... python quickstart_tbank.py sandbox
 
 The imitation (`brokapi.testing.mock_tbank`) is a server on 127.0.0.1 that speaks the protocol of T-Bank. The client is
@@ -73,6 +74,15 @@ async def on_the_imitation() -> None:
         # ANCHOR_END: mock
 
 
+# ANCHOR: sandbox_open
+async def open_the_sandbox_account() -> str:
+    # Once, for a new sandbox token: it sees no account until one is opened. 100 000 virtual roubles are paid in.
+    account = await brokapi.open_tbank_sandbox_account(money="100000", sandbox=True)
+    print(f"sandbox account {account}")
+    return account
+    # ANCHOR_END: sandbox_open
+
+
 # ANCHOR: sandbox
 async def on_the_sandbox() -> None:
     # TBANK_TOKEN is the token of the sandbox. sandbox=True is the address of the sandbox (the real one is the default).
@@ -85,4 +95,5 @@ async def on_the_sandbox() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(on_the_sandbox() if sys.argv[1:] == ["sandbox"] else on_the_imitation())
+    runs = {"sandbox": on_the_sandbox, "sandbox-open": open_the_sandbox_account}
+    asyncio.run(runs.get(" ".join(sys.argv[1:]), on_the_imitation)())

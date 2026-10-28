@@ -79,7 +79,8 @@ async def after_restart(client: brokapi.Client, ledger: list[uuid.UUID]) -> brok
 async def average_price(client: brokapi.Client, cid: uuid.UUID, start: datetime, end: datetime) -> Optional[Decimal]:
     """How much an order bought, and at what average price: from the fills, the snapshot has no average price.
 
-    A fill without a cid is not counted: the history of BCS gives none, there this returns ``None``."""
+    A fill without a cid is not counted. The history of BCS and of T-Bank does not name the order of a fill, there this
+    returns ``None``: read the ``Execution`` events of ``subscribe_executions`` while the order works, they carry the cid."""
     # ANCHOR: average_price
     fills = [e for e in await client.executions(start, end) if e.cid == cid]
     done = sum((e.qty for e in fills), Decimal(0))  # the same number as OrderSnapshot.filled

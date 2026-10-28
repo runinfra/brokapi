@@ -247,3 +247,16 @@ async def test_a_limiter_of_your_own_numbers_refuses_before_the_broker_does() ->
 def test_a_limits_file_without_the_section_of_the_broker_is_named() -> None:
     with pytest.raises(brokapi.Config, match=r"no \[tbank\] section"):
         brokapi.Limiter.from_toml("tbank", SMALL_BUDGET)
+
+
+START_POSITION = {"bcs": ("SBER", "10"), "tbank": ("SBER", "30"), "finam": ("SBER", "10"), "alor": ("SBER", "30"), "bybit": ("BTCUSDT", "0.5")}
+
+
+@pytest.mark.parametrize("broker", sorted(START_POSITION))
+async def test_each_imitation_starts_with_the_position_the_book_names(broker: str) -> None:
+    # python/testing.md, the table of the imitations: the column «Позиция на старте».
+    async with await getattr(testing, f"mock_{broker}")() as mock:
+        client = await mock.connect()
+        held = [(p.instrument.key.symbol, p.qty) for p in await client.positions()]
+        symbol, qty = START_POSITION[broker]
+        assert held == [(symbol, Decimal(qty))]

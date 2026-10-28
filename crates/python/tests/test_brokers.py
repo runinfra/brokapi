@@ -172,3 +172,46 @@ async def test_request_timeout_takes_a_fraction_of_a_second() -> None:
     async with await testing.mock_bcs() as mock:
         client = await mock.connect(request_timeout=0.5)
         assert str(await client.instrument("SBER")) == "SBER@TQBR"
+
+
+async def test_finam_without_an_account_id_names_the_accounts_of_the_secret() -> None:
+    # The imitation's secret sees two accounts: the error lists them, so the person can pick one without the cabinet.
+    async with await testing.mock_finam() as mock:
+        with pytest.raises(brokapi.Config, match="sees 2 accounts: ACC1, ACC2"):
+            await mock.connect(account_id=None)
+
+
+@pytest.mark.parametrize("broker", ["bcs", "tbank", "finam", "alor", "bybit"])
+async def test_a_price_off_the_step_is_refused_before_it_is_sent_without_a_call_of_trading_params(broker: str) -> None:
+    # The check does not hang on the order of the calls: the client learns the step itself before the first order.
+    ticker = "MOCKUSDT" if broker == "bybit" else "SBER"
+    async with await getattr(testing, f"mock_{broker}")() as mock:
+        client = await mock.connect()
+        instrument = await client.instrument(ticker)
+        await client.reconcile([])
+        qty = Decimal(1) if broker == "bcs" else Decimal(10)  # one lot of the imitation, a whole number of lots
+        with pytest.raises(brokapi.Rejected) as caught:
+            await client.place(cid=brokapi.new_cid(), instrument=instrument, side=brokapi.Side.BUY, qty=qty, price=Decimal("100.005"))
+        assert caught.value.code == "price_off_step"
+        assert await client.active_orders() == []
+
+
+async def test_a_new_sandbox_token_of_tbank_gets_an_account_from_python() -> None:
+    # A new sandbox token sees no account, connect refuses it. One call opens the account, then connect finds it.
+    async with await testing.mock_tbank(new_sandbox=True) as mock:
+        with pytest.raises(brokapi.Config, match="no open account"):
+            await mock.connect()
+        account = await brokapi.open_tbank_sandbox_account(money="100000", **mock.settings)
+        assert account == "acc-a"
+        client = await mock.connect()
+        sber = await client.instrument("SBER")
+        await client.reconcile([])
+        ack = await client.place(cid=brokapi.new_cid(), instrument=sber, side=brokapi.Side.BUY, qty=10, price=Decimal("100.00"))
+        assert ack.broker_id
+
+
+async def test_a_sandbox_account_is_not_opened_on_the_real_address() -> None:
+    with pytest.raises(brokapi.Config, match="nothing was sent"):
+        await brokapi.open_tbank_sandbox_account(token="t.not-a-token", sandbox=False)
+    with pytest.raises(TypeError, match="float"):
+        await brokapi.open_tbank_sandbox_account(money=1.5, token="t.x", sandbox=True)

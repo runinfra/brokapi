@@ -118,6 +118,9 @@ impl InstrumentSource for Client {
 impl OrderExecutor for Client {
     async fn place(&self, req: PlaceOrderRequest) -> Result<OrderAck, Error> {
         self.inner.guard.place(&req)?;
+        if req.price.is_some() {
+            self.learn_step(&req.instrument).await;
+        }
         self.conn().await?.ud().place(req).await
     }
 
@@ -195,6 +198,7 @@ impl PortfolioSource for Client {
 impl StopOrderExecutor for Client {
     async fn place_stop(&self, req: PlaceStopOrderRequest) -> Result<OrderAck, Error> {
         self.inner.guard.place_stop(&req)?;
+        self.learn_step(&req.instrument).await;
         self.conn().await?.ud().place_stop(req).await
     }
 
@@ -209,5 +213,22 @@ impl StopOrderExecutor for Client {
 
     async fn subscribe_stop_orders(&self) -> Result<SubscriptionId, Error> {
         self.conn().await?.ud().subscribe_stop_orders().await
+    }
+}
+
+impl Client {
+    /// Before the first order with a price on an instrument the client reads its trading parameters once, so that a
+    /// price off the step is refused before anything is sent whatever the order of the calls of the bot. A failed
+    /// read lets the order go on unchecked: the broker checks the step itself, and the next order tries the read again.
+    async fn learn_step(&self, id: &InstrumentId) {
+        let Ok(conn) = self.conn().await else {
+            return;
+        };
+        if conn.knows_step(&id.key) {
+            return;
+        }
+        if let Ok(params) = conn.md().trading_params(id).await {
+            conn.learn_grid(&params);
+        }
     }
 }

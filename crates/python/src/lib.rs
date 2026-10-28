@@ -38,6 +38,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<client::NativeLimiter>()?;
     m.add_function(wrap_pyfunction!(client::connect, m)?)?;
     m.add_function(wrap_pyfunction!(client::limiter_from_toml, m)?)?;
+    m.add_function(wrap_pyfunction!(client::open_tbank_sandbox_account, m)?)?;
     m.add_function(wrap_pyfunction!(client::connect_gateway, m)?)?;
     m.add_class::<record::NativeLogWriter>()?;
     m.add_class::<record::NativeLogReader>()?;

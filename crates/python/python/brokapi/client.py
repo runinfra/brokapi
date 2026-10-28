@@ -310,7 +310,8 @@ class Client:
         """The price step, the smallest quantity and the lot of an instrument.
 
         Also teaches the connector the price step, so that a price off the step is refused at once with
-        :class:`~brokapi.Rejected` (``price_off_step``), before anything is sent.
+        :class:`~brokapi.Rejected` (``price_off_step``), before anything is sent. ``place`` and ``place_stop`` read the
+        rules themselves before the first order with a price on an instrument, so the check does not hang on this call.
         """
         return _codec.decode(TradingParams, await self._call("trading_params", instrument=instrument))
 
@@ -731,7 +732,8 @@ async def connect(
       (``TBANK_ENDPOINT``, ``TBANK_APP_NAME``), ``root_certificate`` (``TBANK_ROOT_CERT``: the path of a PEM file with
       a root to trust besides the bundled ones. The root of the Ministry of Digital Development that signs the endpoints of
       T-Bank is bundled already, for the hosts of ``tbank.ru`` only).
-    - ``finam``: ``secret`` (``FINAM_SECRET``, required), ``account_id`` (``FINAM_ACCOUNT_ID``, required), ``endpoint``
+    - ``finam``: ``secret`` (``FINAM_SECRET``, required), ``account_id`` (``FINAM_ACCOUNT_ID``: without it the only account of the secret,
+      and when it sees several the error lists them), ``endpoint``
       (``FINAM_API_URL``).
     - ``alor``: ``refresh_token`` (``ALOR_REFRESH_TOKEN``, required), ``portfolio`` (``ALOR_PORTFOLIO``, required when
       the account has several portfolios), ``exchange`` (``ALOR_EXCHANGE``, ``MOEX`` or ``SPBX``, default ``MOEX``),
@@ -774,6 +776,27 @@ async def connect(
         event_buffer,
     )
     return Client(native)
+
+
+async def open_tbank_sandbox_account(*, money: Optional[Decimal | str | int] = None, **settings: Any) -> str:
+    """Opens an account in the sandbox of T-Bank and pays ``money`` roubles into it. Returns the account id.
+
+    A new sandbox token sees no account, and :func:`connect` refuses a token without one. Open the account once with the
+    sandbox token, then ``connect("tbank", sandbox=True)`` finds it: a token with one account needs no ``account_id``.
+    ``settings`` are the ones of :func:`connect` for ``tbank`` (``token``, ``endpoint``...), the token and the flag are
+    read from ``TBANK_TOKEN`` and ``TBANK_SANDBOX`` when not given. Without ``sandbox`` the call is refused before
+    anything is sent: the real address has no sandbox.
+
+    Raises :class:`~brokapi.Config` for a config that is not a sandbox one or money not above zero,
+    :class:`~brokapi.Unknown` when the answer is lost (the account may be open: look before opening another one).
+    """
+    unknown = set(settings) - _BROKERS["tbank"]
+    if unknown:
+        raise TypeError(f"open_tbank_sandbox_account does not take {', '.join(sorted(unknown))}")
+    if isinstance(money, float):
+        raise TypeError("money is a Decimal, a text or an integer: a float cannot be exact")
+    given = {k: v for k, v in settings.items() if v is not None}
+    return await _native.open_tbank_sandbox_account(_settings_json(given), None if money is None else str(money))
 
 
 async def connect_gateway(

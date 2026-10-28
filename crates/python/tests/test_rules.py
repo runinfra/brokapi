@@ -81,6 +81,27 @@ async def test_the_average_price_of_an_order_comes_from_its_fills() -> None:
         assert snapshot.state.filled is None  # FILLED carries no quantity: read snapshot.filled
 
 
+HISTORY_WITH_CID = {"finam": True, "alor": True, "bybit": True, "bcs": False, "tbank": False}
+TICKER = {"bcs": "SBER", "tbank": "SBER", "finam": "SBER", "alor": "SBER", "bybit": "MOCKUSDT"}
+
+
+@pytest.mark.parametrize("broker", sorted(HISTORY_WITH_CID))
+async def test_the_history_of_some_brokers_names_no_order_and_the_average_price_is_none(broker: str) -> None:
+    # The book says where the recipe works: the history of BCS and T-Bank does not name the order of a fill.
+    async with await getattr(testing, f"mock_{broker}")() as mock:
+        client = await mock.connect()
+        instrument = await client.instrument(TICKER[broker])
+        qty = (await client.trading_params(instrument)).min_qty
+        await client.reconcile([])
+        cid = brokapi.new_cid()
+        await client.place(cid=cid, instrument=instrument, side=brokapi.Side.BUY, qty=qty, price=Decimal("100.00"))
+        mock.fill(cid, qty=qty, price=Decimal("100.00"))
+        start = datetime.now(timezone.utc) - timedelta(hours=1)
+        end = start + timedelta(hours=2)
+        expected = Decimal("100.00") if HISTORY_WITH_CID[broker] else None
+        assert await rules.average_price(client, cid, start, end) == expected
+
+
 def bar(minute: int, close: str) -> brokapi.Candle:
     start = datetime(2026, 10, 27, 10, minute, tzinfo=timezone.utc)
     sber = brokapi.InstrumentId(key=brokapi.InstrumentKey(symbol="SBER", mic="TQBR"), native=brokapi.NativeId("TickerClass", (("ticker", "SBER"), ("class_code", "TQBR"))))

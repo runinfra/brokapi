@@ -92,6 +92,33 @@ pub fn connect<'py>(
     })
 }
 
+/// `open_tbank_sandbox_account(settings, money)`: an awaitable of the id of a new account in the sandbox of T-Bank, with
+/// `money` roubles paid into it (text, or `None` for none). `settings` are the settings of `connect` as JSON.
+#[pyfunction]
+#[pyo3(signature = (settings, money=None))]
+pub fn open_tbank_sandbox_account<'py>(
+    py: Python<'py>,
+    settings: String,
+    money: Option<String>,
+) -> PyResult<Bound<'py, PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let go = async {
+            let cfg = Settings::parse(&settings)?.tbank()?;
+            let money = match money {
+                Some(m) => Some(m.trim().parse::<brokapi::core::Decimal>().map_err(|_| {
+                    CallError::Broker(config(format!(
+                        "money must be a number of roubles, got {m:?}"
+                    )))
+                })?),
+                None => None,
+            };
+            let account = brokapi::tbank::sandbox::open_sandbox_account(&cfg, money).await?;
+            Ok::<_, CallError>(account)
+        };
+        go.await.map_err(into_pyerr)
+    })
+}
+
 /// `connect_gateway(dir, bot, ready_timeout, event_buffer, own_orders_only)`: an awaitable of a [`NativeClient`] that
 /// reaches the account through the gateway whose directory is `dir`.
 #[pyfunction]

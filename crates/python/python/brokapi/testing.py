@@ -207,10 +207,10 @@ class MockBroker:
         self._native.close()
 
 
-async def _start(broker: str, synthetic_candles: bool) -> MockBroker:
+async def _start(broker: str, synthetic_candles: bool, new_sandbox: bool = False) -> MockBroker:
     if not _native.TESTING:
         raise RuntimeError("this build of brokapi has no imitations (built without the 'testing' feature)")
-    return MockBroker(await _native.start_mock(broker, synthetic_candles))
+    return MockBroker(await _native.start_mock(broker, synthetic_candles, new_sandbox))
 
 
 async def mock_bcs(*, synthetic_candles: bool = False) -> MockBroker:
@@ -222,12 +222,15 @@ async def mock_bcs(*, synthetic_candles: bool = False) -> MockBroker:
     return await _start("bcs", synthetic_candles)
 
 
-async def mock_tbank(*, synthetic_candles: bool = False) -> MockBroker:
+async def mock_tbank(*, synthetic_candles: bool = False, new_sandbox: bool = False) -> MockBroker:
     """An imitation of T-Bank (gRPC). Two accounts: ``acc-a`` (the default) and ``acc-b``.
 
     ``synthetic_candles=True``: a series for the period asked, refused when longer than T-Invest allows.
+
+    ``new_sandbox=True``: the token of a new sandbox, with no account until
+    :func:`brokapi.open_tbank_sandbox_account` opens one (the first is ``acc-a``). ``mock.settings`` then name no account.
     """
-    return await _start("tbank", synthetic_candles)
+    return await _start("tbank", synthetic_candles, new_sandbox)
 
 
 async def mock_finam(*, synthetic_candles: bool = False) -> MockBroker:

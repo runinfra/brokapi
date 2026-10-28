@@ -81,6 +81,17 @@ impl Conn {
         }
     }
 
+    /// Whether the account connector knows the price step of an instrument.
+    pub(crate) fn knows_step(&self, key: &brokapi::core::InstrumentKey) -> bool {
+        match self {
+            Conn::Bcs { ud, .. } => ud.price_grid().step(key).is_some(),
+            Conn::Tbank { ud, .. } => ud.price_grid().step(key).is_some(),
+            Conn::Finam { ud, .. } => ud.price_grid().step(key).is_some(),
+            Conn::Alor { ud, .. } => ud.price_grid().step(key).is_some(),
+            Conn::Bybit { ud, .. } => ud.price_grid().step(key).is_some(),
+        }
+    }
+
     /// Any method of the broker's API: see [`crate::raw`].
     pub(crate) async fn raw(
         &self,
@@ -220,7 +231,12 @@ pub(crate) async fn start(
                 MarketDataConfig, MarketDataConnector, UserDataConfig, UserDataConnector,
             };
             // One JWT for both connectors.
-            let api = api.clone().with_tokens(api.shared_tokens().await?);
+            let tokens = api.shared_tokens().await?;
+            let account = match account {
+                Some(account) => account.clone(),
+                None => only_finam_account(&tokens.account_ids())?,
+            };
+            let api = api.clone().with_tokens(tokens);
             let md = MarketDataConnector::start(
                 MarketDataConfig::new(api.clone(), md_source),
                 limiter.clone(),
@@ -232,5 +248,42 @@ pub(crate) async fn start(
                     .await?;
             Ok(Conn::Finam { md, ud })
         }
+    }
+}
+
+/// The account of a Finam secret when the settings name none: the only one it sees, else a configuration error that
+/// lists them, so the person can pick one without the web cabinet.
+fn only_finam_account(accounts: &[String]) -> Result<String, brokapi::core::Error> {
+    match accounts {
+        [one] => Ok(one.clone()),
+        [] => Err(crate::error::config_error(
+            "FINAM_ACCOUNT_ID is not set and the secret lists no account (TokenDetails): \
+             pass account_id=... or set the variable",
+        )),
+        many => Err(crate::error::config_error(format!(
+            "FINAM_ACCOUNT_ID is not set and the secret sees {} accounts: {}. Pass account_id=... or set the variable",
+            many.len(),
+            many.join(", ")
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod finam_account_tests {
+    use super::only_finam_account;
+
+    #[test]
+    fn without_an_account_id_the_only_account_of_the_secret_is_taken_and_several_are_named() {
+        assert_eq!(only_finam_account(&["A1".into()]).unwrap(), "A1");
+        let e = only_finam_account(&["A1".into(), "A2".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("sees 2 accounts: A1, A2"), "{e}");
+        assert!(
+            only_finam_account(&[])
+                .unwrap_err()
+                .to_string()
+                .contains("lists no account")
+        );
     }
 }
