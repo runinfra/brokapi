@@ -25,7 +25,7 @@ exclude = ["crates/python"]
 
 [workspace.package]
 edition = "2024"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.8"
 license = "MIT OR Apache-2.0"
 authors = ["The brokapi Authors"]
 homepage = "https://brokapi.ru"
@@ -60,22 +60,22 @@ url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 # Internal crates (the root crate is `brokapi` itself: the client and the gateway take it from here)
-brokapi = { path = ".", version = "0.1.0-alpha.7" }
-brokapi-bcs-protocol = { path = "crates/bcs-protocol", version = "0.1.0-alpha.7" }
-brokapi-alor-protocol = { path = "crates/alor-protocol", version = "0.1.0-alpha.7" }
-brokapi-alor = { path = "crates/alor", version = "0.1.0-alpha.7" }
-brokapi-bybit-protocol = { path = "crates/bybit-protocol", version = "0.1.0-alpha.7" }
-brokapi-bybit = { path = "crates/bybit", version = "0.1.0-alpha.7" }
-brokapi-finam-protocol = { path = "crates/finam-protocol", version = "0.1.0-alpha.7" }
-brokapi-finam = { path = "crates/finam", version = "0.1.0-alpha.7" }
-brokapi-core = { path = "crates/core", version = "0.1.0-alpha.7" }
-brokapi-sansio = { path = "crates/sansio", version = "0.1.0-alpha.7" }
-brokapi-runtime = { path = "crates/runtime", version = "0.1.0-alpha.7" }
-brokapi-bcs = { path = "crates/bcs", version = "0.1.0-alpha.7" }
-brokapi-tbank-protocol = { path = "crates/tbank-protocol", version = "0.1.0-alpha.7" }
-brokapi-tbank = { path = "crates/tbank", version = "0.1.0-alpha.7" }
-brokapi-client = { path = "crates/client", version = "0.1.0-alpha.7" }
-brokapi-gateway = { path = "crates/gateway", version = "0.1.0-alpha.7" }
+brokapi = { path = ".", version = "0.1.0-alpha.8" }
+brokapi-bcs-protocol = { path = "crates/bcs-protocol", version = "0.1.0-alpha.8" }
+brokapi-alor-protocol = { path = "crates/alor-protocol", version = "0.1.0-alpha.8" }
+brokapi-alor = { path = "crates/alor", version = "0.1.0-alpha.8" }
+brokapi-bybit-protocol = { path = "crates/bybit-protocol", version = "0.1.0-alpha.8" }
+brokapi-bybit = { path = "crates/bybit", version = "0.1.0-alpha.8" }
+brokapi-finam-protocol = { path = "crates/finam-protocol", version = "0.1.0-alpha.8" }
+brokapi-finam = { path = "crates/finam", version = "0.1.0-alpha.8" }
+brokapi-core = { path = "crates/core", version = "0.1.0-alpha.8" }
+brokapi-sansio = { path = "crates/sansio", version = "0.1.0-alpha.8" }
+brokapi-runtime = { path = "crates/runtime", version = "0.1.0-alpha.8" }
+brokapi-bcs = { path = "crates/bcs", version = "0.1.0-alpha.8" }
+brokapi-tbank-protocol = { path = "crates/tbank-protocol", version = "0.1.0-alpha.8" }
+brokapi-tbank = { path = "crates/tbank", version = "0.1.0-alpha.8" }
+brokapi-client = { path = "crates/client", version = "0.1.0-alpha.8" }
+brokapi-gateway = { path = "crates/gateway", version = "0.1.0-alpha.8" }
 brokapi-conformance = { path = "crates/conformance" }
 brokapi-mocks = { path = "crates/mocks" }
 
