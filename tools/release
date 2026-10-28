@@ -7,7 +7,8 @@
 #                                     `check`, then `cargo publish --workspace --dry-run`: every package is built from its own
 #                                     unpacked files, as a user of crates.io gets it. Without --no-verify it compiles the
 #                                     whole workspace (long, several GB of disk: set CARGO_TARGET_DIR to a place with room)
-#   tools/release publish             `check`, then publishes for real. Asks to type the version first (--yes skips the question)
+#   tools/release publish             `check`, the dry run, then publishes for real. Asks to type the version first (--yes skips the
+#                                     question)
 #
 # Publishing cannot be undone: a version of a crate stays on crates.io for good. The Python package (PyPI) and the files of
 # the program `brokapi` (GitHub release, started by the tag `v<version>`, see .github/workflows/release.yml) are separate steps.
@@ -91,6 +92,10 @@ case "$cmd" in
       read -r -p "Publish $(version) of all crates to crates.io? Type the version to confirm: " answer
       [ "$answer" = "$(version)" ] || { echo "not confirmed" >&2; exit 1; }
     fi
+    # The dry run first, always: it builds every package from its own files, and a package that does not build (a file
+    # outside the crate, a dependency without a version) stops here, before anything is uploaded. 28.10.2026 alpha.9
+    # went to `publish` without it and stopped on brokapi-mocks only at the verification of the real run.
+    cargo publish --workspace --locked --dry-run
     cargo publish --workspace --locked
     echo "published $(version)"
     ;;
