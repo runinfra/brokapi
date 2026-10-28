@@ -145,7 +145,7 @@ class Bot:
             self.journal.set(cid, "stop", "unknown", qty, stop_price)  # it may be there: the next start looks
             return
         self.journal.set(cid, "stop", "working", qty, stop_price)
-        print(f"stop {qty} {self.ticker} at {stop_price}")
+        print(f"stop {qty} {self.ticker} at {stop_price.normalize():f}")
         self.protected.set()
 
     async def on_event(self, envelope: brokapi.Envelope) -> None:
