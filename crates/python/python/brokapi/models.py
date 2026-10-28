@@ -437,7 +437,8 @@ class Candle:
 
     No field says whether the bar is closed. A subscription sends the forming bar again and again (the same
     ``open_ts``): it is closed when a bar with a later ``open_ts`` arrives. In ``candles()`` the last bar is still
-    forming when its ``close_ts`` is after now. The page "События" of the book has a recipe for both.
+    forming when its ``close_ts`` is after now. BCS gives one time per bar, its ``close_ts`` equals ``open_ts``: there
+    compare ``open_ts`` plus the timeframe with now. The page "События" of the book has a recipe for both.
     """
 
     instrument: InstrumentId

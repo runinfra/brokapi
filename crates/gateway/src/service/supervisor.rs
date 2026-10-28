@@ -355,7 +355,12 @@ impl Inner {
             name: spec.name.clone(),
             spec: Mutex::new(spec),
             status: Mutex::new(Status {
-                state: GatewayState::Stopped,
+                // A slot made to start is starting from the first moment: an answer read right after (`add`) tells so.
+                state: if start {
+                    GatewayState::Starting
+                } else {
+                    GatewayState::Stopped
+                },
                 pid: None,
                 started: None,
                 restarts: 0,

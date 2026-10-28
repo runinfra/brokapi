@@ -29,12 +29,12 @@ cargo add --git https://github.com/runinfra/brokapi brokapi --features tbank
 
 ```toml
 [dependencies]
-brokapi = { git = "https://github.com/runinfra/brokapi", version = "{{brokapi_version}}", features = ["tbank"] }   # после беты без git
+brokapi = { version = "{{brokapi_version}}", features = ["tbank"] }
 tokio   = { version = "1", features = ["full"] }
 dotenvy = "0.15"
 ```
 
-Из клона репозитория подключают по пути: `brokapi = { path = "../brokapi", features = ["tbank"] }`. В коде все лежит под
+Из репозитория (`cargo add --git` выше) в строке будет еще `git = "https://github.com/runinfra/brokapi"`. Из клона подключают по пути: `brokapi = { path = "../brokapi", features = ["tbank"] }`. В коде все лежит под
 `brokapi::`: общее в `brokapi::core` и `brokapi::runtime`, брокеры в `brokapi::bcs`, `brokapi::tbank`, `brokapi::finam`, `brokapi::alor`, `brokapi::bybit`, их
 клиенты нижнего слоя в `brokapi::bcs::protocol` и так далее. `cargo build` должен собрать проект без ошибок. Не собрал:
 таблица «Если что-то пошло не так» на странице [Установка](../install.md#если-что-то-пошло-не-так).
@@ -53,7 +53,7 @@ BROKAPI_LIVE=1 cargo run --example quickstart_bcs  # настоящий БКС: 
 
 Пример читает портфель, стакан и свечи, ставит заявку далеко от рынка и снимает ее: ровно то, что делают программы ниже. **Цена в имитации стоит на
 месте**, заявка сама не исполнится, ее исполняет тест (`server.fill`). Имитации всех пяти брокеров, рычаги и ограничения описаны на странице
-[Тесты против имитаций, Rust](mocks.md). Крейт `brokapi-mocks` в crates.io не публикуется, поэтому в своем проекте его подключают по пути к клону.
+[Тесты против имитаций, Rust](mocks.md). Для своих тестов имитации ставятся крейтом `brokapi-mocks` (с версии 0.1.0-alpha.9 на crates.io), как подключить - там же.
 Токены и счет для следующих шагов выдает человек, чей это счет: [правило 0](../agent-contract.md#правило-0-токен-и-первая-боевая-заявка-только-от-человека).
 
 ## Шаг 2. Переменные `.env`

@@ -95,7 +95,7 @@ pub enum ErrorClass {
 
 /// What can go wrong in a connector call.
 ///
-/// The texts printed by `Display` are the ones on the errors page of the book (`docs/src/errors.md`),
+/// The texts printed by `Display` are the ones on the errors page of the book (<https://brokapi.ru/docs/errors.html>),
 /// with what they mean and what to do. A test keeps the two in step.
 ///
 /// Each variant says what happened and what the caller does next. [`Error::class`] groups them.

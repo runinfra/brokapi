@@ -113,6 +113,10 @@ brokapi-alor-protocol = { workspace = true, optional = true }
 brokapi-bybit = { workspace = true, optional = true }
 brokapi-bybit-protocol = { workspace = true, optional = true }
 
+# docs.rs builds with every broker, so the modules brokapi::bcs, brokapi::tbank ... are in the documentation.
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = []
 # One flag per broker, like the features of tokio: `brokapi = { version = "...", features = ["bcs"] }`.

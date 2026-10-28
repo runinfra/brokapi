@@ -402,7 +402,8 @@ class Client:
 
     async def subscribe_trades(self, instrument: InstrumentId, *, backpressure: Backpressure) -> int:
         """Deals of the tape. ``backpressure`` has no default: every deal is an event, so ``conflate()`` would lose
-        deals. Choose ``drop_newest(cap)`` if losing some is acceptable, ``lossless(cap)`` if not."""
+        deals. Choose ``drop_newest(cap)`` if losing some is acceptable, ``lossless(cap)`` if not. ``cap`` is how many
+        deals may wait for the reader: 1000 is a fair start for a liquid share, more if the bot reads slowly."""
         return await self._call("subscribe_trades", instrument=instrument, opts=_opts(None, backpressure))
 
     async def subscribe_quotes(

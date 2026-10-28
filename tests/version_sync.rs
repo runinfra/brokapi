@@ -99,7 +99,11 @@ fn the_imitations_take_the_scenarios_of_the_same_version() {
         .lines()
         .find(|l| l.starts_with("brokapi-conformance"))
         .expect("brokapi-mocks depends on brokapi-conformance");
-    assert_eq!(quoted_version(line), Some(workspace_version().as_str()), "{line}");
+    assert_eq!(
+        quoted_version(line),
+        Some(workspace_version().as_str()),
+        "{line}"
+    );
 }
 
 #[test]

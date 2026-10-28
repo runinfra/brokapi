@@ -1,4 +1,4 @@
-//! One interface to the APIs of Russian brokers: BCS, T-Bank, Finam and ALOR.
+//! One interface to the APIs of Russian brokers and crypto exchanges: BCS, T-Bank, Finam, ALOR and Bybit.
 //!
 //! This is the crate you depend on. It re-exports the library and switches brokers on with
 //! features, the way `tokio` does:

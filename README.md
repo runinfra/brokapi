@@ -13,7 +13,7 @@
 Rust: один крейт, брокеры включаются флагами, как у `tokio`:
 
 ```bash
-cargo add brokapi --features bcs   # или tbank, finam, alor, можно несколько
+cargo add brokapi --features bcs   # или tbank, finam, alor, bybit, можно несколько
 ```
 
 Python 3.10 или новее (готовые пакеты для Linux x86_64 и aarch64, macOS и Windows):
@@ -38,7 +38,7 @@ pip install brokapi
 | `brokapi-bcs-protocol`, `brokapi-tbank-protocol`, `brokapi-finam-protocol`, `brokapi-alor-protocol`, `brokapi-bybit-protocol` | клиенты протоколов |
 | `brokapi-client` | один счет у любого из пяти брокеров за одним типом: события, лимиты, вызовы по имени (на нем стоит Python) |
 | `brokapi-gateway` | гейтвей: один процесс держит подключение к брокеру и обслуживает много ботов по gRPC (контракт - `crates/gateway/proto/`), клиент для ботов на Rust и Python (`brokapi.connect_gateway`) и программа `brokapi` (служба и команды, [Gateway](https://brokapi.ru/docs/gateway/index.html)) |
-| `brokapi-mocks`, `brokapi-conformance` | имитации и общие сценарии для тестов, не публикуются |
+| `brokapi-mocks`, `brokapi-conformance` | имитации брокеров для ваших тестов и общие сценарии, которые проходит каждый коннектор. Интерфейс может меняться в любом выпуске |
 
 ## Участие
 

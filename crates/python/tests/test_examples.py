@@ -268,18 +268,23 @@ async def test_history_is_downloaded_and_goes_on_where_the_file_ends(tmp_path: P
         written = await history.download(client, "SBER", brokapi.Timeframe.H1, start, end, tmp_path)
         assert written == 2400
         lines = (tmp_path / "SBER.csv").read_text().splitlines()
-        assert len(lines) == 2400
+        assert lines[0] == "ts,open,high,low,close,volume"  # a header for pandas and for a person
+        assert len(lines) == 2401
         # A second run has nothing to do.
         assert await history.download(client, "SBER", brokapi.Timeframe.H1, start, end, tmp_path) == 0
         # A crash cut the file in half and left a broken line: the run goes on from the last complete line.
-        (tmp_path / "SBER.csv").write_text("\n".join(lines[:1000]) + "\n2026-02-1")
+        (tmp_path / "SBER.csv").write_text("\n".join(lines[:1001]) + "\n2026-02-1")
         again = await history.download(client, "SBER", brokapi.Timeframe.H1, start, end, tmp_path)
         assert again == 1400
         text = (tmp_path / "SBER.csv").read_text().splitlines()
-        stamps = [datetime.fromisoformat(line.split(",")[0]) for line in text if line.count(",") == 5]
+        stamps = [datetime.fromisoformat(line.split(",")[0]) for line in text[1:] if line.count(",") == 5]
         assert len(stamps) == 2400
         assert stamps == sorted(set(stamps))
         assert stamps[1] - stamps[0] == timedelta(hours=1)
+        assert text.count("ts,open,high,low,close,volume") == 1  # one header, not one per run
+        bars = history.read_bars(tmp_path / "SBER.csv")
+        assert [bar["ts"] for bar in bars] == stamps
+        assert all(isinstance(bar["close"], Decimal) for bar in bars)
 
 
 

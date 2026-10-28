@@ -1044,6 +1044,8 @@ async fn add_remove_and_reload_change_the_gateways_without_stopping_the_service(
     );
     let out = env.json(&["add", "tb"]).await;
     assert_eq!(out["name"], "tb");
+    // The answer tells the gateway that is being started, not the state it had a moment before it was.
+    assert_ne!(out["state"], "stopped", "{out}");
     env.wait_all_running(&["tb"]).await;
     assert_eq!(env.run(&["add", "tb"]).await.code, 1, "it is there already");
     assert_eq!(env.run(&["add", "nope"]).await.code, 4);

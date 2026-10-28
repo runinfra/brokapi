@@ -26,6 +26,7 @@
   - [Финам](brokers/finam.md)
   - [АЛОР](brokers/alor.md)
   - [Bybit](brokers/bybit.md)
+  - [Свой брокер](brokers/own.md)
 
 # Rust
 
@@ -63,6 +64,7 @@
   - [Запуск и обслуживание](gateway/operations.md)
   - [События и сверка после перезапуска](gateway/events.md)
   - [Чем гейтвей отличается от прямого подключения](gateway/differences.md)
+  - [Платформа на много клиентов](gateway/many-clients.md)
   - [Конфиг brokapi.toml](gateway/config.md)
   - [Команды brokapi](gateway/commands.md)
 
@@ -80,3 +82,4 @@
 # Версии
 
 - [Изменения](changelog.md)
+- [Совместимость и версии](versions.md)

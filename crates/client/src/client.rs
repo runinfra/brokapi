@@ -69,15 +69,35 @@ impl FromStr for Broker {
     type Err = Error;
 
     fn from_str(name: &str) -> Result<Self, Error> {
-        match name {
-            "bcs" => Ok(Broker::Bcs),
-            "tbank" => Ok(Broker::Tbank),
-            "finam" => Ok(Broker::Finam),
-            "alor" => Ok(Broker::Alor),
-            "bybit" => Ok(Broker::Bybit),
-            other => Err(Error::Config(ConfigError::Message(format!(
-                "unknown broker {other:?}: use \"bcs\", \"tbank\", \"finam\" or \"alor\""
-            )))),
+        if let Some(broker) = Broker::ALL.into_iter().find(|b| b.as_str() == name) {
+            return Ok(broker);
+        }
+        // The list comes from ALL: a new broker cannot be left out of the message.
+        let names: Vec<String> = Broker::ALL
+            .iter()
+            .map(|b| format!("{:?}", b.as_str()))
+            .collect();
+        let (last, rest) = names.split_last().expect("there are brokers");
+        Err(Error::Config(ConfigError::Message(format!(
+            "unknown broker {name:?}: use {} or {last}",
+            rest.join(", ")
+        ))))
+    }
+}
+
+#[cfg(test)]
+mod broker_name_tests {
+    use super::*;
+
+    #[test]
+    fn an_unknown_broker_is_told_every_known_one() {
+        let e = "mexc".parse::<Broker>().unwrap_err().to_string();
+        assert!(
+            e.contains(r#"unknown broker "mexc": use "bcs", "tbank", "finam", "alor" or "bybit""#),
+            "{e}"
+        );
+        for broker in Broker::ALL {
+            assert_eq!(broker.as_str().parse::<Broker>().unwrap(), broker);
         }
     }
 }
