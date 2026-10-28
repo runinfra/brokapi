@@ -1,0 +1,85 @@
+"""The bot against the imitation of the broker: no token, no network, no money. Run: pytest
+
+What a change of the strategy must keep: one buy for a signal, the stop after the fill, no second buy and no second
+stop after a restart, a stop put again at start when the position has none, and nothing sent in the read-only mode.
+"""
+
+import asyncio
+import uuid
+from decimal import Decimal
+from pathlib import Path
+
+import brokapi
+from brokapi import testing
+
+import bot
+
+import pytest
+
+PRICE = Decimal("__PRICE__")
+
+
+@pytest.fixture(autouse=True)
+def away_from_the_real_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """brokapi reads .env of the current directory and the BROKAPI_* limits of the environment: the read-only mode of a
+    real run would stop the imitation too. The tests run in a folder of their own, with no limits but their own."""
+    monkeypatch.chdir(tmp_path)
+    for name in ("BROKAPI_READ_ONLY", "BROKAPI_MAX_ORDER_QTY", "BROKAPI_MAX_ORDER_VALUE"):
+        monkeypatch.delenv(name, raising=False)
+
+
+async def until(condition, seconds: float = 10) -> None:
+    async def poll() -> None:
+        while not condition():
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(poll(), seconds)
+
+
+async def life(mock: testing.MockBroker, journal: Path, name: str, **settings) -> tuple[bot.Bot, asyncio.Task]:
+    b = bot.Bot(await mock.connect(name=name, **settings), bot.Journal(journal))
+    return b, asyncio.create_task(bot.run(b))
+
+
+async def test_a_signal_buys_once_the_fill_gets_a_stop_and_restarts_keep_it(tmp_path: Path) -> None:
+    async with await testing.__MOCK__() as mock:
+        mock.set_price(bot.TICKER, str(PRICE))
+        journal = tmp_path / "journal.jsonl"
+
+        b, task = await life(mock, journal, "life-1")
+        await until(lambda: bool(b.window))
+        mock.set_price(bot.TICKER, str(PRICE * Decimal("1.02")))
+        await until(lambda: (b.journal.buy() or {}).get("state") == "working")
+        buy = b.journal.buy()
+        mock.fill(uuid.UUID(buy["cid"]), qty=b.params.min_qty, price=buy["price"])
+        await asyncio.wait_for(b.protected.wait(), 10)
+        (stop,) = [s for s in await b.client.active_stop_orders() if s.state.kind is brokapi.StopOrderStateKind.ACTIVE]
+        assert stop.stop_price < Decimal(buy["price"])
+        task.cancel()
+
+        # A restart: the stop is there, the price rises again - no second buy, no second stop.
+        b, task = await life(mock, journal, "life-2")
+        await asyncio.wait_for(b.protected.wait(), 10)
+        mock.set_price(bot.TICKER, str(PRICE * Decimal("1.05")))
+        await until(lambda: len(b.window) > 0 and b.window[-1][1] > PRICE * Decimal("1.04"))
+        assert len([s for s in await b.client.active_stop_orders() if s.state.kind is brokapi.StopOrderStateKind.ACTIVE]) == 1
+        assert await b.client.active_orders() == []
+        task.cancel()
+
+        # A person took the stop off: the next start puts it again.
+        await b.client.cancel_stop(brokapi.StopOrderRef.broker(stop.broker_id))
+        b, task = await life(mock, journal, "life-3")
+        await asyncio.wait_for(b.protected.wait(), 10)
+        task.cancel()
+
+
+async def test_in_the_read_only_mode_the_signal_sends_nothing(tmp_path: Path, capsys) -> None:
+    async with await testing.__MOCK__() as mock:
+        mock.set_price(bot.TICKER, str(PRICE))
+        b, task = await life(mock, tmp_path / "journal.jsonl", "watch", read_only=True)
+        await until(lambda: bool(b.window))
+        mock.set_price(bot.TICKER, str(PRICE * Decimal("1.02")))
+        await until(lambda: "would buy" in capsys.readouterr().out)
+        assert await b.client.active_orders() == []
+        assert b.journal.buy() is None
+        task.cancel()

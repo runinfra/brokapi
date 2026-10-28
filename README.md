@@ -7,6 +7,8 @@
 
 Документация: <https://brokapi.ru/docs/>. Справочник API собирается из кода (rustdoc) и лежит рядом с книгой.
 Для ИИ-агентов: [llms.txt](https://brokapi.ru/docs/llms.txt) и [llms-full.txt](https://brokapi.ru/docs/llms-full.txt), страницы книги в markdown рядом с HTML.
+**Человек попросил вас сделать бота?** Начните с [agent-setup.md](https://brokapi.ru/docs/agent-setup.md): порядок разговора с ним, три остановки и заготовка
+проекта `python -m brokapi new`.
 
 ## Подключение
 

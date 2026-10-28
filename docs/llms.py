@@ -39,7 +39,8 @@ SUMMARY_LINE = (
     "путь - Gateway, программа brokapi: служба держит связь со счетами за все боты (gRPC для любого языка, один счетчик лимитов), "
     "команды ею управляют и читают счет (вывод --json). Стадия: открытая альфа. Bybit проверен вживую, БКС, Т-Банк, Финам и АЛОР проверены только на имитациях, на настоящих счетах не запускались: для боевого счета сначала прочитайте before-live.md и agents/unverified.md. Правило 0: боевой токен выдает человек, первую боевую заявку ставят только с его слова (agent-contract.md). Документация: %s/" % BASE_URL
 )
-INTRO = """Как пользоваться этим набором. Книга написана по задачам и состоит из общей части (как устроено, брокеры, \
+INTRO = """Если человек попросил сделать ему торгового бота, начните с agent-setup.md: там порядок разговора с ним, три остановки и \
+заготовка проекта одной командой. Как пользоваться этим набором. Книга написана по задачам и состоит из общей части (как устроено, брокеры, \
 ошибки, события, контракт для агентов) и разделов продуктов: Rust, Python, Gateway (программа brokapi: служба и команды). Писать код можно на Rust или на \
 Python, оба работают сейчас (альфа); Gateway - программа brokapi, раздел gateway/. Если пользователь пишет на Python, берите отдельный индекс для Python: \
 %s/python/llms.txt, в нем только то, что нужно для Python, и справочник пакета одним файлом. Если боты на нескольких языках или несколько ботов на одном счете, берите Gateway: он запускается \
@@ -63,6 +64,7 @@ DESCRIPTIONS = {
     "brokers/own.md": "Свой брокер: сейчас через pull request, какие трейты реализует коннектор, проверка сценариями brokapi-conformance, что приложить",
     "gateway/many-clients.md": "Платформа на много клиентов: гейтвей на клиента, ключ и лимиты, добавить и убрать клиента, память и процессы, несколько счетов на одном токене, чего нет",
     "versions.md": "Совместимость и версии: один номер на все части, что обещано до беты (gRPC gateway.v1 только дополняется), как зафиксировать версию и обновляться",
+    "agent-setup.md": "Бот через ИИ-агента: промпт для человека, порядок работы агента с тремя остановками, заготовка проекта python -m brokapi new, что агент не делает без слова человека",
     "README.md": "Что такое brokapi, выбор пути (Rust, Python, Gateway) и статус каждого, три главных правила",
     "install.md": "Установка: cargo add brokapi и pip install brokapi, самая свежая версия из репозитория, проверка и частые ошибки",
     "before-live.md": "Перед боевым счетом: правило 0 (токен и первая боевая заявка только от человека), с чего начать на настоящем счете, песочницы, первая заявка",
@@ -225,7 +227,7 @@ def read_redirects(docs):
 
 # pages of the common part that hold for Python as they do for Rust (the code on them is in tabs or does not depend on the language)
 PYTHON_COMMON = [
-    "install.md", "agent-contract.md", "emergency-stop.md", "architecture.md", "streams.md", "orders.md", "reconcile.md", "limits.md", "numbers.md",
+    "agent-setup.md", "install.md", "agent-contract.md", "emergency-stop.md", "architecture.md", "streams.md", "orders.md", "reconcile.md", "limits.md", "numbers.md",
     "errors.md", "events.md", "brokers/README.md", "brokers/bcs.md", "brokers/tbank.md", "brokers/finam.md", "brokers/alor.md", "brokers/bybit.md",
     "coverage.md", "before-live.md", "changelog.md",
 ]
@@ -246,6 +248,7 @@ def python_index(sections, book):
         "(Unknown, Rejected, RateLimited, NotReconciled, Degraded). Стадия: открытая альфа. Bybit проверен вживую, БКС, Т-Банк, Финам и АЛОР только на имитациях: для боевого счета сначала прочитайте before-live.md и agents/unverified.md. "
         "Ставится с PyPI: pip install brokapi. Самая свежая версия - из репозитория (pip install \"git+https://github.com/runinfra/brokapi#subdirectory=crates/python\", нужен Rust). Документация: %s/" % BASE_URL,
         "",
+        "Человек попросил бота: начните с agent-setup.md (порядок разговора, три остановки, python -m brokapi new). "
         "Как писать код. 1) Прочитайте \"Контракт для агентов\": обязательные правила одни для любого языка (торговля только после "
         "reconcile, cid придумывает бот и пишет в журнал до place, Unknown не повторять, один счетчик лимитов на область брокера: "
         "limiter=, цены только Decimal). 2) Возьмите ближайшую инструкцию из раздела Python и копируйте код: каждый пример - тест "

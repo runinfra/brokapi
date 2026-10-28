@@ -21,6 +21,9 @@ async def main():
 asyncio.run(main())
 ```
 
+**An AI agent asked to make a trading bot** for a person: start with <https://brokapi.ru/docs/agent-setup.md> (in Russian): the order of the
+talk with the person, three stops where they decide, and a ready project, `python -m brokapi new my-bot --broker tbank`.
+
 Stop orders, `client.raw()` (any method of a broker's API by name) and the event log with replay (`brokapi.record`) work as in
 the Rust library.
 

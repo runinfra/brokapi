@@ -1,0 +1,235 @@
+"""A trading bot on brokapi: a signal on the price, one buy, a protective stop after the fill, and a restart that
+neither buys twice nor leaves the position without a stop.
+
+Made by `python -m brokapi new`. Change the settings and `wants_to_buy` below, leave the rest: it is what keeps the
+money safe (the journal, the outcome of every order, the stop at every start).
+
+    python bot.py --mock    # the imitation of the broker: no token, no network, no money
+    python bot.py           # the broker, with the token from .env (read README.md first)
+
+The book: https://brokapi.ru/docs/ (start: python/quickstart.html, before a real account: before-live.html).
+"""
+
+import asyncio
+import json
+import os
+import sys
+import time
+import uuid
+from collections import deque
+from decimal import Decimal
+from pathlib import Path
+from typing import Optional
+
+import brokapi
+
+# ---- settings ----------------------------------------------------------------------------------------------------
+BROKER = "__BROKER__"
+TICKER = "__TICKER__"
+CONNECT: dict = {}  # more settings of brokapi.connect; the token, the account and the limits come from .env
+WINDOW = 5 * 60.0  # seconds of prices the strategy looks at
+STOP_BELOW = Decimal("0.005")  # the stop: 0.5% below the price of the buy
+JOURNAL = Path(__file__).with_name("journal.jsonl")
+
+
+def wants_to_buy(prices: list[Decimal]) -> bool:
+    """The strategy: the prices of the last WINDOW seconds, oldest first. Here: the price rose 1% from the lowest."""
+    return prices[-1] >= min(prices) * Decimal("1.01")
+# ------------------------------------------------------------------------------------------------------------------
+
+
+class Journal:
+    """The memory of the bot: one JSON line per change, flushed BEFORE the call that needs it. The last line of a cid
+    wins. It keeps the buy (its state, how much it bought and at what price) and the stop that protects it."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.rows: dict[str, dict[str, str]] = {}
+        if path.exists():
+            for line in path.read_text().splitlines():
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue  # a line cut by a crash carries no complete change
+                self.rows[row["cid"]] = row
+
+    def set(self, cid: uuid.UUID, kind: str, state: str, filled: Decimal = Decimal(0), price: Decimal = Decimal(0)) -> None:
+        """`kind`: buy or stop. `state`: sending, working, unknown, done or dropped."""
+        row = {"cid": str(cid), "kind": kind, "state": state, "filled": str(filled), "price": str(price)}
+        self.rows[row["cid"]] = row
+        with self.path.open("a") as file:
+            file.write(json.dumps(row) + "\n")
+            file.flush()
+            os.fsync(file.fileno())
+
+    def buy(self) -> Optional[dict[str, str]]:
+        """The buy of the bot, if it made one: this bot buys once and then only protects."""
+        return next((row for row in self.rows.values() if row["kind"] == "buy" and row["state"] != "dropped"), None)
+
+
+class Bot:
+    def __init__(self, client: brokapi.Client, journal: Journal, ticker: str = TICKER) -> None:
+        self.client = client
+        self.journal = journal
+        self.ticker = ticker
+        self.window: deque[tuple[float, Decimal]] = deque()
+        self.need_reconcile = False
+        self.protected = asyncio.Event()  # the position has its stop: a hook for the tests
+
+    async def start(self) -> None:
+        """At every start: subscriptions, reconcile, the stop, then the prices. Until it returns, the bot does not trade."""
+        self.instrument = await self.client.instrument(self.ticker)
+        self.params = await self.client.trading_params(self.instrument)
+        await self.client.subscribe_order_state()
+        await self.reconcile()
+        await self.protect()
+        await self.client.subscribe_quotes(self.instrument)
+
+    async def reconcile(self) -> None:
+        buy = self.journal.buy()
+        alive = [uuid.UUID(buy["cid"])] if buy and buy["state"] != "done" else []
+        report = await self.client.reconcile(alive)
+        for snapshot in report.confirmed:
+            self.on_order(snapshot)
+        for cid in report.closed_offline:
+            await self.resolve(cid)  # it ended while the bot was away: only order_state says how much it bought
+        self.need_reconcile = False
+
+    async def resolve(self, cid: uuid.UUID) -> None:
+        """The way out of `Unknown` and of `closed_offline`: `order_state` by the same cid, never a second order."""
+        try:
+            self.on_order(await self.client.order_state(cid))
+        except brokapi.Rejected as error:
+            if error.code != "not_found":
+                raise
+            self.journal.set(cid, "buy", "dropped")  # never reached the broker: the next signal may buy
+
+    def on_order(self, snapshot: brokapi.OrderSnapshot) -> None:
+        row = self.journal.rows.get(str(snapshot.cid))
+        if row is None or row["kind"] != "buy" or row["state"] == "done":
+            return  # not ours, or counted already
+        price = Decimal(row["price"])
+        if not snapshot.state.is_final:
+            self.journal.set(snapshot.cid, "buy", "working", price=price)
+        elif snapshot.filled == 0:
+            self.journal.set(snapshot.cid, "buy", "dropped")  # cancelled with nothing bought: the next signal may buy
+        else:
+            self.journal.set(snapshot.cid, "buy", "done", snapshot.filled, price)
+
+    async def protect(self) -> None:
+        """The position of the bot has a stop, or the bot puts one: after the fill and at every start."""
+        buy = self.journal.buy()
+        if buy is None or buy["state"] != "done":
+            return
+        qty = Decimal(buy["filled"])
+        stops = [s for s in await self.client.active_stop_orders() if s.state.kind is brokapi.StopOrderStateKind.ACTIVE]
+        if sum(s.qty for s in stops if s.instrument.key == self.instrument.key and s.side is brokapi.Side.SELL) >= qty:
+            self.protected.set()  # the stop of an earlier run is there: not a second one
+            return
+        held = sum(p.qty for p in await self.client.positions() if p.instrument.key == self.instrument.key)
+        if held < qty:
+            return  # the stop has sold, or a person did: nothing to protect, and the bot does not buy again
+        stop_price = brokapi.round_to_step(Decimal(buy["price"]) * (1 - STOP_BELOW), self.params.price_step, brokapi.RoundMode.DOWN)
+        cid = brokapi.new_cid()
+        self.journal.set(cid, "stop", "sending", qty, stop_price)
+        try:
+            await self.client.place_stop(
+                cid=cid, instrument=self.instrument, side=brokapi.Side.SELL, kind=brokapi.StopOrderKind.STOP_LOSS,
+                qty=qty, stop_price=stop_price,
+            )
+        except brokapi.Rejected as error:
+            self.journal.set(cid, "stop", "done", price=stop_price)
+            print(f"NO STOP: refused ({error.code}). A person decides what to do with the position")
+            return
+        except (brokapi.Unknown, brokapi.Transport):
+            self.journal.set(cid, "stop", "unknown", qty, stop_price)  # it may be there: the next start looks
+            return
+        self.journal.set(cid, "stop", "working", qty, stop_price)
+        print(f"stop {qty} {self.ticker} at {stop_price}")
+        self.protected.set()
+
+    async def on_event(self, envelope: brokapi.Envelope) -> None:
+        event = envelope.payload
+        if isinstance(event, brokapi.Quote) and event.ask is not None:
+            await self.on_price(event.ask.price)
+        elif isinstance(event, brokapi.OrderSnapshot):
+            self.on_order(event)
+            await self.protect()
+        elif isinstance(event, (brokapi.Reconnected, brokapi.Overflow, brokapi.UnknownEvent)):
+            self.need_reconcile = True  # the orders may have a hole: reconcile before the next command
+
+    async def on_price(self, ask: Decimal) -> None:
+        now = time.monotonic()
+        self.window.append((now, ask))
+        while self.window[0][0] < now - WINDOW:
+            self.window.popleft()
+        if self.need_reconcile:
+            await self.reconcile()
+            await self.protect()
+        if self.journal.buy() is not None or not wants_to_buy([p for _, p in self.window]):
+            return
+        # Exact arithmetic, on the price step of the instrument: a buy is rounded UP to the step, to stay at the ask.
+        price = brokapi.round_to_step(ask, self.params.price_step, brokapi.RoundMode.UP)
+        cid = brokapi.new_cid()
+        self.journal.set(cid, "buy", "sending", price=price)  # BEFORE the call
+        try:
+            await self.client.place(cid=cid, instrument=self.instrument, side=brokapi.Side.BUY, qty=self.params.min_qty, price=price)
+        except brokapi.Rejected as error:
+            self.journal.set(cid, "buy", "dropped")
+            if error.code == "read_only":
+                print(f"would buy {self.params.min_qty} {self.ticker} at {price} (read only: nothing was sent)")
+                self.window.clear()  # once per signal, not on every price after it
+            else:
+                print(f"not bought: {error.code}")
+        except (brokapi.NotReconciled, brokapi.Degraded):
+            self.journal.set(cid, "buy", "dropped")
+            self.need_reconcile = True
+        except (brokapi.Unknown, brokapi.Transport):
+            self.journal.set(cid, "buy", "unknown", price=price)  # nobody knows: ask the broker, never send it again
+            await self.resolve(cid)
+        else:
+            self.journal.set(cid, "buy", "working", price=price)
+            print(f"buy {self.params.min_qty} {self.ticker} at {price}, waiting for the fill")
+
+
+async def run(bot: Bot) -> None:
+    """Starts the bot and reads the events. Stopping the bot leaves the stop at the broker: the position stays protected."""
+    await bot.start()
+    async for envelope in bot.client.events:
+        await bot.on_event(envelope)
+
+
+async def on_the_imitation() -> None:
+    """The whole path on the imitation of the broker: the price rises, the bot buys, the order fills, the stop is put."""
+    from brokapi import testing
+
+    journal = Path(__file__).with_name("journal-mock.jsonl")
+    journal.unlink(missing_ok=True)
+    async with await testing.__MOCK__() as mock:
+        mock.set_price(TICKER, "__PRICE__")
+        bot = Bot(await mock.connect(), Journal(journal))
+        task = asyncio.create_task(run(bot))
+        while not bot.window:
+            await asyncio.sleep(0.05)
+        mock.set_price(TICKER, str(Decimal("__PRICE__") * Decimal("1.02")))
+        while (bot.journal.buy() or {}).get("state") != "working":
+            await asyncio.sleep(0.05)
+        buy = bot.journal.buy()
+        mock.fill(uuid.UUID(buy["cid"]), qty=bot.params.min_qty, price=buy["price"])
+        await asyncio.wait_for(bot.protected.wait(), 10)
+        task.cancel()
+    journal.unlink(missing_ok=True)
+    print("done: the imitation showed the signal, the buy, the fill and the stop")
+
+
+async def main() -> None:
+    # brokapi reads .env of the current directory: run the bot from its folder.
+    client = await brokapi.connect(BROKER, **CONNECT)
+    try:
+        await run(Bot(client, Journal(JOURNAL)))
+    finally:
+        await client.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(on_the_imitation() if "--mock" in sys.argv else main())
