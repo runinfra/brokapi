@@ -27,6 +27,7 @@ CRATES = [
     ("brokapi_tbank_protocol", {"TbankConfig"}),
     ("brokapi_alor_protocol", {"AlorConfig"}),
     ("brokapi_bybit_protocol", {"BybitConfig"}),
+    ("brokapi_mocks", {"FaultyWrite", "WriteFault"}),
 ]
 KINDS = ("struct", "enum", "trait", "fn", "type", "constant", "macro")
 SKIP_SECTIONS = {

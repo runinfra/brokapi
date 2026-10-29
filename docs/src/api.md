@@ -6,7 +6,7 @@
 
 Справочник лежит рядом с книгой, в папке `api/`. Ссылки ниже ведут в него, а вверху его страниц есть путь назад в книгу.
 
-Тот же справочник текстом, одним файлом, для чтения агентом: [api-reference.md](api-reference.md) (объявления типов, поля, варианты, методы трейтов с разделами Errors и Contract, без примеров кода).
+Основные типы справочника текстом, одним файлом, для чтения агентом: [api-reference.md](api-reference.md) (объявления типов, поля, варианты, методы трейтов с разделами Errors и Contract, без примеров кода).
 
 Каждый пример в справочнике - тест, он запускается против имитации брокера (`cargo test --doc`). Сеть и деньги в них не
 задействованы.
@@ -30,5 +30,6 @@
 | `brokapi-alor-protocol` | нижний слой АЛОРа: HTTP и WebSocket, все методы описания API | [brokapi_alor_protocol](api/brokapi_alor_protocol/index.html) |
 | `brokapi-bybit-protocol` | нижний слой Bybit: HTTP и WebSocket API V5, подпись запросов | [brokapi_bybit_protocol](api/brokapi_bybit_protocol/index.html) |
 | `brokapi-conformance` | общие сценарии, которые проходит каждый коннектор | [brokapi_conformance](api/brokapi_conformance/index.html) |
+| `brokapi-mocks` | имитации брокеров и рычаги сбоев для ваших тестов | [brokapi_mocks](api/brokapi_mocks/index.html) |
 
-Имитации брокеров (`brokapi-mocks`) нужны только тестам и примерам. Они не часть библиотеки, в справочнике их нет.
+Интерфейс `brokapi-mocks` может меняться в любом выпуске. Как использовать имитации - в [инструкции для Rust](rust/mocks.md).
