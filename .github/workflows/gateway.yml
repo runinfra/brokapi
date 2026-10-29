@@ -1,4 +1,4 @@
-# The gateway and its program `brokapi` (crates/gateway) on Linux, macOS and Windows: build and tests.
+# The gateway, its program `brokapi` and WebSocket fault recovery on Linux, macOS and Windows.
 # Started by a push to main and by hand (Actions -> gateway -> Run workflow).
 #
 # The tests start the program as a process (the service, the gateway processes, every command) against the imitations of
@@ -46,6 +46,8 @@ jobs:
       # Every test binary runs even when one fails, so that one run shows all that is broken on a system.
       - name: Test the gateway, the service and the commands
         run: cargo test --locked -p brokapi-gateway --no-fail-fast
+      - name: Test WebSocket faults and subscription recovery
+        run: cargo test --locked -p brokapi-bcs-protocol --test ws_wire -p brokapi-alor-protocol --test ws_faults --no-fail-fast
 
   # The .proto files with the tools of other languages: protoc makes the Go client of go/ the same as the one in the
   # repository, the module builds, and the Go bot of the book runs against a gateway on the imitation of BCS.

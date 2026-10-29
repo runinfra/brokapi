@@ -30,6 +30,12 @@ enum Plan {
     CloseAfterOne,
     /// Accept and keep quiet.
     Quiet,
+    /// Read a subscription, then disappear without the WebSocket closing handshake.
+    DropAfterSubscribe,
+    /// Read a subscription, then send an invalid WebSocket opcode.
+    InvalidAfterSubscribe,
+    /// Echo a received subscription inside an unknown data frame.
+    EchoSubscription,
 }
 
 struct Wire {
@@ -124,7 +130,28 @@ async fn serve_ws(
     }
     while let Some(Ok(msg)) = ws.next().await {
         match msg {
-            Message::Text(t) => received.lock().unwrap().push(t.to_string()),
+            Message::Text(t) => {
+                received.lock().unwrap().push(t.to_string());
+                match plan {
+                    Plan::DropAfterSubscribe => return,
+                    Plan::InvalidAfterSubscribe => {
+                        // FIN + reserved opcode 3, empty payload. A wire error, not a broker refusal.
+                        ws.get_mut().write_all(&[0x83, 0]).await.unwrap();
+                        return;
+                    }
+                    Plan::EchoSubscription => {
+                        let subscription: serde_json::Value = serde_json::from_str(&t).unwrap();
+                        ws.send(Message::Text(
+                            serde_json::json!({"restored": subscription})
+                                .to_string()
+                                .into(),
+                        ))
+                        .await
+                        .unwrap();
+                    }
+                    _ => {}
+                }
+            }
             Message::Pong(_) => {
                 pongs.fetch_add(1, Ordering::SeqCst);
             }
@@ -204,6 +231,53 @@ async fn a_close_by_the_server_is_a_reconnect_with_a_notice_each_time() {
         }
     }
     assert!(wire.upgrades.load(Ordering::SeqCst) >= 3);
+}
+
+async fn a_wire_fault_restores_the_subscription(fault: Plan) {
+    let wire = start(move |n| {
+        if n == 1 {
+            fault
+        } else {
+            Plan::EchoSubscription
+        }
+    })
+    .await;
+    let (session, rx, _http) = session(&wire, BcsWsChannel::MarketData, fast(), 16);
+    let keys = vec![brokapi_bcs_protocol::models::instrument::InstrumentKey::new("SBER", "TQBR")];
+    session
+        .subscribe(MarketDataSubscribe::quotes(keys))
+        .await
+        .unwrap();
+    assert!(matches!(next(&rx).await, IncomingMessage::Reconnected));
+    // The break must be announced before the restored subscription can produce data.
+    assert!(matches!(next(&rx).await, IncomingMessage::Reconnected));
+    let IncomingMessage::Unknown(restored) = next(&rx).await else {
+        panic!("the restored subscription did not produce its data frame");
+    };
+    let restored: serde_json::Value = serde_json::from_str(&restored).unwrap();
+    let received = wire.received.lock().unwrap().clone();
+    assert_eq!(
+        received.len(),
+        2,
+        "one subscribe per connection: {received:?}"
+    );
+    assert_eq!(received[0], received[1]);
+    assert_eq!(
+        restored["restored"],
+        serde_json::from_str::<serde_json::Value>(&received[0]).unwrap()
+    );
+    assert_eq!(wire.upgrades.load(Ordering::SeqCst), 2);
+    assert!(session.is_connected());
+}
+
+#[tokio::test]
+async fn an_abrupt_eof_restores_the_subscription_and_announces_the_gap() {
+    a_wire_fault_restores_the_subscription(Plan::DropAfterSubscribe).await;
+}
+
+#[tokio::test]
+async fn an_invalid_frame_restores_the_subscription_and_announces_the_gap() {
+    a_wire_fault_restores_the_subscription(Plan::InvalidAfterSubscribe).await;
 }
 
 #[tokio::test]
