@@ -157,8 +157,7 @@ impl NativeReplay {
         let file = File::open(path).map_err(|e| log_to_pyerr(&LogError::Io(e)))?;
         let reader = EnvelopeReader::new(BufReader::new(file)).map_err(|e| log_to_pyerr(&e))?;
         let (tx, rx) = mpsc::channel(buffer.max(1));
-        let task = pyo3_async_runtimes::tokio::get_runtime()
-            .spawn(async move { replay(reader, &tx, speed).await });
+        let task = crate::runtime::handle()?.spawn(async move { replay(reader, &tx, speed).await });
         Ok(Self {
             state: Arc::new(ReplayState {
                 rx: AsyncMutex::new(rx),
@@ -171,7 +170,7 @@ impl NativeReplay {
     /// after the envelopes before it.
     fn next_envelope<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let state = self.state.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        crate::runtime::future_into_py(py, async move {
             let item = state.rx.lock().await.recv().await;
             match item {
                 Some(env) => serde_json::to_string(&env)

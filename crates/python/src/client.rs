@@ -69,7 +69,7 @@ pub fn connect<'py>(
     limiter: Option<NativeLimiter>,
     event_buffer: usize,
 ) -> PyResult<Bound<'py, PyAny>> {
-    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+    crate::runtime::future_into_py(py, async move {
         let go = async {
             let kind = broker_kind(&broker)?;
             let settings = Settings::parse(&settings)?;
@@ -101,7 +101,7 @@ pub fn open_tbank_sandbox_account<'py>(
     settings: String,
     money: Option<String>,
 ) -> PyResult<Bound<'py, PyAny>> {
-    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+    crate::runtime::future_into_py(py, async move {
         let go = async {
             let cfg = Settings::parse(&settings)?.tbank()?;
             let money = match money {
@@ -131,7 +131,7 @@ pub fn connect_gateway<'py>(
     event_buffer: usize,
     own_orders_only: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
-    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+    crate::runtime::future_into_py(py, async move {
         let go = async {
             // The guard of commands is on: the refusals (`NotReconciled`, `Degraded`) are those of a broker connection.
             let options = ConnectOptions {
@@ -279,7 +279,7 @@ impl NativeClient {
             Backend::Direct(client) => Target::Direct(client.clone()),
             Backend::Gateway(gw) => Target::Gateway(gw.remote.clone()),
         };
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        crate::runtime::future_into_py(py, async move {
             let args: Value = serde_json::from_str(&args)
                 .map_err(|e| CallError::Arg(format!("arguments of {method}: {e}")))
                 .map_err(into_pyerr)?;
@@ -297,7 +297,7 @@ impl NativeClient {
         match &self.backend {
             Backend::Direct(client) => {
                 let client = client.clone();
-                pyo3_async_runtimes::tokio::future_into_py(py, async move {
+                crate::runtime::future_into_py(py, async move {
                     match client.next_event().await {
                         Some(env) => serde_json::to_string(&env).map(Some).map_err(bad_json),
                         None => Ok(None),
@@ -306,7 +306,7 @@ impl NativeClient {
             }
             Backend::Gateway(gw) => {
                 let gw = Arc::clone(gw);
-                pyo3_async_runtimes::tokio::future_into_py(py, async move {
+                crate::runtime::future_into_py(py, async move {
                     let item = gw.feed.lock().await.next().await;
                     item.map(|item| gw.text(item)).transpose().map_err(bad_json)
                 })
@@ -344,7 +344,7 @@ impl NativeClient {
         match &self.backend {
             Backend::Direct(client) => {
                 let client = client.clone();
-                pyo3_async_runtimes::tokio::future_into_py(py, async move {
+                crate::runtime::future_into_py(py, async move {
                     let mode = match deadline {
                         Some(secs) if secs > 0.0 => ShutdownMode::Graceful {
                             deadline: Duration::from_secs_f64(secs),
@@ -363,9 +363,7 @@ impl NativeClient {
             }
             Backend::Gateway(gw) => {
                 gw.remote.close();
-                pyo3_async_runtimes::tokio::future_into_py(py, async move {
-                    Ok(Value::Null.to_string())
-                })
+                crate::runtime::future_into_py(py, async move { Ok(Value::Null.to_string()) })
             }
         }
     }
@@ -415,7 +413,7 @@ impl NativePager {
     /// An error carries `resume_from_ns`: the start of the window that failed.
     fn next_page<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let pager = self.pager.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        crate::runtime::future_into_py(py, async move {
             match pager.lock().await.next_page().await {
                 Ok(None) => Ok(None),
                 Ok(Some(page)) => {

@@ -74,7 +74,7 @@ pub fn start_mock(
     synthetic_candles: bool,
     new_sandbox: bool,
 ) -> PyResult<Bound<'_, PyAny>> {
-    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+    crate::runtime::future_into_py(py, async move {
         let (kind, server, levers) = match broker.as_str() {
             "bcs" => {
                 let options = Arc::new(bcs::MockOptions::default());
@@ -344,7 +344,7 @@ impl NativeMock {
     ) -> PyResult<Bound<'py, PyAny>> {
         let settings = self.settings()?;
         let broker = self.broker;
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        crate::runtime::future_into_py(py, async move {
             let mut settings =
                 Settings::parse(&settings).map_err(|e| PyValueError::new_err(e.to_string()))?;
             if let Some(extra) = extra {
@@ -443,7 +443,7 @@ impl NativeMockGateway {
     /// (a new epoch), and the orders it knew are in its journal.
     fn restart<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = Arc::clone(&self.inner);
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        crate::runtime::future_into_py(py, async move {
             let mut guard = inner.gateway.lock().await;
             if let Some(old) = guard.take() {
                 old.kill().await;
@@ -458,7 +458,7 @@ impl NativeMockGateway {
     /// Stops the gateway. The orders at the imitation are not touched.
     fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = Arc::clone(&self.inner);
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        crate::runtime::future_into_py(py, async move {
             if let Some(gateway) = inner.gateway.lock().await.take() {
                 gateway.shutdown(ShutdownMode::Immediate).await;
             }

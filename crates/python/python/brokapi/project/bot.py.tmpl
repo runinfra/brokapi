@@ -10,10 +10,13 @@ money safe (the journal, the outcome of every order, the stop at every start).
 The book: https://brokapi.ru/docs/ (start: python/quickstart.html, before a real account: before-live.html).
 """
 
+import argparse
 import asyncio
 import json
 import os
+import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from collections import deque
@@ -209,15 +212,30 @@ async def on_the_imitation() -> None:
         mock.set_price(TICKER, "__PRICE__")
         bot = Bot(await mock.connect(), Journal(journal))
         task = asyncio.create_task(run(bot))
-        while not bot.window:
-            await asyncio.sleep(0.05)
-        mock.set_price(TICKER, str(Decimal("__PRICE__") * Decimal("1.02")))
-        while (bot.journal.buy() or {}).get("state") != "working":
-            await asyncio.sleep(0.05)
-        buy = bot.journal.buy()
-        mock.fill(uuid.UUID(buy["cid"]), qty=bot.params.min_qty, price=buy["price"])
-        await asyncio.wait_for(bot.protected.wait(), 10)
-        task.cancel()
+
+        async def until(condition) -> None:
+            async def poll() -> None:
+                while not condition():
+                    if task.done():
+                        await task  # a failed bot must report its error instead of leaving the demo waiting
+                        raise RuntimeError("the bot ended before the demonstration finished")
+                    await asyncio.sleep(0)  # let the event reader run, without a timed pause
+
+            await asyncio.wait_for(poll(), 10)
+
+        try:
+            await until(lambda: bool(bot.window))
+            mock.set_price(TICKER, str(Decimal("__PRICE__") * Decimal("1.02")))
+            await until(lambda: (bot.journal.buy() or {}).get("state") == "working")
+            buy = bot.journal.buy()
+            mock.fill(uuid.UUID(buy["cid"]), qty=bot.params.min_qty, price=buy["price"])
+            await until(bot.protected.is_set)
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     journal.unlink(missing_ok=True)
     print("done: the imitation showed the signal, the buy, the fill and the stop")
 
@@ -232,4 +250,24 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(on_the_imitation() if "--mock" in sys.argv else main())
+    parser = argparse.ArgumentParser(description="A trading bot with a signal and a protective stop. Read README.md before a real account.")
+    parser.add_argument("--mock", action="store_true", help="show the whole path on the imitation: no token, no network, no money")
+    args = parser.parse_args()
+    if args.mock:
+        # Only this child uses the imitation. It has neither the real .env nor broker credentials or BROKAPI_* limits.
+        # The parent and a normal run retain every account safeguard.
+        system = {"PATH", "SystemRoot", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "PYTHONUTF8", "PYTHONIOENCODING"}
+        env = {name: value for name, value in os.environ.items() if name in system}
+        with tempfile.TemporaryDirectory(prefix="brokapi-mock-") as folder:
+            result = subprocess.run(
+                [sys.executable, "-c", (
+                    "import asyncio, runpy, sys\n"
+                    "from pathlib import Path\n"
+                    "sys.path.insert(0, str(Path(sys.argv[1]).parent))\n"
+                    "bot = runpy.run_path(sys.argv[1])\n"
+                    "asyncio.run(bot['on_the_imitation']())\n"
+                ), str(Path(__file__).resolve())],
+                cwd=folder, env=env,
+            )
+        sys.exit(result.returncode)
+    asyncio.run(main())

@@ -18,6 +18,7 @@ mod errors;
 #[cfg(feature = "testing")]
 mod mocks;
 mod record;
+mod runtime;
 
 /// Texts of the `Display` of sample errors, for a test that keeps the Python messages equal to the Rust ones.
 #[pyfunction]
@@ -33,6 +34,7 @@ fn log_error_samples() -> Vec<(String, String)> {
 
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    runtime::install(m)?;
     m.add_class::<client::NativeClient>()?;
     m.add_class::<client::NativePager>()?;
     m.add_class::<client::NativeLimiter>()?;
