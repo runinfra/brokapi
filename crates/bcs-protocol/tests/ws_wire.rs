@@ -15,7 +15,7 @@ use brokapi_bcs_protocol::ws::models::MarketDataSubscribe;
 use brokapi_bcs_protocol::ws::session::{WsOptions, WsSession};
 use brokapi_mocks::time::wait_until;
 use futures_util::{SinkExt, StreamExt};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -44,6 +44,40 @@ struct Wire {
     upgrades: Arc<AtomicU32>,
     received: Arc<Mutex<Vec<String>>>,
     pongs: Arc<AtomicU32>,
+}
+
+async fn request_head(stream: &TcpStream) -> Vec<u8> {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let mut buf = vec![0; 16 * 1024];
+        loop {
+            let n = stream.peek(&mut buf).await.expect("peek the HTTP request");
+            assert!(n > 0, "the peer closed before sending its HTTP headers");
+            if let Some(end) = buf[..n].windows(4).position(|s| s == b"\r\n\r\n") {
+                buf.truncate(end + 4);
+                return buf;
+            }
+            assert!(n < buf.len(), "the test request's headers are too large");
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("complete HTTP headers in time")
+}
+
+async fn consume_request(stream: &mut TcpStream, head: &[u8]) {
+    let body_len = String::from_utf8_lossy(head)
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().expect("content length"))
+        })
+        .unwrap_or(0);
+    let mut request = vec![0; head.len() + body_len];
+    stream
+        .read_exact(&mut request)
+        .await
+        .expect("consume the HTTP request");
 }
 
 async fn start(plan: impl Fn(u32) -> Plan + Send + Sync + 'static) -> Wire {
@@ -75,14 +109,19 @@ async fn start(plan: impl Fn(u32) -> Plan + Send + Sync + 'static) -> Wire {
                 Arc::clone(&plan),
             );
             tokio::spawn(async move {
-                // Look at the request without taking it off the socket.
-                let mut head = vec![0u8; 2048];
-                let n = stream.peek(&mut head).await.unwrap_or(0);
-                let head = String::from_utf8_lossy(&head[..n]).to_ascii_lowercase();
-                if head.contains("upgrade: websocket") {
+                // A peek may contain only part of the header. Accepted upgrades still need the
+                // bytes on the socket for tungstenite; HTTP replies must consume them first.
+                let head = request_head(&stream).await;
+                if String::from_utf8_lossy(&head)
+                    .to_ascii_lowercase()
+                    .contains("upgrade: websocket")
+                {
                     let n = upgrades.fetch_add(1, Ordering::SeqCst) + 1;
                     match plan(n) {
                         Plan::Refuse => {
+                            // Closing with unread request bytes can reset TCP and discard the 403
+                            // on Windows. This test promises an HTTP refusal, not a transport cut.
+                            consume_request(&mut stream, &head).await;
                             let _ = stream
                                 .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                                 .await;
@@ -90,9 +129,8 @@ async fn start(plan: impl Fn(u32) -> Plan + Send + Sync + 'static) -> Wire {
                         other => serve_ws(stream, other, received, pongs).await,
                     }
                 } else {
+                    consume_request(&mut stream, &head).await;
                     tokens.fetch_add(1, Ordering::SeqCst);
-                    let mut buf = vec![0u8; 4096];
-                    let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await;
                     let body = r#"{"access_token":"tok","expires_in":86400,"refresh_expires_in":1,"token_type":"bearer"}"#;
                     let reply = format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -104,6 +142,23 @@ async fn start(plan: impl Fn(u32) -> Plan + Send + Sync + 'static) -> Wire {
         }
     });
     wire
+}
+
+#[tokio::test]
+async fn a_refused_upgrade_is_an_http_403_not_a_transport_reset() {
+    let wire = start(|_| Plan::Refuse).await;
+    let url = wire.http_base.replacen("http://", "ws://", 1);
+    let error = tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio_tungstenite::connect_async(url),
+    )
+    .await
+    .expect("the refusal arrives")
+    .expect_err("the upgrade must be refused");
+    match error {
+        tokio_tungstenite::tungstenite::Error::Http(response) => assert_eq!(response.status(), 403),
+        other => panic!("expected HTTP 403, got {other}"),
+    }
 }
 
 async fn serve_ws(
