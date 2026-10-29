@@ -39,6 +39,7 @@ pub mod bcs;
 pub mod bybit;
 pub mod finam;
 pub mod gate;
+pub mod io;
 pub mod live;
 pub mod market;
 pub mod settings;

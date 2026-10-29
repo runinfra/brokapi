@@ -10,9 +10,11 @@ use crate::ws::parser::parse_incoming;
 use futures_util::{SinkExt, StreamExt};
 use kanal::{AsyncReceiver, AsyncSender};
 use std::collections::HashSet;
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::{RwLock, watch};
 use tokio::time::{self, sleep};
@@ -98,6 +100,7 @@ impl Default for WsOptions {
 ///   60 seconds it drops the link and reconnects.
 /// * After a lost link it waits (500 ms, doubling up to 30 s, see [`WsOptions`]) and connects again.
 ///   Market data subscriptions are sent again after each connect.
+///   A failed restoration write uses the same pause and never marks the link as connected.
 /// * It parses every text frame and pushes the [`IncomingMessage`] with `try_send` into your channel.
 ///   **If your channel is full, the frame is dropped** and counted ([`WsSession::dropped_events`]):
 ///   the session never waits for a slow reader. Size the channel for bursts and read it quickly.
@@ -212,6 +215,21 @@ impl WsSession {
         event_tx: AsyncSender<IncomingMessage>,
         options: WsOptions,
     ) -> Self {
+        Self::spawn_using(channel, http_client, event_tx, options, Self::connect)
+    }
+
+    fn spawn_using<S, C, F>(
+        channel: BcsWsChannel,
+        http_client: BcsHttpClient,
+        event_tx: AsyncSender<IncomingMessage>,
+        options: WsOptions,
+        connect: C,
+    ) -> Self
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        C: Fn(String, String) -> F + Send + 'static,
+        F: Future<Output = Result<WebSocketStream<S>, BcsApiError>> + Send + 'static,
+    {
         let (user_tx, user_rx) = kanal::bounded_async::<Queued>(128);
         let user_rx = Arc::new(user_rx);
         let subscriptions: Arc<RwLock<Vec<(u64, WsOutgoing)>>> = Arc::new(RwLock::new(Vec::new()));
@@ -221,7 +239,7 @@ impl WsSession {
 
         let _handle = tokio::spawn(Self::run_loop(
             channel,
-            http_client,
+            (http_client, connect),
             event_tx,
             options,
             subscriptions.clone(),
@@ -484,16 +502,20 @@ impl WsSession {
 
     /// The main loop: connect, read and write, reconnect.
     #[allow(clippy::too_many_arguments)]
-    async fn run_loop(
+    async fn run_loop<S, C, F>(
         channel: BcsWsChannel,
-        http_client: BcsHttpClient,
+        (http_client, connect): (BcsHttpClient, C),
         event_tx: AsyncSender<IncomingMessage>,
         options: WsOptions,
         subscriptions: Arc<RwLock<Vec<(u64, WsOutgoing)>>>,
         user_rx: Arc<AsyncReceiver<Queued>>,
         is_connected: Arc<watch::Sender<bool>>,
         dropped_events: Arc<AtomicU64>,
-    ) {
+    ) where
+        S: AsyncRead + AsyncWrite + Unpin + Send,
+        C: Fn(String, String) -> F,
+        F: Future<Output = Result<WebSocketStream<S>, BcsApiError>>,
+    {
         let ws_base = http_client.ws_base_url().to_string();
         let backoff_min = options.reconnect_min.max(Duration::from_millis(10));
         let backoff_max = options.reconnect_max.max(backoff_min);
@@ -513,7 +535,7 @@ impl WsSession {
             };
 
             // 2. Подключение с обработкой 403
-            let ws_stream = match Self::connect(&url, &token).await {
+            let ws_stream = match connect(url, token).await {
                 Ok(s) => s,
                 Err(e) => {
                     // Если 403 - принудительно обновляем токен и увеличиваем backoff
@@ -533,153 +555,155 @@ impl WsSession {
 
             info!("WS {:?} session established", channel);
             let connected_at = tokio::time::Instant::now();
-            let (mut write, mut read) = ws_stream.split();
+            'connection: {
+                let (mut write, mut read) = ws_stream.split();
 
-            // 3. Pong watchdog state
-            // On the clock of tokio, like the heartbeat itself: a test moves both with one `jump`.
-            let mut last_pong = time::Instant::now();
+                // 3. Pong watchdog state
+                // On the clock of tokio, like the heartbeat itself: a test moves both with one `jump`.
+                let mut last_pong = time::Instant::now();
 
-            // Reader is told first: the data of the restored subscriptions comes after this marker.
-            if options.announce_connects
-                && event_tx.send(IncomingMessage::Reconnected).await.is_err()
-            {
-                info!("Event channel closed for {:?}", channel);
-                break 'session;
-            }
+                // Reader is told first: the data of the restored subscriptions comes after this marker.
+                if options.announce_connects
+                    && event_tx.send(IncomingMessage::Reconnected).await.is_err()
+                {
+                    info!("Event channel closed for {:?}", channel);
+                    break 'session;
+                }
 
-            // 4. Восстановить подписки. Номера отправленных запоминаем: такая же команда из очереди уже
-            // ушла, второй раз ее не шлем.
-            let mut restored: HashSet<u64> = HashSet::new();
-            {
-                let subs = subscriptions.read().await;
-                for (seq, outgoing) in subs.iter() {
-                    match serde_json::to_string(outgoing) {
-                        Ok(json) => {
-                            if write.send(Message::Text(json.into())).await.is_err() {
-                                error!("Failed to restore subscription for {:?}", channel);
-                                continue 'session;
+                // 4. Восстановить подписки. Номера отправленных запоминаем: такая же команда из очереди уже
+                // ушла, второй раз ее не шлем.
+                let mut restored: HashSet<u64> = HashSet::new();
+                {
+                    let subs = subscriptions.read().await;
+                    for (seq, outgoing) in subs.iter() {
+                        match serde_json::to_string(outgoing) {
+                            Ok(json) => {
+                                if write.send(Message::Text(json.into())).await.is_err() {
+                                    error!("Failed to restore subscription for {:?}", channel);
+                                    break 'connection;
+                                }
+                                restored.insert(*seq);
                             }
-                            restored.insert(*seq);
-                        }
-                        Err(e) => {
-                            error!("Failed to serialize subscription for {:?}: {}", channel, e);
+                            Err(e) => {
+                                error!("Failed to serialize subscription for {:?}: {}", channel, e);
+                            }
                         }
                     }
+                    if !subs.is_empty() {
+                        info!("Restored {} subscriptions for {:?}", subs.len(), channel);
+                    }
                 }
-                if !subs.is_empty() {
-                    info!("Restored {} subscriptions for {:?}", subs.len(), channel);
-                }
-            }
 
-            is_connected.send_replace(true); // ← UP: подписки восстановлены, готов к работе
+                is_connected.send_replace(true); // ← UP: подписки восстановлены, готов к работе
 
-            // 5. Единый event loop: read + write + heartbeat в одном select
-            let mut heartbeat = time::interval(WS_HEARTBEAT_INTERVAL);
-            heartbeat.tick().await; // пропустить немедленный первый тик
+                // 5. Единый event loop: read + write + heartbeat в одном select
+                let mut heartbeat = time::interval(WS_HEARTBEAT_INTERVAL);
+                heartbeat.tick().await; // пропустить немедленный первый тик
 
-            'inner_session: loop {
-                tokio::select! {
-                    // Входящие сообщения из WS
-                    frame = read.next() => {
-                        match frame {
-                            Some(Ok(Message::Text(text))) => {
-                                let incoming = parse_incoming(&text, channel);
-                                match event_tx.try_send(incoming) {
-                                    Ok(true) => {}
-                                    Ok(false) => {
-                                        dropped_events.fetch_add(1, Ordering::Relaxed);
-                                        warn!(
-                                            "WS {:?} downstream full — dropping parsed frame",
-                                            channel
-                                        );
-                                    }
-                                    Err(_) => {
-                                        info!("Event channel closed for {:?}", channel);
-                                        break 'session;
+                'inner_session: loop {
+                    tokio::select! {
+                        // Входящие сообщения из WS
+                        frame = read.next() => {
+                            match frame {
+                                Some(Ok(Message::Text(text))) => {
+                                    let incoming = parse_incoming(&text, channel);
+                                    match event_tx.try_send(incoming) {
+                                        Ok(true) => {}
+                                        Ok(false) => {
+                                            dropped_events.fetch_add(1, Ordering::Relaxed);
+                                            warn!(
+                                                "WS {:?} downstream full — dropping parsed frame",
+                                                channel
+                                            );
+                                        }
+                                        Err(_) => {
+                                            info!("Event channel closed for {:?}", channel);
+                                            break 'session;
+                                        }
                                     }
                                 }
-                            }
-                            Some(Ok(Message::Close(_))) => {
-                                info!("WS {:?} closed by server", channel);
-                                break 'inner_session;
-                            }
-                            Some(Ok(Message::Pong(_))) => {
-                                last_pong = time::Instant::now();
-                                info!("WS {:?} received pong", channel);
-                            }
-                            Some(Ok(Message::Ping(data))) => {
-                                last_pong = time::Instant::now();
-                                if write.send(Message::Pong(data)).await.is_err() {
-                                    error!("WS {:?} failed to send pong", channel);
+                                Some(Ok(Message::Close(_))) => {
+                                    info!("WS {:?} closed by server", channel);
+                                    break 'inner_session;
+                                }
+                                Some(Ok(Message::Pong(_))) => {
+                                    last_pong = time::Instant::now();
+                                    info!("WS {:?} received pong", channel);
+                                }
+                                Some(Ok(Message::Ping(data))) => {
+                                    last_pong = time::Instant::now();
+                                    if write.send(Message::Pong(data)).await.is_err() {
+                                        error!("WS {:?} failed to send pong", channel);
+                                        break 'inner_session;
+                                    }
+                                }
+                                Some(Ok(_)) => {
+                                    warn!("WS {:?} received unknown message", channel);
+                                }
+                                Some(Err(e)) => {
+                                    error!("WS {:?} read error: {}", channel, e);
+                                    break 'inner_session;
+                                }
+                                None => {
+                                    info!("WS {:?} stream ended", channel);
                                     break 'inner_session;
                                 }
                             }
-                            Some(Ok(_)) => {
-                                warn!("WS {:?} received unknown message", channel);
-                            }
-                            Some(Err(e)) => {
-                                error!("WS {:?} read error: {}", channel, e);
+                        }
+
+                        // ИСПРАВЛЕННЫЙ HEARTBEAT - настоящий Ping frame!
+                        _ = heartbeat.tick() => {
+                            let elapsed = last_pong.elapsed();
+                            if elapsed > WS_PONG_TIMEOUT {
+                                error!("Pong timeout for {:?} ({:?}), reconnect", channel, elapsed);
                                 break 'inner_session;
                             }
-                            None => {
-                                info!("WS {:?} stream ended", channel);
+
+
+                            if write.send(Message::Ping(vec![].into())).await.is_err() {
+                                error!("Failed to send Ping frame");
                                 break 'inner_session;
                             }
-                        }
-                    }
-
-                    // ИСПРАВЛЕННЫЙ HEARTBEAT - настоящий Ping frame!
-                    _ = heartbeat.tick() => {
-                        let elapsed = last_pong.elapsed();
-                        if elapsed > WS_PONG_TIMEOUT {
-                            error!("Pong timeout for {:?} ({:?}), reconnect", channel, elapsed);
-                            break 'inner_session;
+                            debug!("WS {:?} → Ping frame sent", channel);
                         }
 
-
-                        if write.send(Message::Ping(vec![].into())).await.is_err() {
-                            error!("Failed to send Ping frame");
-                            break 'inner_session;
-                        }
-                        debug!("WS {:?} → Ping frame sent", channel);
-                    }
-
-                    // Исходящие сообщения от юзера (подписки и т.д.)
-                    msg = user_rx.recv() => {
-                        match msg {
-                            Ok(Queued { seq, outgoing }) => {
-                                // Фильтрация: Subscribe/Unsubscribe только для MarketData
-                                if channel != BcsWsChannel::MarketData {
-                                    warn!("WS {:?} ignoring subscribe message for non-MarketData channel", channel);
-                                    continue 'inner_session;
-                                }
-                                // Эта подписка уже ушла вместе со списком при подключении.
-                                if seq.is_some_and(|n| restored.remove(&n)) {
-                                    continue 'inner_session;
-                                }
-                                match serde_json::to_string(&outgoing) {
-                                    Ok(json) => {
-                                        if write.send(Message::Text(json.into())).await.is_err() {
-                                            error!("WS {:?} write error", channel);
-                                            break 'inner_session;
+                        // Исходящие сообщения от юзера (подписки и т.д.)
+                        msg = user_rx.recv() => {
+                            match msg {
+                                Ok(Queued { seq, outgoing }) => {
+                                    // Фильтрация: Subscribe/Unsubscribe только для MarketData
+                                    if channel != BcsWsChannel::MarketData {
+                                        warn!("WS {:?} ignoring subscribe message for non-MarketData channel", channel);
+                                        continue 'inner_session;
+                                    }
+                                    // Эта подписка уже ушла вместе со списком при подключении.
+                                    if seq.is_some_and(|n| restored.remove(&n)) {
+                                        continue 'inner_session;
+                                    }
+                                    match serde_json::to_string(&outgoing) {
+                                        Ok(json) => {
+                                            if write.send(Message::Text(json.into())).await.is_err() {
+                                                error!("WS {:?} write error", channel);
+                                                break 'inner_session;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("WS {:?} serialize error: {}", channel, e);
                                         }
                                     }
-                                    Err(e) => {
-                                        error!("WS {:?} serialize error: {}", channel, e);
-                                    }
                                 }
+                                Err(_) => break 'session,
                             }
-                            Err(_) => break 'session,
                         }
+
+
                     }
-
-
                 }
             }
-
+            let healthy = *is_connected.borrow() && connected_at.elapsed() >= WS_HEALTHY_AFTER;
             is_connected.send_replace(false); // ← DOWN (при любом выходе из inner)
             // Соединение, которое тут же рвется, не должно давить на сервер с минимальной паузой.
-            if connected_at.elapsed() >= WS_HEALTHY_AFTER {
+            if healthy {
                 backoff = backoff_min;
             }
             warn!(
@@ -692,8 +716,9 @@ impl WsSession {
         is_connected.send_replace(false); // ← DOWN (выход из session loop)
     }
 
-    async fn connect(url: &str, access_token: &str) -> Result<WsStream, BcsApiError> {
+    async fn connect(url: String, access_token: String) -> Result<WsStream, BcsApiError> {
         let mut request = url
+            .as_str()
             .into_client_request()
             .map_err(|e| BcsApiError::WsError {
                 code: None,
@@ -725,6 +750,9 @@ impl WsSession {
         Ok(stream)
     }
 }
+
+#[cfg(test)]
+mod write_fault_tests;
 
 #[cfg(test)]
 mod tests {

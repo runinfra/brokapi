@@ -1,14 +1,17 @@
 //! The background session of the data channel `/ws`: connect, keep alive, reconnect and restore subscriptions.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use kanal::{AsyncReceiver, AsyncSender};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Mutex;
 use tokio::time::{self, sleep};
+use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
@@ -63,6 +66,7 @@ struct Queued {
 /// It connects in the background, keeps the connection alive with ping frames, and when the connection drops it
 /// reconnects with growing pauses and sends the subscriptions again (each with a fresh access token). Frames
 /// arrive parsed on the channel given to [`WsSession::spawn`]. Dropping the session closes it.
+/// A failed restoration write leaves [`WsSession::is_connected`] false and waits before the next attempt.
 ///
 /// # Examples
 ///
@@ -115,12 +119,36 @@ impl WsSession {
         event_tx: AsyncSender<WsIncoming>,
         options: WsOptions,
     ) -> Self {
+        Self::spawn_using(http, event_tx, options, |url: String| async move {
+            connect_async(url.as_str()).await.map(|(stream, response)| {
+                info!(
+                    "WebSocket connected to {url} with status <{}>",
+                    response.status()
+                );
+                stream
+            })
+        })
+    }
+
+    fn spawn_using<S, C, F>(
+        http: AlorHttpClient,
+        event_tx: AsyncSender<WsIncoming>,
+        options: WsOptions,
+        connect: C,
+    ) -> Self
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        C: Fn(String) -> F + Send + 'static,
+        F: Future<Output = Result<WebSocketStream<S>, tokio_tungstenite::tungstenite::Error>>
+            + Send
+            + 'static,
+    {
         let (user_tx, user_rx) = kanal::bounded_async::<Queued>(128);
         let subscriptions = Arc::new(Mutex::new(Vec::new()));
         let is_connected = Arc::new(AtomicBool::new(false));
         let dropped_events = Arc::new(AtomicU64::new(0));
         let handle = tokio::spawn(run_loop(
-            http,
+            (http, connect),
             event_tx,
             options,
             Arc::clone(&subscriptions),
@@ -199,29 +227,27 @@ impl WsSession {
     }
 }
 
-async fn run_loop(
-    http: AlorHttpClient,
+async fn run_loop<S, C, F>(
+    (http, connect): (AlorHttpClient, C),
     event_tx: AsyncSender<WsIncoming>,
     options: WsOptions,
     subscriptions: Arc<Mutex<Vec<(u64, WsSubscribe)>>>,
     user_rx: AsyncReceiver<Queued>,
     is_connected: Arc<AtomicBool>,
     dropped_events: Arc<AtomicU64>,
-) {
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+    C: Fn(String) -> F,
+    F: Future<Output = Result<WebSocketStream<S>, tokio_tungstenite::tungstenite::Error>>,
+{
     let url = format!("{}{}", http.ws_base_url(), WS_PATH);
     let backoff_min = options.reconnect_min.max(Duration::from_millis(10));
     let backoff_max = options.reconnect_max.max(backoff_min);
     let mut backoff = backoff_min;
 
     'session: loop {
-        let ws_stream = match connect_async(url.as_str()).await {
-            Ok((s, res)) => {
-                info!(
-                    "WebSocket connected to {url} with status <{}>",
-                    res.status()
-                );
-                s
-            }
+        let ws_stream = match connect(url.clone()).await {
+            Ok(s) => s,
             Err(e) => {
                 error!("WS connect failed: {e}");
                 sleep(backoff).await;
@@ -230,113 +256,114 @@ async fn run_loop(
             }
         };
         let connected_at = tokio::time::Instant::now();
-        let (mut write, mut read) = ws_stream.split();
+        'connection: {
+            let (mut write, mut read) = ws_stream.split();
 
-        // The reader is told first: the data of the restored subscriptions comes after this marker.
-        if options.announce_connects && event_tx.send(WsIncoming::Reconnected).await.is_err() {
-            break 'session;
-        }
-
-        // Restore. The numbers sent here are remembered: the same request still in the queue is not sent twice.
-        let mut restored: HashMap<u64, ()> = HashMap::new();
-        {
-            let token = match http.get_access_token().await {
-                Ok(t) => t,
-                Err(e) => {
-                    error!("WS: no access token: {e}");
-                    sleep(backoff).await;
-                    backoff = (backoff * 2).min(backoff_max);
-                    continue 'session;
-                }
-            };
-            let subs = subscriptions.lock().await;
-            for (seq, sub) in subs.iter() {
-                if write
-                    .send(Message::Text(sub.to_json(&token).into()))
-                    .await
-                    .is_err()
-                {
-                    error!("WS: failed to restore a subscription");
-                    continue 'session;
-                }
-                restored.insert(*seq, ());
+            // The reader is told first: the data of the restored subscriptions comes after this marker.
+            if options.announce_connects && event_tx.send(WsIncoming::Reconnected).await.is_err() {
+                break 'session;
             }
-            if !subs.is_empty() {
-                info!("Restored {} subscriptions", subs.len());
+
+            // Restore. The numbers sent here are remembered: the same request still in the queue is not sent twice.
+            let mut restored: HashMap<u64, ()> = HashMap::new();
+            {
+                let token = match http.get_access_token().await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!("WS: no access token: {e}");
+                        break 'connection;
+                    }
+                };
+                let subs = subscriptions.lock().await;
+                for (seq, sub) in subs.iter() {
+                    if write
+                        .send(Message::Text(sub.to_json(&token).into()))
+                        .await
+                        .is_err()
+                    {
+                        error!("WS: failed to restore a subscription");
+                        break 'connection;
+                    }
+                    restored.insert(*seq, ());
+                }
+                if !subs.is_empty() {
+                    info!("Restored {} subscriptions", subs.len());
+                }
             }
-        }
-        is_connected.store(true, Ordering::Release);
+            is_connected.store(true, Ordering::Release);
 
-        let mut heartbeat = time::interval(WS_HEARTBEAT_INTERVAL);
-        heartbeat.tick().await; // the first tick is at once
+            let mut heartbeat = time::interval(WS_HEARTBEAT_INTERVAL);
+            heartbeat.tick().await; // the first tick is at once
 
-        'inner: loop {
-            tokio::select! {
-                frame = read.next() => match frame {
-                    Some(Ok(Message::Text(text))) => {
-                        let incoming = parse_incoming(&text);
-                        // The broker closes the connection after a 401 and the cached token is no good: get a
-                        // new one now, the reconnect needs it.
-                        if matches!(incoming, WsIncoming::Status { code: 401, .. }) {
-                            warn!("WS: the broker refused the token, renewing it");
-                            let _ = http.refresh_access_token().await;
-                        }
-                        match event_tx.try_send(incoming) {
-                            Ok(true) => {}
-                            Ok(false) => {
-                                dropped_events.fetch_add(1, Ordering::Relaxed);
-                                warn!("WS: the receiving channel is full, a frame is dropped");
+            'inner: loop {
+                tokio::select! {
+                    frame = read.next() => match frame {
+                        Some(Ok(Message::Text(text))) => {
+                            let incoming = parse_incoming(&text);
+                            // The broker closes the connection after a 401 and the cached token is no good: get a
+                            // new one now, the reconnect needs it.
+                            if matches!(incoming, WsIncoming::Status { code: 401, .. }) {
+                                warn!("WS: the broker refused the token, renewing it");
+                                let _ = http.refresh_access_token().await;
                             }
-                            Err(_) => break 'session,
+                            match event_tx.try_send(incoming) {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    dropped_events.fetch_add(1, Ordering::Relaxed);
+                                    warn!("WS: the receiving channel is full, a frame is dropped");
+                                }
+                                Err(_) => break 'session,
+                            }
                         }
-                    }
-                    Some(Ok(Message::Ping(data))) => {
-                        if write.send(Message::Pong(data)).await.is_err() {
-                            break 'inner;
-                        }
-                    }
-                    Some(Ok(Message::Close(_))) => {
-                        info!("WS closed by the server");
-                        break 'inner;
-                    }
-                    Some(Ok(_)) => {}
-                    Some(Err(e)) => {
-                        error!("WS read error: {e}");
-                        break 'inner;
-                    }
-                    None => break 'inner,
-                },
-                _ = heartbeat.tick() => {
-                    if write.send(Message::Ping(Vec::new().into())).await.is_err() {
-                        break 'inner;
-                    }
-                    debug!("WS ping sent");
-                }
-                msg = user_rx.recv() => match msg {
-                    Ok(Queued { seq, sub }) => {
-                        if seq.is_some_and(|n| restored.remove(&n).is_some()) {
-                            continue 'inner;
-                        }
-                        let token = match http.get_access_token().await {
-                            Ok(t) => t,
-                            Err(e) => {
-                                // The subscribe stays in the list, the reconnect sends it with a token.
-                                error!("WS: no access token for a request: {e}");
+                        Some(Ok(Message::Ping(data))) => {
+                            if write.send(Message::Pong(data)).await.is_err() {
                                 break 'inner;
                             }
-                        };
-                        if write.send(Message::Text(sub.to_json(&token).into())).await.is_err() {
-                            error!("WS write error");
+                        }
+                        Some(Ok(Message::Close(_))) => {
+                            info!("WS closed by the server");
                             break 'inner;
                         }
+                        Some(Ok(_)) => {}
+                        Some(Err(e)) => {
+                            error!("WS read error: {e}");
+                            break 'inner;
+                        }
+                        None => break 'inner,
+                    },
+                    _ = heartbeat.tick() => {
+                        if write.send(Message::Ping(Vec::new().into())).await.is_err() {
+                            break 'inner;
+                        }
+                        debug!("WS ping sent");
                     }
-                    Err(_) => break 'session,
-                },
+                    msg = user_rx.recv() => match msg {
+                        Ok(Queued { seq, sub }) => {
+                            if seq.is_some_and(|n| restored.remove(&n).is_some()) {
+                                continue 'inner;
+                            }
+                            let token = match http.get_access_token().await {
+                                Ok(t) => t,
+                                Err(e) => {
+                                    // The subscribe stays in the list, the reconnect sends it with a token.
+                                    error!("WS: no access token for a request: {e}");
+                                    break 'inner;
+                                }
+                            };
+                            if write.send(Message::Text(sub.to_json(&token).into())).await.is_err() {
+                                error!("WS write error");
+                                break 'inner;
+                            }
+                        }
+                        Err(_) => break 'session,
+                    },
+                }
             }
         }
-
+        let healthy =
+            is_connected.load(Ordering::Acquire) && connected_at.elapsed() >= WS_HEALTHY_AFTER;
         is_connected.store(false, Ordering::Release);
-        if connected_at.elapsed() >= WS_HEALTHY_AFTER {
+        if healthy {
             backoff = backoff_min;
         }
         warn!("WS disconnected, reconnecting in {backoff:?}...");
@@ -345,6 +372,9 @@ async fn run_loop(
     }
     is_connected.store(false, Ordering::Release);
 }
+
+#[cfg(test)]
+mod write_fault_tests;
 
 #[cfg(test)]
 mod tests {

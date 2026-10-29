@@ -10,6 +10,7 @@
 //! answer carries the `guid` back as `requestGuid`.
 
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -176,10 +177,21 @@ impl CwsSession {
         self.exchange(body, true).await
     }
 
-    async fn exchange(&self, mut body: Value, _is_command: bool) -> Result<CwsReply, AlorApiError> {
+    async fn exchange(&self, body: Value, _is_command: bool) -> Result<CwsReply, AlorApiError> {
+        Self::exchange_on(&self.stream, self.answer_timeout, body).await
+    }
+
+    async fn exchange_on<S>(
+        stream: &Mutex<WebSocketStream<S>>,
+        answer_timeout: Duration,
+        mut body: Value,
+    ) -> Result<CwsReply, AlorApiError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         let guid = uuid_like();
         body["guid"] = json!(guid);
-        let mut stream = self.stream.lock().await;
+        let mut stream = stream.lock().await;
         stream
             .send(Message::Text(body.to_string().into()))
             .await
@@ -221,7 +233,7 @@ impl CwsSession {
                 message: "the connection closed before the answer".into(),
             })
         };
-        timeout(self.answer_timeout, wait)
+        timeout(answer_timeout, wait)
             .await
             .map_err(|_| AlorApiError::Ws {
                 code: None,
@@ -229,6 +241,9 @@ impl CwsSession {
             })?
     }
 }
+
+#[cfg(test)]
+mod write_fault_tests;
 
 /// A unique id for a request: the time in nanoseconds and a counter, as text.
 fn uuid_like() -> String {

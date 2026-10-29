@@ -57,6 +57,9 @@ jobs:
       - name: Test WebSocket faults and subscription recovery
         if: ${{ !cancelled() }}
         run: cargo test --locked -p brokapi-bcs-protocol --test ws_wire -p brokapi-alor-protocol --test ws_faults --no-fail-fast
+      - name: Test partial WebSocket writes and recovery
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p brokapi-bcs-protocol -p brokapi-alor-protocol --lib write_fault_tests --no-fail-fast
 
   # The .proto files with the tools of other languages: protoc makes the Go client of go/ the same as the one in the
   # repository, the module builds, and the Go bot of the book runs against a gateway on the imitation of BCS.
