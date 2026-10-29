@@ -4,7 +4,7 @@
 #
 # The Rust build compiles them with protox, which forgives what protoc and buf refuse (a call named like the type it
 # returns once hid that type from protoc). So this compiles them with protoc, makes the Go code from them, compares it with
-# go/gateway/v1, and builds the module go/ with its example.
+# go/gateway/v1, and builds and tests the module go/ with its example.
 #
 #   tools/proto-check            check: the code in go/gateway/v1 is what the .proto files give, and go/ builds
 #   tools/proto-check --write    write the code made from the .proto files into go/gateway/v1 (after a change of a .proto)
@@ -57,4 +57,5 @@ cd "$root/go"
 test -z "$(gofmt -l .)" || { gofmt -l . >&2; echo "go: run gofmt -w on the files above" >&2; exit 1; }
 go vet ./...
 go build ./...
-echo "go: the module go/ and its example build"
+go test ./...
+echo "go: the module go/ and its example build, the tests pass"

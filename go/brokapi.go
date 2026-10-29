@@ -61,7 +61,7 @@ type Options struct {
 // waits until the gateway is ready.
 //
 // Connect again after the Events stream ends: the gateway may be a new process, on Windows on another port, and the
-// address is read again.
+// address is read again, including changes while waiting for the gateway to become ready.
 func Connect(ctx context.Context, dir, bot string) (*Conn, error) {
 	return ConnectWith(ctx, dir, bot, Options{})
 }
@@ -82,54 +82,68 @@ func ConnectWith(ctx context.Context, dir, bot string, opts Options) (*Conn, err
 	if err != nil {
 		return nil, fmt.Errorf("brokapi: no access key in %s (is it the directory of a gateway? brokapi ps): %w", dir, err)
 	}
-	// The address file is missing for about half a second while the gateway is restarted.
+	headers := metadata.Pairs("authorization", "Bearer "+strings.TrimSpace(string(key)), "x-brokapi-bot", bot)
 	var addr string
+	var conn *Conn
+	defer func() {
+		if conn != nil {
+			conn.Close()
+		}
+	}()
 	for {
+		// A restart can replace the address after we already read it (a new TCP port on Windows).
+		// Re-read until READY, closing the old channel when the endpoint changes.
 		b, err := os.ReadFile(filepath.Join(dir, "gateway.addr"))
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("brokapi: %w", err)
 		}
-		if addr = strings.TrimSpace(string(b)); addr != "" {
-			break
-		}
-		if pause(ctx, 100*time.Millisecond) != nil {
-			return nil, fmt.Errorf("brokapi: no gateway address in %s: the gateway is not running (brokapi ps)", dir)
-		}
-	}
-
-	headers := metadata.Pairs("authorization", "Bearer "+strings.TrimSpace(string(key)), "x-brokapi-bot", bot)
-	cc, err := grpc.NewClient(target(addr),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, o ...grpc.CallOption) error {
-			var trailer metadata.MD
-			err := invoker(metadata.NewOutgoingContext(ctx, headers), method, req, reply, cc, append(o, grpc.Trailer(&trailer))...)
-			return wrap(err, trailer)
-		}),
-		grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, o ...grpc.CallOption) (grpc.ClientStream, error) {
-			s, err := streamer(metadata.NewOutgoingContext(ctx, headers), desc, cc, method, o...)
-			if err != nil {
-				return nil, err
+		next := strings.TrimSpace(string(b))
+		if next == "" {
+			if conn != nil {
+				conn.Close()
+				conn = nil
 			}
-			return stream{s}, nil
-		}),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("brokapi: the address %q: %w", addr, err)
-	}
-	conn := &Conn{Gateway: gatewayv1.NewGatewayClient(cc), Dir: dir, Bot: bot, cc: cc}
-
-	// A gateway that reconciles its journal answers STARTING for about a second.
-	for {
+			if pause(ctx, 100*time.Millisecond) != nil {
+				return nil, fmt.Errorf("brokapi: no gateway address in %s: the gateway is not running (brokapi ps)", dir)
+			}
+			continue
+		}
+		if conn == nil || next != addr {
+			if conn != nil {
+				conn.Close()
+				conn = nil
+			}
+			addr = next
+			cc, err := grpc.NewClient(target(addr),
+				grpc.WithTransportCredentials(insecure.NewCredentials()),
+				grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, o ...grpc.CallOption) error {
+					var trailer metadata.MD
+					err := invoker(metadata.NewOutgoingContext(ctx, headers), method, req, reply, cc, append(o, grpc.Trailer(&trailer))...)
+					return wrap(err, trailer)
+				}),
+				grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, o ...grpc.CallOption) (grpc.ClientStream, error) {
+					s, err := streamer(metadata.NewOutgoingContext(ctx, headers), desc, cc, method, o...)
+					if err != nil {
+						return nil, err
+					}
+					return stream{s}, nil
+				}),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("brokapi: the address %q: %w", addr, err)
+			}
+			conn = &Conn{Gateway: gatewayv1.NewGatewayClient(cc), Dir: dir, Bot: bot, cc: cc}
+		}
 		h, err := conn.Gateway.Health(ctx, &gatewayv1.HealthRequest{})
 		if err == nil && h.State == gatewayv1.GatewayState_GATEWAY_STATE_READY {
-			return conn, nil
+			ready := conn
+			conn = nil // ownership passes to the caller
+			return ready, nil
 		}
 		if status.Code(err) == codes.Unauthenticated {
-			cc.Close()
 			return nil, fmt.Errorf("brokapi: the gateway refused the access key of %s (the access.key of another gateway?): %w", dir, err)
 		}
 		if pause(ctx, 100*time.Millisecond) != nil {
-			cc.Close()
 			why := "still starting"
 			if err != nil {
 				why = err.Error()

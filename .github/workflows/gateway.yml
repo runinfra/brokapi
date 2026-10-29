@@ -43,10 +43,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build the program
         run: cargo build --locked -p brokapi-gateway
+      - name: Test the Go client
+        working-directory: go
+        run: go test ./...
       # Every test binary runs even when one fails, so that one run shows all that is broken on a system.
       - name: Test the gateway, the service and the commands
         run: cargo test --locked -p brokapi-gateway --no-fail-fast
       - name: Test WebSocket faults and subscription recovery
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p brokapi-bcs-protocol --test ws_wire -p brokapi-alor-protocol --test ws_faults --no-fail-fast
 
   # The .proto files with the tools of other languages: protoc makes the Go client of go/ the same as the one in the
