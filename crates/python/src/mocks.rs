@@ -359,13 +359,28 @@ impl NativeMock {
                 .map_err(|e: brokapi::core::Error| PyValueError::new_err(e.to_string()))?;
             let config = BrokerConfig::from_settings(kind, &settings)
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let limiter = settings
+                .0
+                .get("limits_toml")
+                .map(|value| {
+                    let text = value
+                        .as_str()
+                        .ok_or_else(|| PyValueError::new_err("limits_toml must be text"))?;
+                    let limits =
+                        brokapi::runtime::BrokerLimits::from_toml_section(text, kind.as_str())
+                            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+                    Ok::<_, PyErr>(brokapi_client::Limiter::with_limits(kind, &limits))
+                })
+                .transpose()?;
             let dir = tempfile::tempdir().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-            let gateway = start_gateway(&name, dir.path(), &config, &guard).await?;
+            let gateway =
+                start_gateway(&name, dir.path(), &config, &guard, limiter.clone()).await?;
             Ok(NativeMockGateway {
                 inner: Arc::new(MockGateway {
                     name,
                     config,
                     guard,
+                    limiter,
                     dir,
                     gateway: tokio::sync::Mutex::new(Some(gateway)),
                 }),
@@ -402,10 +417,11 @@ async fn start_gateway(
     dir: &std::path::Path,
     config: &BrokerConfig,
     guard: &brokapi_client::OrderGuard,
+    limiter: Option<brokapi_client::Limiter>,
 ) -> PyResult<Gateway> {
     let mut gw = GatewayConfig::new(name, dir);
     gw.guard = guard.clone();
-    let gateway = Gateway::start(gw, config.clone(), None)
+    let gateway = Gateway::start(gw, config.clone(), limiter)
         .await
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     gateway.ready().await;
@@ -422,6 +438,7 @@ struct MockGateway {
     name: String,
     config: BrokerConfig,
     guard: brokapi_client::OrderGuard,
+    limiter: Option<brokapi_client::Limiter>,
     dir: tempfile::TempDir,
     gateway: tokio::sync::Mutex<Option<Gateway>>,
 }
@@ -449,7 +466,14 @@ impl NativeMockGateway {
                 old.kill().await;
             }
             *guard = Some(
-                start_gateway(&inner.name, inner.dir.path(), &inner.config, &inner.guard).await?,
+                start_gateway(
+                    &inner.name,
+                    inner.dir.path(),
+                    &inner.config,
+                    &inner.guard,
+                    inner.limiter.clone(),
+                )
+                .await?,
             );
             Ok(())
         })

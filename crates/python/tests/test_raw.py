@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
+import pytest_asyncio
 
 import brokapi
 from brokapi import testing
@@ -146,32 +147,62 @@ async def test_tbank_names_the_service_when_two_have_the_same_method(
 
 # ---------------------------------------------------------------------------------------------------- the quota
 
+@pytest_asyncio.fixture(params=ROADS)
+async def quota_pair(request: pytest.FixtureRequest):
+    broker = request.param.removeprefix("gw_")
+    # A long refill interval makes the result independent of gRPC and machine speed.
+    limits = f'''
+[{broker}.buckets.all]
+rate = 1
+per = "24h"
+burst = 32
+[{broker}.route]
+"*" = ["all"]
+[{broker}.conns]
+max_conns = 10
+max_subs_per_conn = 100
+supports_multiplex = true
+'''
+    async with await getattr(testing, f"mock_{broker}")() as mock:
+        if request.param.startswith("gw_"):
+            client = await (await mock.start_gateway(limits_toml=limits)).connect()
+        else:
+            client = await mock.connect(limiter=brokapi.Limiter.from_toml(broker, limits))
+        yield mock, client
+
 
 async def exhaust(client: brokapi.Client, method: str, args: dict[str, Any]) -> brokapi.RateLimited:
-    for _ in range(500):
+    for _ in range(64):
         try:
             await client.raw(method, args)
         except brokapi.RateLimited as error:
             return error
-    raise AssertionError("500 calls and the quota is not spent")
+    raise AssertionError("64 calls and the configured 32-request quota is not spent")
+
+
+@pytest.mark.parametrize("limits", ["not valid TOML = [", "[bcs.buckets.all]\nrate = 1\nper = '24h'\nburst = 32"])
+async def test_a_mock_gateway_refuses_invalid_limits_instead_of_using_defaults(limits: str) -> None:
+    async with await testing.mock_alor() as mock:
+        with pytest.raises(ValueError):
+            await mock.start_gateway(limits_toml=limits)
 
 
 async def test_raw_spends_the_same_quota_as_the_calls_of_the_interface(
-    pair: tuple[testing.MockBroker, brokapi.Client],
+    quota_pair: tuple[testing.MockBroker, brokapi.Client],
 ) -> None:
-    mock, client = pair
+    mock, client = quota_pair
     method, args = READ[mock.broker]
     limited = await exhaust(client, method, args)
-    assert limited.retry_after > timedelta(0)
+    assert limited.retry_after > timedelta(hours=1)
     # The interface finds the quota spent by raw: portfolio() is the same route.
     with pytest.raises(brokapi.RateLimited):
         await client.portfolio()
 
 
 async def test_raw_of_two_clients_on_one_limiter_counts_together(
-    pair: tuple[testing.MockBroker, brokapi.Client],
+    quota_pair: tuple[testing.MockBroker, brokapi.Client],
 ) -> None:
-    mock, first = pair
+    mock, first = quota_pair
     if first.gateway is None:
         second = await mock.connect(limiter=first.limiter, name="second")
     else:
@@ -179,15 +210,13 @@ async def test_raw_of_two_clients_on_one_limiter_counts_together(
         second = await mock._gateways[0].connect(bot="second")
     method, args = READ[mock.broker]
     await exhaust(first, method, args)
-    # The quota was spent by the other client. A bucket of a fast broker (ALOR: 100 a second) refills between two calls,
-    # so the second client may get one or two through: still far from the full bucket a client of its own would have.
+    # The other client spent the shared budget. No speed-dependent burst of requests is needed.
     with pytest.raises(brokapi.RateLimited):
-        for _ in range(5):
-            await second.raw(method, args)
+        await second.raw(method, args)
 
 
-async def test_a_call_without_a_route_spends_the_default_quota(pair: tuple[testing.MockBroker, brokapi.Client]) -> None:
-    mock, client = pair
+async def test_a_call_without_a_route_spends_the_default_quota(quota_pair: tuple[testing.MockBroker, brokapi.Client]) -> None:
+    mock, client = quota_pair
     # A method the library has no route for: it is never free.
     method, args = {
         "bcs": ("GET /trade-api-bff-portfolio/api/v1/portfolio", {}),
@@ -195,7 +224,8 @@ async def test_a_call_without_a_route_spends_the_default_quota(pair: tuple[testi
         "finam": ("LastQuote", {"symbol": "SBER@MISX"}),
         "alor": ("GET /md/v2/time", {}),
     }[mock.broker]
-    await exhaust(client, method, args)
+    limited = await exhaust(client, method, args)
+    assert limited.retry_after > timedelta(hours=1)
 
 
 # ---------------------------------------------------------------------------------------------------- commands

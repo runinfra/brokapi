@@ -117,6 +117,8 @@ class MockBroker:
 
         ``settings`` are more keys of ``[gateway.settings]``: the limits on the orders of every bot (``read_only=True``,
         ``max_order_qty``, ``max_order_value``), as in :func:`brokapi.connect`.
+        ``limits_toml`` sets the rate limiter from the broker section of a TOML limits file, for deterministic
+        quota tests. The same counter is shared by all bots and retained by this mock across ``restart()``.
         """
         extra = _settings_json(settings) if settings else None
         gateway = MockGateway(await self._native.start_gateway(name, extra))

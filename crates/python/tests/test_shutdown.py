@@ -27,8 +27,21 @@ started = set()
 
 # Registered before importing the extension: its shutdown must run before this audit.
 def audit():
-    alive = {p.name for p in Path("/proc/self/task").iterdir()}
-    report.write_text(json.dumps({"started": sorted(started), "remaining": sorted(started & alive)}))
+    remaining = []
+    details = {}
+    for tid in sorted(started):
+        try:
+            fields = Path("/proc/self/task", tid, "stat").read_text().rsplit(")", 1)[1].split()
+        except FileNotFoundError:
+            continue
+        flags = int(fields[6])  # stat field 9, after pid and comm
+        details[tid] = {"state": fields[0], "flags": flags}
+        # Linux can still list a joined thread during kernel exit (PF_EXITING,
+        # include/linux/sched.h). It has left user space and cannot call Python.
+        # A parked worker of an unclosed runtime does not have this flag.
+        if not flags & 0x00000004:
+            remaining.append(tid)
+    report.write_text(json.dumps({"started": sorted(started), "remaining": remaining, "details": details}))
 
 atexit.register(audit)
 from brokapi import testing
@@ -51,7 +64,7 @@ asyncio.run(main())
     assert child.returncode == 0, child.stdout + child.stderr
     threads = json.loads(report.read_text())
     assert threads["started"], "the scenario must actually start native background threads"
-    assert threads["remaining"] == [], "native threads survived until interpreter finalization"
+    assert threads["remaining"] == [], threads
 
 
 @pytest.mark.parametrize("started", [False, True])
